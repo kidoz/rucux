@@ -1,0 +1,13 @@
+[binaries]
+c = 'arm-none-eabi-gcc'
+cpp = 'arm-none-eabi-g++'
+ld = 'arm-none-eabi-ld'
+strip = 'arm-none-eabi-strip'
+ar = 'arm-none-eabi-ar'
+ranlib = 'arm-none-eabi-ranlib'
+
+[host_machine]
+system = 'baremetal'
+cpu_family = 'arm'
+cpu = 'cortex-a53' # Odroid C2 CPU (Running in 32-bit mode if strict ARMv7)
+endian = 'little'

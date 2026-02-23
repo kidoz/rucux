@@ -1,0 +1,13 @@
+#libtls pkg-config source file
+
+prefix=/Users/apavlov/Projects/local/unix-kernel/sysroot/usr
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: LibreSSL-libtls
+Description: Secure communications using the TLS socket protocol.
+Version: 3.8.2
+Libs: -L${libdir} -ltls
+Libs.private: /Users/apavlov/Projects/local/unix-kernel/sysroot/usr/lib/libc.a 
+Cflags: -I${includedir}

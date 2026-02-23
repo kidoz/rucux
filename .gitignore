@@ -1,0 +1,34 @@
+# Build artifacts
+builddir*/
+cmake-build-*/
+build/
+out/
+*.o
+*.elf
+*.bin
+*.iso
+*.img
+*.d
+*.log
+vars.fd
+symbols.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Generated headers (embedded binaries)
+*_bin.hpp
+
+# OS artifacts
+Thumbs.db

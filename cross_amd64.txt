@@ -1,0 +1,13 @@
+[binaries]
+c = 'x86_64-elf-gcc'
+cpp = 'x86_64-elf-g++'
+ld = 'x86_64-elf-ld'
+strip = 'x86_64-elf-strip'
+ar = 'x86_64-elf-ar'
+ranlib = 'x86_64-elf-ranlib'
+
+[host_machine]
+system = 'baremetal'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
