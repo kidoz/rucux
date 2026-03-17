@@ -14,10 +14,12 @@ export CXX="x86_64-elf-g++"
 export AR="x86_64-elf-ar"
 export RANLIB="x86_64-elf-ranlib"
 export LD="x86_64-elf-ld"
+export CPP="x86_64-elf-gcc -E"
+export CXXCPP="x86_64-elf-g++ -E"
 
 # Flags to force compilation against our custom sysroot and freestanding environment
-export CFLAGS="-ffreestanding -fno-exceptions -fno-rtti -mcmodel=large -I${SYSROOT}/usr/include -I${RUCUX_ROOT}/libc/include -I${RUCUX_ROOT}/lib/include -I${RUCUX_ROOT}/src/include"
-export CXXFLAGS="${CFLAGS} -std=c++23"
+export CFLAGS="-ffreestanding -mcmodel=large -isystem ${SYSROOT}/usr/include -isystem ${RUCUX_ROOT}/libc/include -isystem ${RUCUX_ROOT}/lib/include -isystem ${RUCUX_ROOT}/src/include"
+export CXXFLAGS="${CFLAGS} -fexceptions -frtti -std=c++23 -D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE=1 -D__decay=_V1_decay"
 export LDFLAGS="-nostdlib -static -L${SYSROOT}/usr/lib"
 export LIBS="${SYSROOT}/usr/lib/libc.a"
 
@@ -74,6 +76,7 @@ build_port() {
 # Order matters! zlib has no dependencies.
 build_port "openlibm"
 build_port "zlib"
+build_port "libcxx"
 
 # Uncomment as we implement them:
 build_port "libressl"

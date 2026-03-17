@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
-#ifndef _MATH_H
-#define _MATH_H
+#ifndef _LIBC_MATH_H
+#define _LIBC_MATH_H
 
-#include <openlibm.h>
+#include <openlibm_math.h>
 
-#endif // _MATH_H
+typedef float float_t;
+typedef double double_t;
+
+#endif // _LIBC_MATH_H

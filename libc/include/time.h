@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#ifndef _TIME_H
-#define _TIME_H
+#ifndef _LIBC_TIME_H
+#define _LIBC_TIME_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -42,6 +42,15 @@ struct tm* localtime(const time_t* timep);
 time_t mktime(struct tm* tm);
 size_t strftime(char* s, size_t max, const char* format, const struct tm* tm);
 
+#include <locale.h>
+size_t strftime_l(char *s, size_t max, const char *format, const struct tm *tm, locale_t loc);
+
+clock_t clock(void);
+double difftime(time_t time1, time_t time0);
+char* asctime(const struct tm* timeptr);
+int timespec_get(struct timespec* ts, int base);
+#define TIME_UTC 1
+
 int gettimeofday(struct timeval* tv, void* tz);
 
 #define CLOCK_REALTIME 0
@@ -52,4 +61,4 @@ int clock_gettime(int clk_id, struct timespec* tp);
 }
 #endif
 
-#endif // _TIME_H
+#endif // _LIBC_TIME_H

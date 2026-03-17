@@ -92,7 +92,7 @@ endif
 
 add_project_arguments(common_cpp_args, language: 'cpp')
 
-# LibC (Sysroot)
+# LibC
 libc = static_library('c',
     ['libc/src/syscalls.cpp', 'libc/src/socket.cpp', 'libc/src/stdio.cpp', 
      'libc/src/string.cpp', 'libc/src/pthread.cpp', 'lib/string.cpp',

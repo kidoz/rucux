@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#ifndef _STDIO_H
-#define _STDIO_H
+#ifndef _LIBC_STDIO_H
+#define _LIBC_STDIO_H
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -15,16 +15,31 @@ extern FILE* stdin;
 extern FILE* stdout;
 extern FILE* stderr;
 
+typedef long fpos_t;
+
 int printf(const char* format, ...);
 int puts(const char* s);
 int fprintf(FILE* stream, const char* format, ...);
 int dprintf(int fd, const char* format, ...);
 int sprintf(char* str, const char* format, ...);
-int sscanf(const char* str, const char* format, ...);
+int vfscanf(FILE* stream, const char* format, va_list arg);
+int vsscanf(const char* s, const char* format, va_list arg);
+int fgetpos(FILE* stream, fpos_t* pos);
+int fsetpos(FILE* stream, const fpos_t* pos);
+int remove(const char* filename);
+int rename(const char* oldname, const char* newname);
+FILE* tmpfile(void);
+char* tmpnam(char* s);
+int scanf(const char* format, ...);
+int vscanf(const char* format, va_list arg);
+int vprintf(const char* format, va_list arg);
+int fscanf(FILE* stream, const char* format, ...);
+int sscanf(const char* s, const char* format, ...);
 int snprintf(char* str, size_t size, const char* format, ...);
 int vsnprintf(char* str, size_t size, const char* format, va_list ap);
 int vsprintf(char* str, const char* format, va_list ap);
 int vfprintf(FILE* stream, const char* format, va_list ap);
+int vasprintf(char **strp, const char *fmt, va_list ap);
 
 FILE* fopen(const char* pathname, const char* mode);
 FILE* fdopen(int fd, const char* mode);
@@ -68,6 +83,7 @@ void perror(const char* s);
 #define _IONBF 2
 
 int setvbuf(FILE *stream, char *buf, int mode, size_t size);
+void setbuf(FILE* stream, char* buf);
 
 #define BUFSIZ 1024
 #define EOF (-1)
@@ -76,4 +92,4 @@ int setvbuf(FILE *stream, char *buf, int mode, size_t size);
 }
 #endif
 
-#endif // _STDIO_H
+#endif // _LIBC_STDIO_H

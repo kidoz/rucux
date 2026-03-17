@@ -5,7 +5,7 @@
 namespace lib {
 
 using size_t = decltype(sizeof(0));
-using ptrdiff_t = int64_t;
+using ptrdiff_t = decltype((int*)0 - (int*)0);
 using nullptr_t = decltype(nullptr);
 
 } // namespace lib

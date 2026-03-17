@@ -15,6 +15,12 @@ typedef unsigned char u_char;
 typedef unsigned int mode_t;
 typedef long time_t;
 
+typedef unsigned long dev_t;
+typedef unsigned long ino_t;
+typedef unsigned long nlink_t;
+typedef long blksize_t;
+typedef long blkcnt_t;
+
 typedef struct {
     unsigned long fds_bits[1024 / (8 * sizeof(long))];
 } fd_set;

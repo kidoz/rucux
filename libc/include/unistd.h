@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
-#ifndef _UNISTD_H
-#define _UNISTD_H
+#ifndef _LIBC_UNISTD_H
+#define _LIBC_UNISTD_H
 
 #include <stddef.h>
 #include <sys/types.h>
+
+#define _POSIX_TIMERS 1
+#define _POSIX_MONOTONIC_CLOCK 1
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,10 +38,22 @@ int access(const char *pathname, int mode);
 #define _SC_PAGESIZE 30
 long sysconf(int name);
 
+int chdir(const char *path);
+int fchmod(int fd, mode_t mode);
+char *getcwd(char *buf, size_t size);
+int link(const char *oldpath, const char *newpath);
+int readlink(const char *pathname, char *buf, size_t bufsiz);
+int truncate(const char *path, off_t length);
+int ftruncate(int fd, off_t length);
+int symlink(const char *target, const char *linkpath);
+
+#define _PC_PATH_MAX 1
+long pathconf(const char *path, int name);
+
 void _exit(int status) __attribute__((noreturn));
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // _UNISTD_H
+#endif // _LIBC_UNISTD_H

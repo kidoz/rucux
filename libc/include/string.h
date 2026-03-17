@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#ifndef _STRING_H
-#define _STRING_H
+#ifndef _LIBC_STRING_H
+#define _LIBC_STRING_H
 
 #include <stddef.h>
 
@@ -33,8 +33,15 @@ char* strtok_r(char* str, const char* delim, char** saveptr);
 char* strcat(char* dest, const char* src);
 char* strncat(char* dest, const char* src, size_t n);
 
+int strcoll(const char* s1, const char* s2);
+size_t strxfrm(char* dest, const char* src, size_t n);
+
+#include <locale.h>
+int strcoll_l(const char *s1, const char *s2, locale_t loc);
+size_t strxfrm_l(char *dest, const char *src, size_t n, locale_t loc);
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif // _STRING_H
+#endif // _LIBC_STRING_H

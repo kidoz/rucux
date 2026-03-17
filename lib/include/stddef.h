@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#ifndef _STDDEF_H
-#define _STDDEF_H
+#ifndef _LIBC_STDDEF_H
+#define _LIBC_STDDEF_H
 
 #ifdef __cplusplus
 #include <lib/stddef.hpp>
@@ -14,7 +14,7 @@ using lib::size_t;
 #endif
 
 #ifndef offsetof
-#define offsetof(type, member) ((size_t)&((type*)0)->member)
+#define offsetof(type, member) __builtin_offsetof(type, member)
 #endif
 
 #else
@@ -24,9 +24,14 @@ typedef long ptrdiff_t;
 #define NULL ((void*)0)
 
 #ifndef offsetof
-#define offsetof(type, member) ((size_t)&((type*)0)->member)
+#define offsetof(type, member) __builtin_offsetof(type, member)
 #endif
 
 #endif // __cplusplus
 
-#endif // _STDDEF_H
+typedef struct {
+  long long __max_align_ll __attribute__((__aligned__(__alignof__(long long))));
+  long double __max_align_ld __attribute__((__aligned__(__alignof__(long double))));
+} max_align_t;
+
+#endif // _LIBC_STDDEF_H
