@@ -12,6 +12,9 @@ void* memmove(void* dest, const void* src, size_t n) noexcept;
 int memcmp(const void* s1, const void* s2, size_t n) noexcept;
 
 char* strcpy(char* dest, const char* src) noexcept;
+char* strncpy(char* dest, const char* src, size_t n) noexcept;
+char* strcat(char* dest, const char* src) noexcept;
+char* strncat(char* dest, const char* src, size_t n) noexcept;
 int strcmp(const char* s1, const char* s2) noexcept;
 
 } // extern "C"

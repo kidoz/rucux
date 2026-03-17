@@ -16,7 +16,7 @@ export RANLIB="x86_64-elf-ranlib"
 export LD="x86_64-elf-ld"
 
 # Flags to force compilation against our custom sysroot and freestanding environment
-export CFLAGS="-ffreestanding -fno-exceptions -fno-rtti -mcmodel=large -I${SYSROOT}/usr/include -I${RUCUX_ROOT}/lib/include -I${RUCUX_ROOT}/src/include"
+export CFLAGS="-ffreestanding -fno-exceptions -fno-rtti -mcmodel=large -I${SYSROOT}/usr/include -I${RUCUX_ROOT}/libc/include -I${RUCUX_ROOT}/lib/include -I${RUCUX_ROOT}/src/include"
 export CXXFLAGS="${CFLAGS} -std=c++23"
 export LDFLAGS="-nostdlib -static -L${SYSROOT}/usr/lib"
 export LIBS="${SYSROOT}/usr/lib/libc.a"
@@ -27,6 +27,11 @@ mkdir -p "${PORTS_BUILD_DIR}"
 
 # Ensure libc is in the sysroot
 mkdir -p "${SYSROOT}/usr/lib"
+mkdir -p "${SYSROOT}/usr/include"
+
+# Copy standard libc headers to sysroot so ports can use them
+cp -r "${RUCUX_ROOT}/libc/include/"* "${SYSROOT}/usr/include/"
+
 # Meson creates thin archives by default which breaks external toolchains. We must convert it.
 x86_64-elf-ar -t "${RUCUX_ROOT}/builddir/libc.a" > /dev/null || true # dummy check
 cp "${RUCUX_ROOT}/builddir/libc.a" "${SYSROOT}/usr/lib/libc_thin.a"
@@ -67,12 +72,14 @@ build_port() {
 
 # 2. Build Dependency Tree
 # Order matters! zlib has no dependencies.
+build_port "openlibm"
 build_port "zlib"
 
 # Uncomment as we implement them:
 build_port "libressl"
-# build_port "ncurses"
-# build_port "curl"
+build_port "ncurses"
+build_port "curl"
+build_port "libtorrent"
 # build_port "libtorrent"
 # build_port "rtorrent"
 

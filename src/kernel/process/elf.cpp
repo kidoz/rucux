@@ -15,8 +15,7 @@ uintptr_t elf::load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept {
         return 0;
     }
 
-    uintptr_t old_cr3;
-    asm volatile("mov %%cr3, %0" : "=r"(old_cr3));
+    uintptr_t old_cr3 = vmm::get_active_page_table();
     vmm::switch_to(pml4);
 
     const auto* ehdr = reinterpret_cast<const elf64_ehdr*>(data);
@@ -73,10 +72,8 @@ uintptr_t elf::load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept {
 
             uint8_t* dest = reinterpret_cast<uint8_t*>(phdr.p_vaddr);
 
-            // Temporarily disable Write Protect in CR0 to write to RO user pages
-            uint64_t cr0;
-            asm volatile("mov %%cr0, %0" : "=r"(cr0));
-            asm volatile("mov %0, %%cr0" : : "r"(cr0 & ~(1ULL << 16)));
+            // Temporarily disable Write Protect to write to RO user pages
+            vmm::disable_write_protect();
 
             // Copy data
             if (phdr.p_filesz > 0) {
@@ -88,8 +85,8 @@ uintptr_t elf::load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept {
                 lib::memset(dest + phdr.p_filesz, 0, phdr.p_memsz - phdr.p_filesz);
             }
 
-            // Restore Write Protect in CR0
-            asm volatile("mov %0, %%cr0" : : "r"(cr0));
+            // Restore Write Protect
+            vmm::enable_write_protect();
         }
     }
 

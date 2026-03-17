@@ -26,3 +26,4 @@
 #define SYS_FUTEX 21
 #define SYS_YIELD 22
 #define SYS_IOCTL 23
+#define SYS_CLOCK_GETTIME 24

@@ -88,4 +88,22 @@ void vmm::switch_to(uintptr_t pml4_phys) noexcept {
     asm volatile("mov %0, %%cr3" : : "r"(pml4_phys) : "memory");
 }
 
+uintptr_t vmm::get_active_page_table() noexcept {
+    uintptr_t current_cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
+    return current_cr3;
+}
+
+void vmm::disable_write_protect() noexcept {
+    uint64_t cr0;
+    asm volatile("mov %%cr0, %0" : "=r"(cr0));
+    asm volatile("mov %0, %%cr0" : : "r"(cr0 & ~(1ULL << 16)));
+}
+
+void vmm::enable_write_protect() noexcept {
+    uint64_t cr0;
+    asm volatile("mov %%cr0, %0" : "=r"(cr0));
+    asm volatile("mov %0, %%cr0" : : "r"(cr0 | (1ULL << 16)));
+}
+
 } // namespace kernel::memory

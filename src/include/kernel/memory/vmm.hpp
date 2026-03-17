@@ -24,6 +24,9 @@ public:
     static void map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept;
     static void unmap(uintptr_t virt) noexcept;
     static void switch_to(uintptr_t pml4_phys) noexcept;
+    static uintptr_t get_active_page_table() noexcept;
+    static void disable_write_protect() noexcept;
+    static void enable_write_protect() noexcept;
 };
 
 } // namespace kernel::memory

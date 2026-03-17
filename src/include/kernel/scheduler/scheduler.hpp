@@ -67,6 +67,8 @@ public:
     static void yield() noexcept;
     static void block(thread_state reason) noexcept;
     static void unblock(thread* t) noexcept;
+    static void exit() noexcept;
+    static void cleanup_terminated() noexcept;
 
     static thread* current_thread() noexcept;
     static thread* get_thread_by_tid(uint32_t tid) noexcept;

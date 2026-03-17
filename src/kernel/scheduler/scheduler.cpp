@@ -185,7 +185,41 @@ void scheduler::add_thread(thread* t) noexcept {
     }
 }
 
+void scheduler::cleanup_terminated() noexcept {
+    thread* prev = nullptr;
+    thread* cur = g_all_threads;
+    while (cur) {
+        if (cur->state == thread_state::TERMINATED && cur != g_current_thread) {
+            thread* to_delete = cur;
+            if (prev) {
+                prev->all_next = cur->all_next;
+            } else {
+                g_all_threads = cur->all_next;
+            }
+            cur = cur->all_next;
+
+            // Free stack
+            delete[] reinterpret_cast<uint8_t*>(to_delete->stack_base);
+            delete to_delete;
+        } else {
+            prev = cur;
+            cur = cur->all_next;
+        }
+    }
+}
+
+void scheduler::exit() noexcept {
+    if (!g_current_thread) return;
+    g_current_thread->state = thread_state::TERMINATED;
+    schedule();
+    while (true) {
+        asm volatile("hlt");
+    }
+}
+
 void scheduler::schedule() noexcept {
+    cleanup_terminated();
+
     thread* old_thread = g_current_thread;
     thread* new_thread = nullptr;
 

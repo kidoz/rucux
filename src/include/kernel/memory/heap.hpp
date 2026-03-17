@@ -16,12 +16,18 @@ private:
     struct block_header {
         size_t size;
         bool is_free;
-        block_header* next;
         uint32_t magic;
+        block_header* prev_phys;
+        block_header* next_phys;
+        block_header* prev_free;
+        block_header* next_free;
     };
 
     static constexpr uint32_t HEAP_MAGIC = 0xDEADC0DE;
-    static block_header* g_head;
+    static block_header* g_free_list;
+
+    static void add_to_free_list(block_header* block) noexcept;
+    static void remove_from_free_list(block_header* block) noexcept;
 };
 
 } // namespace kernel::memory

@@ -21,4 +21,16 @@ void vmm::switch_to(uintptr_t ttbr_phys) noexcept {
     (void)ttbr_phys;
 }
 
+uintptr_t vmm::get_active_page_table() noexcept {
+    return 0; // Placeholder
+}
+
+void vmm::disable_write_protect() noexcept {
+    // Placeholder
+}
+
+void vmm::enable_write_protect() noexcept {
+    // Placeholder
+}
+
 } // namespace kernel::memory

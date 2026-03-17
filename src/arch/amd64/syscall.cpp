@@ -61,10 +61,7 @@ extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, l
         kernel::scheduler::scheduler::wait_for_irq(static_cast<uint8_t>(a1));
         return 0;
     case SYS_EXIT:
-        kernel::scheduler::scheduler::block(kernel::scheduler::thread_state::TERMINATED);
-        // If we reach here, no threads are ready. Enter idle loop.
-        while (true)
-            asm volatile("sti; hlt");
+        kernel::scheduler::scheduler::exit();
         return 0; // We will not return to user space
     default:
         return -1;

@@ -25,12 +25,17 @@ common_cpp_args = [
 
 # Architecture-specific flags
 arch = host_machine.cpu_family()
+kernel_args = []
+user_c_args = []
+user_cpp_args = []
 
 if arch == 'x86_64'
-    common_cpp_args += [
+    kernel_args += [
         '-mno-red-zone',      # Critical for kernel interrupt handlers
         '-mno-mmx', '-mno-sse', '-mno-sse2' # Disable floating point in early kernel
     ]
+    user_c_args += ['-mcmodel=large']
+    user_cpp_args += ['-mcmodel=large']
     src_files = [
         'src/arch/amd64/boot.cpp',
         'src/arch/amd64/gdt.cpp',
@@ -89,21 +94,23 @@ add_project_arguments(common_cpp_args, language: 'cpp')
 
 # LibC (Sysroot)
 libc = static_library('c',
-    ['sysroot/usr/src/syscalls.cpp', 'sysroot/usr/src/socket.cpp', 'sysroot/usr/src/stdio.cpp', 
-     'sysroot/usr/src/string.cpp', 'sysroot/usr/src/pthread.cpp', 'lib/string.cpp',
-     'sysroot/usr/src/file.cpp', 'sysroot/usr/src/clearerr.cpp', 'sysroot/usr/src/snprintf.cpp',
-     'sysroot/usr/src/fseeko.cpp', 'sysroot/usr/src/lseek.cpp', 'sysroot/usr/src/strerror.cpp',
-     'sysroot/usr/src/vsprintf.cpp', 'sysroot/usr/src/sprintf.cpp', 'sysroot/usr/src/memchr.cpp',
-     'sysroot/usr/src/exit.cpp', 'sysroot/usr/src/unistd_stubs.cpp', 'sysroot/usr/src/std_files.cpp',
-     'sysroot/usr/src/stdlib.cpp', 'sysroot/usr/src/ctype.cpp', 'sysroot/usr/src/strrchr.cpp',
-     'sysroot/usr/src/errno.cpp', 'sysroot/usr/src/time.cpp', 'sysroot/usr/src/strdup.cpp',
-     'sysroot/usr/src/syslog.cpp', 'sysroot/usr/src/strchr.cpp', 'sysroot/usr/src/strncmp.cpp',
-     'sysroot/usr/src/strtol.cpp', 'sysroot/usr/src/netdb.cpp', 'sysroot/usr/src/strcspn.cpp',
-     'sysroot/usr/src/signal.cpp', 'sysroot/usr/src/dirent.cpp', 'sysroot/usr/src/poll.cpp',
-     'sysroot/usr/src/strstr.cpp'],
-    include_directories: include_directories('sysroot/usr/include', 'lib/include', '.'),
-    cpp_args: ['-mcmodel=large'],
-    c_args: ['-mcmodel=large'],
+    ['libc/src/syscalls.cpp', 'libc/src/socket.cpp', 'libc/src/stdio.cpp', 
+     'libc/src/string.cpp', 'libc/src/pthread.cpp', 'lib/string.cpp',
+     'libc/src/file.cpp', 'libc/src/clearerr.cpp', 'libc/src/snprintf.cpp',
+     'libc/src/fseeko.cpp', 'libc/src/lseek.cpp', 'libc/src/strerror.cpp',
+     'libc/src/vsprintf.cpp', 'libc/src/sprintf.cpp', 'libc/src/memchr.cpp',
+     'libc/src/exit.cpp', 'libc/src/unistd_stubs.cpp', 'libc/src/std_files.cpp',
+     'libc/src/stdlib.cpp', 'libc/src/ctype.cpp', 'libc/src/strrchr.cpp',
+     'libc/src/errno.cpp', 'libc/src/time.cpp', 'libc/src/strdup.cpp',
+     'libc/src/syslog.cpp', 'libc/src/strchr.cpp', 'libc/src/strncmp.cpp',
+     'libc/src/strtol.cpp', 'libc/src/netdb.cpp', 'libc/src/strcspn.cpp',
+     'libc/src/signal.cpp', 'libc/src/dirent.cpp', 'libc/src/poll.cpp',
+     'libc/src/strstr.cpp', 'libc/src/getopt.cpp', 'libc/src/locale.cpp',
+     'libc/src/strings.cpp', 'libc/src/termios.cpp', 'libc/src/select.cpp',
+     'libc/src/inet.cpp', 'libc/src/setjmp.cpp', 'libc/src/sscanf.cpp'],
+    include_directories: include_directories('libc/include', 'lib/include', '.'),
+    cpp_args: user_cpp_args,
+    c_args: user_c_args,
     install: false
 )
 
@@ -117,9 +124,9 @@ embedded_headers = []
 foreach app : user_apps
     app_exe = executable(app,
         ['userspace/' + app + '/main.cpp', 'userspace/lib/crt0.S'],
-        include_directories: include_directories('sysroot/usr/include', 'src/include', 'lib/include', '.'),
-        cpp_args: ['-mcmodel=large'],
-        c_args: ['-mcmodel=large'],
+        include_directories: include_directories('libc/include', 'src/include', 'lib/include', '.'),
+        cpp_args: user_cpp_args,
+        c_args: user_c_args,
         link_args: user_link_args,
         link_with: libc,
         install: false
@@ -140,5 +147,6 @@ executable('kernel.elf',
     src_files,
     embedded_headers,
     install: false,
+    cpp_args: kernel_args,
     link_args: ['-nostdlib', '-static', '-T', kernel_linker_script, '-e', 'kernel_main']
 )
