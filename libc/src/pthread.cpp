@@ -91,6 +91,16 @@ int pthread_join(pthread_t thread, void** retval) {
     return 0;
 }
 
+int pthread_attr_init(pthread_attr_t *attr) {
+    if (attr) *attr = 0;
+    return 0;
+}
+
+int pthread_attr_destroy(pthread_attr_t *attr) {
+    (void)attr;
+    return 0;
+}
+
 int pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr) {
     (void)attr;
     *mutex = 0;
@@ -108,6 +118,13 @@ int pthread_mutex_lock(pthread_mutex_t* mutex) {
         __syscall(SYS_FUTEX, (long)mutex, 0, 1);
     }
     return 0;
+}
+
+int pthread_mutex_trylock(pthread_mutex_t* mutex) {
+    if (__sync_val_compare_and_swap(mutex, 0, 1) == 0) {
+        return 0;
+    }
+    return 16; // EBUSY
 }
 
 int pthread_mutex_unlock(pthread_mutex_t* mutex) {

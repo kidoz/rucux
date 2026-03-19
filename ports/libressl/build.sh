@@ -27,11 +27,12 @@ echo "Configuring LibreSSL for rucux sysroot..."
 # We disable shared libraries, tests, and apps. We only want libcrypto.a and libssl.a
 # We set host to x86_64-elf so it uses our cross-compiler.
 # We add -DOPENSSL_NO_SPEED and -DOPENSSL_NO_ASYNC to disable features that require deep OS integration (like setjmp/longjmp or ucontext)
+ac_cv_func_arc4random_buf=yes ac_cv_func_arc4random=yes \
 ./configure --host=x86_64-elf \
             --prefix="${SYSROOT}/usr" \
             --disable-shared \
             --enable-static \
-            CFLAGS="${CFLAGS} -O2 -DOPENSSL_NO_POSIX_IO -DOPENSSL_NO_ASYNC"
+            CFLAGS="${CFLAGS} -O2 -DOPENSSL_NO_POSIX_IO -DOPENSSL_NO_ASYNC -DHAVE_ARC4RANDOM -DHAVE_ARC4RANDOM_BUF"
 
 sed -i '' 's/^SUBDIRS = .*/SUBDIRS = include crypto ssl tls/' Makefile || sed -i 's/^SUBDIRS = .*/SUBDIRS = include crypto ssl tls/' Makefile
 

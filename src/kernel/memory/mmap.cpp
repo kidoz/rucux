@@ -49,30 +49,58 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
     if (prot & PROT_WRITE) pflags = pflags | page_flags::WRITABLE;
     // We ignore PROT_EXEC for now, or we could handle NO_EXECUTE if not set.
 
-    // Map the pages
-    for (size_t i = 0; i < num_pages; ++i) {
-        void* phys_page = pmm::alloc_page();
-        if (!phys_page) {
-            // Out of memory! We should unwind and unmap... but for simplicity:
-            return MAP_FAILED;
-        }
-
-        lib::memset(phys_page, 0, pmm::PAGE_SIZE);
-        vmm::map(virt_start + (i * pmm::PAGE_SIZE), reinterpret_cast<uintptr_t>(phys_page), pflags);
-    }
-
-    // If it's a file-backed mapping, read the file contents into the mapped memory
+    bool mapped_from_vfs = false;
     if (!(flags & MAP_ANONYMOUS) && fd >= 0 && fd < 32) {
         auto& fdesc = t->fd_table[fd];
         if (fdesc.node) {
             vfs::vfs_node* node = static_cast<vfs::vfs_node*>(fdesc.node);
-            if (node->ops && node->ops->read) {
-                // Read from the file directly into our newly mapped virtual memory
-                node->ops->read(node, offset, length, reinterpret_cast<void*>(virt_start));
+            if (node->ops && node->ops->mmap) {
+                // The VFS driver supports direct physical mapping
+                for (size_t i = 0; i < num_pages; ++i) {
+                    uintptr_t phys_page = node->ops->mmap(node, offset + (i * pmm::PAGE_SIZE));
+                    if (phys_page) {
+                        vmm::map(virt_start + (i * pmm::PAGE_SIZE), phys_page, pflags);
+                    } else {
+                        // VFS could not provide physical page, fallback might be needed but for true file-backed
+                        // we'd probably map a zero page if past EOF. Let's just map zero page for now.
+                        void* zero_page = pmm::alloc_page();
+                        if (zero_page) {
+                            lib::memset(zero_page, 0, pmm::PAGE_SIZE);
+                            vmm::map(virt_start + (i * pmm::PAGE_SIZE), reinterpret_cast<uintptr_t>(zero_page), pflags);
+                        }
+                    }
+                }
+                mapped_from_vfs = true;
             }
-        } else {
-            // Invalid FD
-            return MAP_FAILED;
+        }
+    }
+
+    if (!mapped_from_vfs) {
+        // Map the pages via anonymous allocation
+        for (size_t i = 0; i < num_pages; ++i) {
+            void* phys_page = pmm::alloc_page();
+            if (!phys_page) {
+                // Out of memory! We should unwind and unmap... but for simplicity:
+                return MAP_FAILED;
+            }
+
+            lib::memset(phys_page, 0, pmm::PAGE_SIZE);
+            vmm::map(virt_start + (i * pmm::PAGE_SIZE), reinterpret_cast<uintptr_t>(phys_page), pflags);
+        }
+
+        // If it's a file-backed mapping without mmap support, read the file contents into the mapped memory
+        if (!(flags & MAP_ANONYMOUS) && fd >= 0 && fd < 32) {
+            auto& fdesc = t->fd_table[fd];
+            if (fdesc.node) {
+                vfs::vfs_node* node = static_cast<vfs::vfs_node*>(fdesc.node);
+                if (node->ops && node->ops->read) {
+                    // Read from the file directly into our newly mapped virtual memory
+                    node->ops->read(node, offset, length, reinterpret_cast<void*>(virt_start));
+                }
+            } else {
+                // Invalid FD
+                return MAP_FAILED;
+            }
         }
     }
 
@@ -94,6 +122,36 @@ int mmap_manager::sys_munmap(void* addr, size_t length) noexcept {
         vmm::unmap(virt + (i * pmm::PAGE_SIZE));
     }
 
+    return 0;
+}
+
+int mmap_manager::sys_mprotect(void* addr, size_t len, int prot) noexcept {
+    (void)addr;
+    (void)len;
+    (void)prot;
+    // For now, accept without actually modifying PTE flags.
+    // In a real implementation, this would update page attributes.
+    return 0;
+}
+
+// We need to keep track of fd and offset for each mapping to support msync properly.
+// For now, let's assume msync is called by libtorrent, which might just use standard write() fallback if mmap is anonymous.
+// Actually, since we don't have a VMA structure, we can't easily find the fd associated with `addr` in msync.
+// A full implementation requires VMA tracking per-thread.
+int mmap_manager::sys_msync(void* addr, size_t length, int flags) noexcept {
+    (void)addr;
+    (void)length;
+    (void)flags;
+    // We do not have a unified page cache yet.
+    // A proper implementation would find the backing file and write dirty pages to disk.
+    return 0;
+}
+
+int mmap_manager::sys_madvise(void* addr, size_t length, int advice) noexcept {
+    (void)addr;
+    (void)length;
+    (void)advice;
+    // Hints to the kernel, safe to ignore.
     return 0;
 }
 

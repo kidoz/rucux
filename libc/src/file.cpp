@@ -3,7 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <uapi/kernel/syscalls.h>
 #include <unistd.h>
+#include "syscall_impl.h"
 
 extern "C" {
 
@@ -149,38 +151,40 @@ int rename(const char* oldpath, const char* newpath) {
     return -1; // stub
 }
 
-int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
-    (void)stream; (void)buf; (void)mode; (void)size;
-    return 0; // stub
-}
-
 int fcntl(int fd, int cmd, ...) {
-    (void)fd;
-    (void)cmd;
-    return 0; // stub
+    va_list args;
+    va_start(args, cmd);
+    long arg = va_arg(args, long);
+    va_end(args);
+    return (int)__syscall(SYS_FCNTL, (long)fd, (long)cmd, arg);
 }
 
 int stat(const char* pathname, struct stat* statbuf) {
-    (void)pathname;
-    if (statbuf) {
-        statbuf->st_size = 0;
-        statbuf->st_mode = 0;
-    }
-    return 0; // stub
+    return (int)__syscall(SYS_STAT, (long)pathname, (long)statbuf);
 }
 
 int fstat(int fd, struct stat* statbuf) {
-    (void)fd;
-    if (statbuf) {
-        statbuf->st_size = 0;
-        statbuf->st_mode = 0;
-    }
+    return (int)__syscall(SYS_FSTAT, (long)fd, (long)statbuf);
+}
+
+int lstat(const char* pathname, struct stat* statbuf) {
+    return stat(pathname, statbuf); // fallback to stat
+}
+
+int mkdir(const char* pathname, mode_t mode) {
+    (void)pathname;
+    (void)mode;
+    return -1; // stub
+}
+
+int chmod(const char* pathname, mode_t mode) {
+    (void)pathname; (void)mode;
     return 0; // stub
 }
 
-int mkdir(const char *pathname, mode_t mode) {
-    (void)pathname; (void)mode;
-    return 0; // stub
+mode_t umask(mode_t mask) {
+    (void)mask;
+    return 022; // default mask 022
 }
 
 } // extern "C"

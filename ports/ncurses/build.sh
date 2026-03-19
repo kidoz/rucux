@@ -26,6 +26,7 @@ echo "Configuring ncurses for rucux sysroot..."
 
 # We use a very minimal configuration.
 # We skip the fallback generation if it's failing, and we'll handle terminfo later.
+ac_cv_func_setenv=yes ac_cv_func_putenv=yes \
 ./configure --host=x86_64-elf \
             --prefix="${SYSROOT}/usr" \
             --disable-shared \
@@ -52,4 +53,8 @@ make -j$(sysctl -n hw.ncpu || nproc)
 echo "Installing to sysroot..."
 # We ignore errors in install because terminfo database generation often fails on host
 make install || echo "Warning: ncurses install had some errors (likely terminfo), but libraries should be fine."
+
+# Fix C++ bool macro conflict
+sed -i '' 's/#define bool NCURSES_BOOL/\/\/#define bool NCURSES_BOOL/g' "${SYSROOT}/usr/include/ncurses/curses.h"
+sed -i '' 's/#define bool NCURSES_BOOL/\/\/#define bool NCURSES_BOOL/g' "${SYSROOT}/usr/include/ncurses/ncurses.h" || true
 

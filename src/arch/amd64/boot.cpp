@@ -11,6 +11,9 @@
 #include <kernel/boot_protocol.hpp>
 // ... (some lines skipped, doing exactly at the include)
 
+#include <arch/amd64/acpi.hpp>
+#include <arch/amd64/apic.hpp>
+#include <arch/amd64/smp.hpp>
 #include <arch/amd64/syscall.hpp>
 #include <kernel/ipc/ipc.hpp>
 #include <kernel/memory/heap.hpp>
@@ -24,7 +27,7 @@
 #include <kernel/vfs/tty.hpp>
 #include <kernel/vfs/vfs.hpp>
 #include <lib/string.hpp>
-#include <new>
+#include <knew.hpp>
 
 // Verification of type_traits
 static_assert(lib::is_same_v<lib::int32_t, int>);
@@ -40,6 +43,9 @@ static_assert(lib::is_same_v<lib::remove_cv_t<const volatile int>, int>);
 #include <kernel/process/elf.hpp>
 #include <ls_bin.hpp>
 #include <net_bin.hpp>
+
+#include <kernel/cpu/percpu.hpp>
+#include <kernel/time.hpp>
 
 // Tell the compiler to use the C calling convention for the entry point
 extern "C" {
@@ -244,8 +250,10 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     }
 
     kernel::memory::heap::init();
+    kernel::cpu::bsp_init();
     kernel::scheduler::scheduler::init();
     kernel::vfs::vfs_manager::init();
+    kernel::time_manager::init();
 
     // Create Root FS
     auto* root = kernel::vfs::ramfs::create_root();
@@ -268,6 +276,25 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     kernel::vfs::ramfs::create_file(bin, "ls", ls_bin, ls_bin_size);
     kernel::vfs::ramfs::create_file(bin, "kbd", kbd_bin, kbd_bin_size);
     kernel::vfs::ramfs::create_file(bin, "net", net_bin, net_bin_size);
+
+    // APIC + SMP initialization
+    if (info->acpi_rsdp) {
+        arch::amd64::acpi::madt_info madt{};
+        if (arch::amd64::acpi::parse_madt(static_cast<uintptr_t>(info->acpi_rsdp), madt)) {
+            arch::amd64::apic_init(madt);
+
+            // Calibrate and start LAPIC timer (replaces PIT for BSP)
+            uint32_t lapic_count = arch::amd64::calibrate_lapic_timer();
+            // Vector 0x20 = same as PIT IRQ0, divide by 16
+            arch::amd64::lapic::timer_init(0x20, lapic_count, 0x03);
+
+            // Boot APs
+            uintptr_t pml4 = kernel::memory::vmm::get_active_page_table();
+            arch::amd64::smp_boot_aps(madt, pml4);
+        }
+    } else {
+        kernel::print("ACPI: No RSDP, using legacy PIC\n");
+    }
 
     kernel::pci::init();
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/memory/heap.hpp>
-#include <new>
+#include <knew.hpp>
 
 void* operator new(size_t size) {
     return kmalloc(size);

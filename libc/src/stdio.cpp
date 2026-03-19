@@ -29,6 +29,12 @@ int puts(const char* s) {
     return 1;
 }
 
+int putchar(int c) {
+    char ch = (char)c;
+    write(1, &ch, 1);
+    return c;
+}
+
 int fprintf(FILE* stream, const char* format, ...) {
     char buf[1024];
     va_list ap;
@@ -56,6 +62,15 @@ int vfprintf(FILE* stream, const char* format, va_list ap) {
     if (!stream) return -1;
     write(((_FILE*)stream)->fd, buf, ret);
     return ret;
+}
+
+int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
+    (void)stream; (void)buf; (void)mode; (void)size;
+    return 0; // stub
+}
+
+void setbuf(FILE* stream, char* buf) {
+    (void)stream; (void)buf;
 }
 
 }

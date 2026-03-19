@@ -49,8 +49,14 @@ if arch == 'x86_64'
         'src/arch/amd64/pci.cpp',
         'src/arch/amd64/framebuffer.cpp',
         'src/arch/amd64/vmm.cpp',
+        'src/arch/amd64/cpu/percpu.cpp',
+        'src/arch/amd64/acpi.cpp',
+        'src/arch/amd64/apic.cpp',
+        'src/arch/amd64/smp.cpp',
+        'src/arch/amd64/smp_trampoline.S',
         'src/arch/amd64/scheduler/switch.S',
         'src/kernel/memory/pmm.cpp',
+        'src/kernel/memory/buddy.cpp',
         'src/kernel/memory/mmap.cpp',
         'src/kernel/memory/heap.cpp',
         'src/kernel/scheduler/scheduler.cpp',
@@ -60,7 +66,10 @@ if arch == 'x86_64'
         'src/kernel/vfs/ata.cpp',
         'src/kernel/vfs/fat32.cpp',
         'src/kernel/process/elf.cpp',
+        'src/kernel/process/signal.cpp',
         'src/kernel/ipc/ipc.cpp',
+        'src/kernel/time.cpp',
+        'src/kernel/net/socket.cpp',
         'lib/string.cpp',
         'lib/new.cpp'
     ]
@@ -68,6 +77,7 @@ elif arch == 'arm'
     # ARMv7 specific flags (Odroid C2 is technically ARMv8/AArch64, but if targeting 32-bit ARMv7:)
     common_cpp_args += [
         '-marm',
+        '-march=armv7-a+sec',
         '-mfpu=vfpv3-d16'
     ]
     src_files = [
@@ -77,14 +87,21 @@ elif arch == 'arm'
         'src/arch/armv7/uart.cpp',
         'src/arch/armv7/print.cpp',
         'src/arch/armv7/vmm.cpp',
+        'src/arch/armv7/cpu/percpu.cpp',
+        'src/arch/armv7/gic.cpp',
+        'src/arch/armv7/timer.cpp',
+        'src/arch/armv7/psci.cpp',
+        'src/arch/armv7/smp.cpp',
         'src/arch/armv7/scheduler/switch.S',
         'src/kernel/memory/pmm.cpp',
+        'src/kernel/memory/buddy.cpp',
         'src/kernel/memory/mmap.cpp',
         'src/kernel/scheduler/scheduler.cpp',
         'src/kernel/vfs/vfs.cpp',
         'src/kernel/process/elf.cpp',
         'src/kernel/ipc/ipc.cpp',
-        'lib/string.cpp'
+        'lib/string.cpp',
+        'lib/new.cpp'
     ]
 else
     error('Unsupported architecture: ' + arch)
@@ -107,7 +124,7 @@ libc = static_library('c',
      'libc/src/signal.cpp', 'libc/src/dirent.cpp', 'libc/src/poll.cpp',
      'libc/src/strstr.cpp', 'libc/src/getopt.cpp', 'libc/src/locale.cpp',
      'libc/src/strings.cpp', 'libc/src/termios.cpp', 'libc/src/select.cpp',
-     'libc/src/inet.cpp', 'libc/src/setjmp.cpp', 'libc/src/sscanf.cpp'],
+     'libc/src/epoll.cpp', 'libc/src/inet.cpp', 'libc/src/setjmp.cpp', 'libc/src/sscanf.cpp'],
     include_directories: include_directories('libc/include', 'lib/include', '.'),
     cpp_args: user_cpp_args,
     c_args: user_c_args,

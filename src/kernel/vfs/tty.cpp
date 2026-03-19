@@ -10,6 +10,7 @@
 #define TCGETS 0x5401
 #define TCSETS 0x5402
 #define TIOCSTI 0x5412
+#define TIOCGWINSZ 0x5413
 
 typedef unsigned int tcflag_t;
 typedef unsigned char cc_t;
@@ -26,6 +27,13 @@ struct termios {
     cc_t c_cc[NCCS];  /* control characters */
     speed_t c_ispeed; /* input speed */
     speed_t c_ospeed; /* output speed */
+};
+
+struct winsize {
+    unsigned short ws_row;
+    unsigned short ws_col;
+    unsigned short ws_xpixel;
+    unsigned short ws_ypixel;
 };
 
 /* c_lflag bits */
@@ -250,6 +258,14 @@ static int tty_ioctl(vfs_node* node, unsigned long request, void* argp) noexcept
         char* c = static_cast<char*>(argp);
         feed_input(*c);
         return 0;
+    } else if (request == TIOCGWINSZ) {
+        winsize* ws = static_cast<winsize*>(argp);
+        // Font is 8x8. Calculate row and column counts.
+        ws->ws_xpixel = arch::amd64::framebuffer::get_width();
+        ws->ws_ypixel = arch::amd64::framebuffer::get_height();
+        ws->ws_col = ws->ws_xpixel / 8;
+        ws->ws_row = ws->ws_ypixel / 8;
+        return 0;
     }
     return -1;
 }
@@ -281,6 +297,7 @@ vfs_node* create() noexcept {
     node->ops->close = nullptr;
     node->ops->readdir = nullptr;
     node->ops->finddir = nullptr;
+    node->ops->mmap = nullptr;
     return node;
 }
 

@@ -18,10 +18,11 @@ export CPP="x86_64-elf-gcc -E"
 export CXXCPP="x86_64-elf-g++ -E"
 
 # Flags to force compilation against our custom sysroot and freestanding environment
-export CFLAGS="-ffreestanding -mcmodel=large -isystem ${SYSROOT}/usr/include -isystem ${RUCUX_ROOT}/libc/include -isystem ${RUCUX_ROOT}/lib/include -isystem ${RUCUX_ROOT}/src/include"
-export CXXFLAGS="${CFLAGS} -fexceptions -frtti -std=c++23 -D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE=1 -D__decay=_V1_decay"
+export CFLAGS="-ffreestanding -mcmodel=large -fno-stack-protector -isystem ${SYSROOT}/usr/include -isystem ${RUCUX_ROOT}/libc/include -isystem ${RUCUX_ROOT}/lib/include -isystem ${RUCUX_ROOT}/src/include"
+export CPPFLAGS="${CFLAGS}"
+export CXXFLAGS="-ffreestanding -mcmodel=large -fno-stack-protector -I${SYSROOT}/usr/include/c++/v1 -isystem ${SYSROOT}/usr/include -isystem ${RUCUX_ROOT}/libc/include -isystem ${RUCUX_ROOT}/lib/include -isystem ${RUCUX_ROOT}/src/include -fexceptions -frtti -std=c++23 -D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE=1 -D__decay=_V1_decay"
 export LDFLAGS="-nostdlib -static -L${SYSROOT}/usr/lib"
-export LIBS="${SYSROOT}/usr/lib/libc.a"
+export LIBS="-Wl,--start-group ${SYSROOT}/usr/lib/libc++.a ${SYSROOT}/usr/lib/libc++abi.a ${SYSROOT}/usr/lib/libunwind.a ${SYSROOT}/usr/lib/libc.a -Wl,--end-group"
 
 # The master build directory for ports
 export PORTS_BUILD_DIR="${RUCUX_ROOT}/builddir/ports"
@@ -83,7 +84,6 @@ build_port "libressl"
 build_port "ncurses"
 build_port "curl"
 build_port "libtorrent"
-# build_port "libtorrent"
-# build_port "rtorrent"
+build_port "rtorrent"
 
 echo "All ports built and installed to sysroot successfully!"

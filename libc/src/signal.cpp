@@ -1,21 +1,33 @@
 // SPDX-License-Identifier: MIT
 #include <signal.h>
+#include <uapi/kernel/syscalls.h>
+#include "syscall_impl.h"
 
 extern "C" {
 
 sighandler_t signal(int signum, sighandler_t handler) {
-    (void)signum; (void)handler;
-    return SIG_ERR; // stub
+    struct sigaction act, oldact;
+    act.sa_handler = handler;
+    sigemptyset(&act.sa_mask);
+    act.sa_flags = 0;
+    if (sigaction(signum, &act, &oldact) < 0) return SIG_ERR;
+    return oldact.sa_handler;
 }
 
 int raise(int sig) {
-    (void)sig;
-    return -1; // stub
+    return kill(0, sig); // Assume pid 0 means self for now
 }
 
 int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact) {
-    (void)signum; (void)act; (void)oldact;
-    return -1; // stub
+    return (int)__syscall(SYS_SIGACTION, (long)signum, (long)act, (long)oldact);
+}
+
+int kill(int pid, int sig) {
+    return (int)__syscall(SYS_KILL, (long)pid, (long)sig);
+}
+
+int sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
+    return (int)__syscall(SYS_SIGPROCMASK, (long)how, (long)set, (long)oldset);
 }
 
 int siginterrupt(int sig, int flag) {

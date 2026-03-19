@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 // A very simple mmap-based malloc
 // A real libc uses a complex arena allocator like dlmalloc.
@@ -15,6 +16,18 @@ struct chunk_header {
 static chunk_header* g_head = nullptr;
 
 extern "C" {
+
+uintptr_t __stack_chk_guard = 0x595e9fbd94fda766;
+
+void abort(void) {
+    // We could print something here if we had stderr wired up simply
+    _exit(1);
+    while (1) {}
+}
+
+void __attribute__((noreturn)) __stack_chk_fail(void) {
+    abort();
+}
 
 void* malloc(size_t size) {
     if (size == 0) return nullptr;
@@ -166,6 +179,44 @@ int rand(void) {
 
 void srand(unsigned int seed) {
     g_seed = seed;
+}
+
+long random(void) {
+    return rand();
+}
+
+void srandom(unsigned int seed) {
+    srand(seed);
+}
+
+void srand48(long int seedval) {
+    srand(seedval);
+}
+
+int posix_memalign(void **memptr, size_t alignment, size_t size) {
+    (void)alignment;
+    if (!memptr) return 22; // EINVAL
+    void *ptr = malloc(size);
+    if (!ptr) return 12; // ENOMEM
+    *memptr = ptr;
+    return 0;
+}
+
+void* aligned_alloc(size_t alignment, size_t size) {
+    void* ptr = nullptr;
+    if (posix_memalign(&ptr, alignment, size) == 0) {
+        return ptr;
+    }
+    return nullptr;
+}
+
+char *realpath(const char *path, char *resolved_path) {
+    if (!path) return nullptr;
+    if (resolved_path) {
+        strcpy(resolved_path, path);
+        return resolved_path;
+    }
+    return strdup(path); // stub
 }
 
 } // extern "C"

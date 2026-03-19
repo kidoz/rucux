@@ -5,25 +5,9 @@
 #include <uapi/kernel/syscalls.h>
 #include <unistd.h>
 
+#include "syscall_impl.h"
+
 extern "C" {
-
-struct message {
-    uint32_t sender;
-    uint32_t type;
-    uint64_t data[4];
-};
-
-static long __syscall(long num, long a1 = 0, long a2 = 0, long a3 = 0, long a4 = 0, long a5 = 0, long a6 = 0) {
-    long ret;
-    register long r10 asm("r10") = a4;
-    register long r8 asm("r8") = a5;
-    register long r9 asm("r9") = a6;
-    asm volatile("syscall"
-                 : "=a"(ret)
-                 : "a"(num), "D"(a1), "S"(a2), "d"(a3), "r"(r10), "r"(r8), "r"(r9)
-                 : "rcx", "r11", "memory");
-    return ret;
-}
 
 int open(const char* path, int flags, ...) {
     return (int)__syscall(SYS_OPEN, (long)path, (long)flags);
@@ -57,6 +41,29 @@ void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset)
 
 int munmap(void* addr, size_t length) {
     return (int)__syscall(SYS_MUNMAP, (long)addr, (long)length);
+}
+
+int mprotect(void *addr, size_t len, int prot) {
+    return (int)__syscall(SYS_MPROTECT, (long)addr, (long)len, (long)prot);
+}
+
+int msync(void *addr, size_t length, int flags) {
+    return (int)__syscall(SYS_MSYNC, (long)addr, (long)length, (long)flags);
+}
+
+int madvise(void *addr, size_t length, int advice) {
+    return (int)__syscall(SYS_MADVISE, (long)addr, (long)length, (long)advice);
+}
+
+int mincore(void *addr, size_t length, unsigned char *vec) {
+    (void)addr;
+    // For now, assume all pages are in core (1).
+    // length is in bytes. We'd normally fill vec based on pages.
+    size_t num_pages = (length + 4095) / 4096;
+    for (size_t i = 0; i < num_pages; ++i) {
+        vec[i] = 1;
+    }
+    return 0; // stub
 }
 
 void _exit(int status) {

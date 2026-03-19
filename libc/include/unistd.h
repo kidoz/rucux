@@ -25,8 +25,11 @@ int ftruncate(int fd, off_t length);
 int close(int fd);
 int unlink(const char* pathname);
 uid_t getuid(void);
+pid_t getpid(void);
+pid_t getppid(void);
 int isatty(int fd);
 unsigned int sleep(unsigned int seconds);
+int usleep(useconds_t usec);
 int gethostname(char *name, size_t len);
 
 #define F_OK 0
@@ -36,7 +39,9 @@ int gethostname(char *name, size_t len);
 int access(const char *pathname, int mode);
 
 #define _SC_PAGESIZE 30
+#define _SC_OPEN_MAX 4
 long sysconf(int name);
+int getpagesize(void);
 
 int chdir(const char *path);
 int fchmod(int fd, mode_t mode);
@@ -49,6 +54,11 @@ int symlink(const char *target, const char *linkpath);
 
 #define _PC_PATH_MAX 1
 long pathconf(const char *path, int name);
+
+pid_t fork(void);
+int pipe(int pipefd[2]);
+int dup2(int oldfd, int newfd);
+int execvp(const char *file, char *const argv[]);
 
 void _exit(int status) __attribute__((noreturn));
 

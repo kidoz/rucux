@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/vfs/ramfs.hpp>
 #include <lib/string.hpp>
-#include <new>
+#include <knew.hpp>
 
 namespace kernel::vfs {
 
@@ -19,7 +19,8 @@ static vfs_ops g_ramfs_ops = {.read = ramfs::read,
                               .close = nullptr,
                               .ioctl = nullptr,
                               .readdir = ramfs::readdir,
-                              .finddir = ramfs::finddir};
+                              .finddir = ramfs::finddir,
+                              .mmap = nullptr};
 
 static ramfs_node_internal* create_internal(const char* name, file_type type) noexcept {
     vfs_node* v = new vfs_node();

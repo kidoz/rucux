@@ -6,11 +6,7 @@
 
 extern "C" {
 
-struct message {
-    uint32_t sender;
-    uint32_t type;
-    uint64_t data[4];
-};
+const struct in6_addr in6addr_any = {{0}};
 
 static long __syscall(long num, long a1 = 0, long a2 = 0, long a3 = 0, long a4 = 0, long a5 = 0, long a6 = 0) {
     long ret;
@@ -24,148 +20,47 @@ static long __syscall(long num, long a1 = 0, long a2 = 0, long a3 = 0, long a4 =
     return ret;
 }
 
-static uint32_t g_net_tid = 0;
-
-static uint32_t get_net_tid() {
-    if (g_net_tid == 0) {
-        message lookup;
-        lookup.type = 11; // LOOKUP_SERVICE
-        const char* name = "net";
-        for (int i = 0; i < 8; ++i)
-            reinterpret_cast<char*>(lookup.data)[i] = name[i];
-        __syscall(SYS_IPC_SEND, 1, (long)&lookup);
-
-        message resp;
-        __syscall(SYS_IPC_RECV, (long)&resp, 0, 0);
-        g_net_tid = static_cast<uint32_t>(resp.data[0]);
-    }
-    return g_net_tid;
+int socket(int domain, int type, int protocol) {
+    return (int)__syscall(SYS_SOCKET, (long)domain, (long)type, (long)protocol);
 }
 
-int socket(int domain, int type, int protocol) {
-    uint32_t tid = get_net_tid();
-    if (!tid) return -1;
-
-    message m;
-    m.type = SYS_SOCKET;
-    m.data[0] = domain;
-    m.data[1] = type;
-    m.data[2] = protocol;
-    __syscall(SYS_IPC_SEND, tid, (long)&m);
-
-    message resp;
-    __syscall(SYS_IPC_RECV, (long)&resp, 0, 0);
-    return (int)resp.data[0];
+int socketpair(int domain, int type, int protocol, int sv[2]) {
+    (void)domain; (void)type; (void)protocol;
+    if (sv) { sv[0] = -1; sv[1] = -1; }
+    return -1; // stub
 }
 
 int bind(int sockfd, const struct sockaddr* addr, unsigned int addrlen) {
-    uint32_t tid = get_net_tid();
-    if (!tid) return -1;
-
-    message m;
-    m.type = SYS_BIND;
-    m.data[0] = sockfd;
-    m.data[1] = (uint64_t)addr;
-    m.data[2] = addrlen;
-    __syscall(SYS_IPC_SEND, tid, (long)&m);
-
-    message resp;
-    __syscall(SYS_IPC_RECV, (long)&resp, 0, 0);
-    return (int)resp.data[0];
+    return (int)__syscall(SYS_BIND, (long)sockfd, (long)addr, (long)addrlen);
 }
 
 int listen(int sockfd, int backlog) {
-    uint32_t tid = get_net_tid();
-    if (!tid) return -1;
-
-    message m;
-    m.type = SYS_LISTEN;
-    m.data[0] = sockfd;
-    m.data[1] = backlog;
-    __syscall(SYS_IPC_SEND, tid, (long)&m);
-
-    message resp;
-    __syscall(SYS_IPC_RECV, (long)&resp, 0, 0);
-    return (int)resp.data[0];
+    return (int)__syscall(SYS_LISTEN, (long)sockfd, (long)backlog);
 }
 
 int accept(int sockfd, struct sockaddr* addr, unsigned int* addrlen) {
-    uint32_t tid = get_net_tid();
-    if (!tid) return -1;
-
-    message m;
-    m.type = SYS_ACCEPT;
-    m.data[0] = sockfd;
-    m.data[1] = (uint64_t)addr;
-    m.data[2] = (uint64_t)addrlen;
-    __syscall(SYS_IPC_SEND, tid, (long)&m);
-
-    message resp;
-    __syscall(SYS_IPC_RECV, (long)&resp, 0, 0);
-    return (int)resp.data[0];
+    return (int)__syscall(SYS_ACCEPT, (long)sockfd, (long)addr, (long)addrlen);
 }
 
 int connect(int sockfd, const struct sockaddr* addr, unsigned int addrlen) {
-    uint32_t tid = get_net_tid();
-    if (!tid) return -1;
-
-    message m;
-    m.type = SYS_CONNECT;
-    m.data[0] = sockfd;
-    m.data[1] = (uint64_t)addr;
-    m.data[2] = addrlen;
-    __syscall(SYS_IPC_SEND, tid, (long)&m);
-
-    message resp;
-    __syscall(SYS_IPC_RECV, (long)&resp, 0, 0);
-    return (int)resp.data[0];
+    return (int)__syscall(SYS_CONNECT, (long)sockfd, (long)addr, (long)addrlen);
 }
 
 ssize_t send(int sockfd, const void* buf, size_t len, int flags) {
-    uint32_t tid = get_net_tid();
-    if (!tid) return -1;
-
-    message m;
-    m.type = SYS_SEND;
-    m.data[0] = sockfd;
-    m.data[1] = (uint64_t)buf;
-    m.data[2] = len;
-    m.data[3] = flags;
-    __syscall(SYS_IPC_SEND, tid, (long)&m);
-
-    message resp;
-    __syscall(SYS_IPC_RECV, (long)&resp, 0, 0);
-    return (ssize_t)resp.data[0];
+    return (ssize_t)__syscall(SYS_SEND, (long)sockfd, (long)buf, (long)len, (long)flags);
 }
 
 ssize_t recv(int sockfd, void* buf, size_t len, int flags) {
-    uint32_t tid = get_net_tid();
-    if (!tid) return -1;
-
-    message m;
-    m.type = SYS_RECV;
-    m.data[0] = sockfd;
-    m.data[1] = (uint64_t)buf;
-    m.data[2] = len;
-    m.data[3] = flags;
-    __syscall(SYS_IPC_SEND, tid, (long)&m);
-
-    message resp;
-    __syscall(SYS_IPC_RECV, (long)&resp, 0, 0);
-    return (ssize_t)resp.data[0];
+    return (ssize_t)__syscall(SYS_RECV, (long)sockfd, (long)buf, (long)len, (long)flags);
 }
 
 ssize_t sendto(int sockfd, const void* buf, size_t len, int flags, const struct sockaddr* dest_addr,
                socklen_t addrlen) {
-    (void)dest_addr;
-    (void)addrlen;
-    return send(sockfd, buf, len, flags);
+    return (ssize_t)__syscall(SYS_SENDTO, (long)sockfd, (long)buf, (long)len, (long)flags, (long)dest_addr, (long)addrlen);
 }
 
 ssize_t recvfrom(int sockfd, void* buf, size_t len, int flags, struct sockaddr* src_addr, socklen_t* addrlen) {
-    (void)src_addr;
-    (void)addrlen;
-    return recv(sockfd, buf, len, flags);
+    return (ssize_t)__syscall(SYS_RECVFROM, (long)sockfd, (long)buf, (long)len, (long)flags, (long)src_addr, (long)addrlen);
 }
 
 int shutdown(int sockfd, int how) {
@@ -175,31 +70,19 @@ int shutdown(int sockfd, int how) {
 }
 
 int setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen) {
-    (void)sockfd;
-    (void)level;
-    (void)optname;
-    (void)optval;
-    (void)optlen;
-    return 0; // stub
+    return (int)__syscall(SYS_SETSOCKOPT, (long)sockfd, (long)level, (long)optname, (long)optval, (long)optlen);
 }
 
 int getsockopt(int sockfd, int level, int optname, void* optval, socklen_t* optlen) {
-    (void)sockfd;
-    (void)level;
-    (void)optname;
-    (void)optval;
-    (void)optlen;
-    return 0; // stub
+    return (int)__syscall(SYS_GETSOCKOPT, (long)sockfd, (long)level, (long)optname, (long)optval, (long)optlen);
 }
 
 int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
-    (void)sockfd; (void)addr; (void)addrlen;
-    return 0; // stub
+    return (int)__syscall(SYS_GETSOCKNAME, (long)sockfd, (long)addr, (long)addrlen);
 }
 
 int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
-    (void)sockfd; (void)addr; (void)addrlen;
-    return 0; // stub
+    return (int)__syscall(SYS_GETPEERNAME, (long)sockfd, (long)addr, (long)addrlen);
 }
 
 } // extern "C"

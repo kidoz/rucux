@@ -19,8 +19,22 @@ extern "C" {
 #define MAP_ANONYMOUS 0x20
 #define MAP_FAILED ((void*)-1)
 
+#define MS_ASYNC 1
+#define MS_SYNC 2
+#define MS_INVALIDATE 4
+
+#define MADV_NORMAL 0
+#define MADV_RANDOM 1
+#define MADV_SEQUENTIAL 2
+#define MADV_WILLNEED 3
+#define MADV_DONTNEED 4
+
 void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset);
 int munmap(void* addr, size_t length);
+int mprotect(void *addr, size_t len, int prot);
+int msync(void *addr, size_t length, int flags);
+int madvise(void *addr, size_t length, int advice);
+int mincore(void *addr, size_t length, unsigned char *vec);
 
 #ifdef __cplusplus
 }

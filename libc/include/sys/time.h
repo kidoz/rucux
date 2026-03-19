@@ -3,6 +3,7 @@
 #define _SYS_TIME_H
 
 #include <time.h>
+#include <sys/select.h>
 
 #ifdef __cplusplus
 extern "C" {

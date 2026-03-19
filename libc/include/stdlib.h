@@ -24,6 +24,7 @@ void* malloc(size_t size);
 void free(void* ptr);
 void* calloc(size_t nmemb, size_t size);
 void* realloc(void* ptr, size_t size);
+int posix_memalign(void **memptr, size_t alignment, size_t size);
 void exit(int status) __attribute__((noreturn));
 const char* getprogname(void);
 
@@ -81,6 +82,10 @@ uint32_t arc4random_uniform(uint32_t upper_bound);
 
 int rand(void);
 void srand(unsigned int seed);
+
+long random(void);
+void srandom(unsigned int seed);
+void srand48(long int seedval);
 
 #ifdef __cplusplus
 }

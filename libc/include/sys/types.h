@@ -14,6 +14,7 @@ typedef unsigned int u_int;
 typedef unsigned char u_char;
 typedef unsigned int mode_t;
 typedef long time_t;
+typedef unsigned int useconds_t;
 
 typedef unsigned long dev_t;
 typedef unsigned long ino_t;

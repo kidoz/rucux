@@ -17,6 +17,7 @@ struct vfs_ops {
     int (*ioctl)(vfs_node* node, unsigned long request, void* argp);
     vfs_node* (*readdir)(vfs_node* node, size_t index);
     vfs_node* (*finddir)(vfs_node* node, const char* name);
+    uintptr_t (*mmap)(vfs_node* node, size_t offset); // Returns physical address
 };
 
 struct vfs_node {
@@ -44,6 +45,21 @@ public:
     static int sys_write(int fd, const void* buffer, size_t size) noexcept;
     static int sys_close(int fd) noexcept;
     static int sys_ioctl(int fd, unsigned long request, void* argp) noexcept;
+
+    // File Management
+    static int sys_lseek(int fd, long offset, int whence) noexcept;
+    static int sys_stat(const char* path, void* statbuf) noexcept;
+    static int sys_fstat(int fd, void* statbuf) noexcept;
+    static int sys_ftruncate(int fd, long length) noexcept;
+    static int sys_fsync(int fd) noexcept;
+    static int sys_fcntl(int fd, int cmd, long arg) noexcept;
+
+    // Multiplexing
+    static int sys_select(int nfds, void* readfds, void* writefds, void* exceptfds, void* timeout) noexcept;
+    static int sys_poll(void* fds, unsigned int nfds, int timeout) noexcept;
+    static int sys_epoll_create(int size) noexcept;
+    static int sys_epoll_ctl(int epfd, int op, int fd, void* event) noexcept;
+    static int sys_epoll_wait(int epfd, void* events, int maxevents, int timeout) noexcept;
 };
 
 } // namespace kernel::vfs

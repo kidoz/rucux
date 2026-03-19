@@ -1,33 +1,49 @@
 // SPDX-License-Identifier: MIT
+#include <arch/amd64/apic.hpp>
 #include <arch/amd64/idt.hpp>
 #include <arch/amd64/pic.hpp>
 #include <arch/amd64/uart.hpp>
+#include <kernel/cpu/percpu.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/time.hpp>
 
 namespace arch::amd64 {
 
 static idt_descriptor g_idt[256];
 static idt_pointer g_idt_ptr;
 
+// Set to true once APIC replaces the legacy PIC
+static bool g_apic_mode = false;
+
+void idt_set_apic_mode(bool enabled) noexcept {
+    g_apic_mode = enabled;
+}
+
+static void send_eoi(uint8_t irq) noexcept {
+    if (g_apic_mode)
+        lapic::send_eoi();
+    else
+        pic::send_eoi(irq);
+}
+
 extern "C" void irq0_entry();
 extern "C" void irq0_handler() noexcept {
-    pic::send_eoi(0);
+    send_eoi(0);
+    kernel::cpu::this_cpu()->ticks++;
+    kernel::time_manager::tick();
     kernel::scheduler::scheduler::schedule();
 }
 
 extern "C" void irq1_entry();
 extern "C" void irq1_handler() noexcept {
-    pic::send_eoi(1);
+    send_eoi(1);
     kernel::scheduler::scheduler::wake_irq_waiters(1);
-    // Optionally schedule immediately to wake up the blocked driver faster
     kernel::scheduler::scheduler::schedule();
 }
 
 extern "C" void irq4_handler() noexcept {
-    // UART Interrupt occurred
-    // We should notify the Console Server here
-    pic::send_eoi(4);
+    send_eoi(4);
 }
 
 extern "C" void isr_stub_14();

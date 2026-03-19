@@ -29,18 +29,19 @@ fi
 # 3. Configure
 echo "Configuring libtorrent for rucux sysroot..."
 
-export CXXFLAGS="${CFLAGS} -O2 -std=c++14"
+export CXXFLAGS="${CXXFLAGS} -O2 -std=c++14"
 
 # It uses pkg-config, so let's point it to our sysroot
 export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 
-./configure --host=x86_64-elf 
-            --prefix="${SYSROOT}/usr" 
-            --disable-shared 
-            --enable-static 
-            --with-zlib="${SYSROOT}/usr" 
-            --with-openssl="${SYSROOT}/usr"
+./configure --host=x86_64-elf \
+            --prefix="${SYSROOT}/usr" \
+            --disable-shared \
+            --enable-static \
+            --with-zlib="${SYSROOT}/usr" \
+            --with-openssl="${SYSROOT}/usr" \
+            --enable-aligned
 
 # 4. Compile
 echo "Compiling libtorrent..."

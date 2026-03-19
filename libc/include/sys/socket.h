@@ -20,9 +20,10 @@ extern "C" {
 
 typedef unsigned int socklen_t;
 typedef unsigned int in_addr_t;
+typedef unsigned short sa_family_t;
 
 struct sockaddr {
-    unsigned short sa_family;
+    sa_family_t sa_family;
     char sa_data[14];
 };
 
@@ -56,7 +57,10 @@ struct sockaddr_storage {
 
 #define AF_UNSPEC 0
 #define AF_UNIX   1
+#define AF_LOCAL  1
 #define PF_UNSPEC AF_UNSPEC
+#define PF_UNIX   AF_UNIX
+#define PF_LOCAL  AF_LOCAL
 #define AF_INET  2
 #define AF_INET6 10
 #define PF_INET AF_INET
@@ -66,14 +70,31 @@ struct sockaddr_storage {
 #define SHUT_WR   1
 #define SHUT_RDWR 2
 
+#define INET_ADDRSTRLEN 16
+#define INET6_ADDRSTRLEN 46
+
 #define INADDR_ANY 0
+extern const struct in6_addr in6addr_any;
 #define SOL_SOCKET 1
 #define SO_REUSEADDR 2
 #define SO_ERROR 3
 #define SO_KEEPALIVE 9
+#define SO_SNDBUF 7
+#define SO_RCVBUF 8
+#define SO_DONTROUTE 10
 #define SOMAXCONN 128
 
+#define IP_TOS 1
+#define IPV6_TCLASS 67
+#define IPV6_V6ONLY 26
+#define IPPROTO_IPV6 41
+
+#define MSG_OOB       0x01
+#define MSG_PEEK      0x02
+#define MSG_DONTROUTE 0x04
+
 int socket(int domain, int type, int protocol);
+int socketpair(int domain, int type, int protocol, int sv[2]);
 int bind(int sockfd, const struct sockaddr *addr, unsigned int addrlen);
 int listen(int sockfd, int backlog);
 int accept(int sockfd, struct sockaddr *addr, unsigned int *addrlen);
