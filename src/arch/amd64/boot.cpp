@@ -16,6 +16,7 @@
 #include <arch/amd64/smp.hpp>
 #include <arch/amd64/syscall.hpp>
 #include <kernel/ipc/ipc.hpp>
+#include <kernel/memory/slab.hpp>
 #include <kernel/memory/heap.hpp>
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/vmm.hpp>
@@ -64,6 +65,7 @@ static void open_stdio(kernel::scheduler::thread* t) {
         kernel::print("open_stdio: /dev/tty not found!\n");
         return;
     }
+    t->ensure_fd_capacity(3);
     for (int i = 0; i < 3; i++) {
         t->fd_table[i].node = tty;
         t->fd_table[i].offset = 0;
@@ -251,6 +253,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
 
     kernel::memory::heap::init();
     kernel::cpu::bsp_init();
+    kernel::memory::slab_init();
     kernel::scheduler::scheduler::init();
     kernel::vfs::vfs_manager::init();
     kernel::time_manager::init();
@@ -305,7 +308,8 @@ extern "C" void kernel_main(rucux_boot_info* info) {
                 uint32_t partition1_start = *(uint32_t*)(&sector[454]);
                 auto* fat32_root = kernel::vfs::fat32::mount(partition1_start);
                 if (fat32_root) {
-                    lib::strcpy(fat32_root->name, "fat32");
+                    fat32_root->name = "fat32";
+                    fat32_root->name_hash = kernel::vfs::vfs_node::hash_name("fat32");
                     kernel::vfs::ramfs::attach_node(root, fat32_root);
                 }
             }

@@ -33,6 +33,33 @@ uintptr_t g_temp_user_rsp = 0;
 void jump_to_user_space(void* entry, void* stack, void* arg);
 }
 
+bool thread::ensure_fd_capacity(size_t n) noexcept {
+    if (n > MAX_FDS) n = MAX_FDS;
+    if (fd_table && fd_count >= n) return true;
+
+    size_t new_count = fd_count ? fd_count : INITIAL_FDS;
+    while (new_count < n) new_count *= 2;
+    if (new_count > MAX_FDS) new_count = MAX_FDS;
+
+    auto* new_table = new file_descriptor[new_count];
+    if (!new_table) return false;
+
+    // Copy old entries
+    for (size_t i = 0; i < fd_count; ++i)
+        new_table[i] = fd_table[i];
+    // Zero new entries
+    for (size_t i = fd_count; i < new_count; ++i) {
+        new_table[i].node = nullptr;
+        new_table[i].offset = 0;
+        new_table[i].flags = 0;
+    }
+
+    delete[] fd_table;
+    fd_table = new_table;
+    fd_count = new_count;
+    return true;
+}
+
 static void clone_trampoline() {
     thread* t = scheduler::scheduler::current_thread();
     jump_to_user_space(t->user_entry, t->user_stack, t->user_arg);
@@ -50,9 +77,13 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     t->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[t->stack_size]);
     t->pml4_phys = parent->pml4_phys; // Share address space
 
-    // Copy FDs
-    for (size_t i = 0; i < thread::MAX_FDS; ++i) {
-        t->fd_table[i] = parent->fd_table[i];
+    // Copy FDs from parent
+    t->fd_table = nullptr;
+    t->fd_count = 0;
+    if (parent->fd_table && parent->fd_count > 0) {
+        t->ensure_fd_capacity(parent->fd_count);
+        for (size_t i = 0; i < t->fd_count && i < parent->fd_count; ++i)
+            t->fd_table[i] = parent->fd_table[i];
     }
 
     t->async_head = 0;
@@ -188,11 +219,8 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->has_queued_msg = false;
     t->recv_buffer = nullptr;
 
-    for (size_t i = 0; i < thread::MAX_FDS; ++i) {
-        t->fd_table[i].node = nullptr;
-        t->fd_table[i].offset = 0;
-        t->fd_table[i].flags = 0;
-    }
+    t->fd_table = nullptr;
+    t->fd_count = 0;
 
     {
         kernel::irq_lock_guard guard(g_threads_lock);

@@ -158,7 +158,11 @@ static vfs_node* fat32_finddir(vfs_node* node, const char* name) noexcept {
 
                 if (match) {
                     vfs_node* v = new vfs_node();
-                    lib::strcpy(v->name, name);
+                    size_t nlen = lib::strlen(name);
+                    char* ndup = new char[nlen + 1];
+                    lib::memcpy(ndup, name, nlen + 1);
+                    v->name = ndup;
+                    v->name_hash = vfs_node::hash_name(name);
                     v->length = *reinterpret_cast<uint32_t*>(&entry[28]);
                     v->type = (entry[11] & 0x10) ? file_type::DIRECTORY : file_type::REGULAR;
 
@@ -213,7 +217,8 @@ vfs_node* mount(uint32_t partition_lba) noexcept {
     info->data_lba = info->fat_lba + (info->num_fats * info->sectors_per_fat);
 
     vfs_node* root = new vfs_node();
-    lib::strcpy(root->name, "/");
+    root->name = "/";
+    root->name_hash = vfs_node::hash_name("/");
     root->type = file_type::DIRECTORY;
 
     root->ops = new vfs_ops();

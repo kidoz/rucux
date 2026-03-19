@@ -48,14 +48,19 @@ struct thread {
     thread* next;
     thread* all_next;
 
-    // File descriptors (POSIX)
+    // File descriptors (POSIX) — dynamically allocated to save memory
     struct file_descriptor {
         void* node; // Actually vfs_node*, but we don't want to include vfs.hpp here to avoid circular dependencies
         size_t offset;
         int flags;
     };
+    static constexpr size_t INITIAL_FDS = 8;  // Start small, grow on demand
     static constexpr size_t MAX_FDS = 32;
-    file_descriptor fd_table[MAX_FDS];
+    file_descriptor* fd_table; // Allocated on first use or inherited from parent
+    size_t fd_count;           // Number of allocated slots in fd_table
+
+    // Ensure fd_table has at least `n` slots. Returns false on OOM.
+    bool ensure_fd_capacity(size_t n) noexcept;
 };
 
 class scheduler {

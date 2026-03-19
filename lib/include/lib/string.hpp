@@ -16,6 +16,7 @@ char* strncpy(char* dest, const char* src, size_t n) noexcept;
 char* strcat(char* dest, const char* src) noexcept;
 char* strncat(char* dest, const char* src, size_t n) noexcept;
 int strcmp(const char* s1, const char* s2) noexcept;
+size_t strlen(const char* s) noexcept;
 
 } // extern "C"
 

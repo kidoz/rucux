@@ -137,6 +137,12 @@ int strcmp(const char* s1, const char* s2) noexcept {
     return *(unsigned char*)s1 - *(unsigned char*)s2;
 }
 
+size_t strlen(const char* s) noexcept {
+    const char* p = s;
+    while (*p) p++;
+    return static_cast<size_t>(p - s);
+}
+
 } // extern "C"
 
 } // namespace lib

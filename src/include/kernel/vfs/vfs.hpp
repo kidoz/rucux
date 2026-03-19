@@ -21,16 +21,24 @@ struct vfs_ops {
 };
 
 struct vfs_node {
-    char name[128];
-    uint32_t mask;
-    uint32_t uid;
-    uint32_t gid;
-    uint32_t flags;
+    const char* name;  // Dynamically allocated name string
+    uint32_t name_hash; // FNV-1a hash for fast comparison
     uint32_t inode;
     size_t length;
     file_type type;
+    uint16_t uid;
+    uint16_t gid;
+    uint16_t mask;
+    uint16_t flags;
     vfs_ops* ops;
     vfs_node* ptr; // Implementation specific
+
+    static uint32_t hash_name(const char* s) noexcept {
+        uint32_t h = 2166136261u; // FNV offset basis
+        for (; *s; ++s)
+            h = (h ^ static_cast<uint8_t>(*s)) * 16777619u;
+        return h;
+    }
 };
 
 class vfs_manager {

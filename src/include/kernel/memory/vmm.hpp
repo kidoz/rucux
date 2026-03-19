@@ -22,11 +22,15 @@ public:
     static void init() noexcept;
     static uintptr_t create_address_space() noexcept;
     static void map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept;
+    static void map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept;
     static void unmap(uintptr_t virt) noexcept;
     static void switch_to(uintptr_t pml4_phys) noexcept;
     static uintptr_t get_active_page_table() noexcept;
     static void disable_write_protect() noexcept;
     static void enable_write_protect() noexcept;
+
+    // Handle page fault for demand paging. Returns true if handled.
+    static bool handle_page_fault(uintptr_t fault_addr, uint64_t error_code) noexcept;
 };
 
 } // namespace kernel::memory

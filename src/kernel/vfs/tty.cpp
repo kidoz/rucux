@@ -287,7 +287,8 @@ vfs_node* create() noexcept {
     g_tty.term.c_oflag = ECHONL;
 
     vfs_node* node = new vfs_node();
-    lib::strcpy(node->name, "tty");
+    node->name = "tty";
+    node->name_hash = vfs_node::hash_name("tty");
     node->type = file_type::CHAR_DEVICE;
     node->ops = new vfs_ops();
     node->ops->read = tty_read;

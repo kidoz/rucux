@@ -4,6 +4,7 @@
 #include <arch/amd64/pic.hpp>
 #include <arch/amd64/uart.hpp>
 #include <kernel/cpu/percpu.hpp>
+#include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/time.hpp>
@@ -51,6 +52,12 @@ extern "C" void isr_handler(uint64_t vector, uint64_t error_code) noexcept {
     if (vector == 14) {
         uint64_t cr2;
         asm volatile("mov %%cr2, %0" : "=r"(cr2));
+
+        // Try demand paging first
+        if (kernel::memory::vmm::handle_page_fault(cr2, error_code))
+            return;
+
+        // Unhandled page fault — fatal
         kernel::print("Page Fault at {} (error code: {})\n", reinterpret_cast<void*>(cr2), error_code);
     } else {
         kernel::print("Unhandled interrupt: {}\n", vector);

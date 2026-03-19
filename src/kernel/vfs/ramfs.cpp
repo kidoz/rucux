@@ -22,9 +22,17 @@ static vfs_ops g_ramfs_ops = {.read = ramfs::read,
                               .finddir = ramfs::finddir,
                               .mmap = nullptr};
 
+static char* kstrdup(const char* s) noexcept {
+    size_t len = lib::strlen(s);
+    char* dup = new char[len + 1];
+    lib::memcpy(dup, s, len + 1);
+    return dup;
+}
+
 static ramfs_node_internal* create_internal(const char* name, file_type type) noexcept {
     vfs_node* v = new vfs_node();
-    lib::strcpy(v->name, name);
+    v->name = kstrdup(name);
+    v->name_hash = vfs_node::hash_name(name);
     v->type = type;
     v->ops = &g_ramfs_ops;
 
@@ -128,9 +136,11 @@ vfs_node* ramfs::readdir(vfs_node* node, size_t index) noexcept {
 
 vfs_node* ramfs::finddir(vfs_node* node, const char* name) noexcept {
     ramfs_node_internal* internal = reinterpret_cast<ramfs_node_internal*>(node->ptr);
+    uint32_t hash = vfs_node::hash_name(name);
     ramfs_node_internal* cur = internal->first_child;
     while (cur) {
-        if (lib::strcmp(cur->vnode->name, name) == 0) return cur->vnode;
+        if (cur->vnode->name_hash == hash && lib::strcmp(cur->vnode->name, name) == 0)
+            return cur->vnode;
         cur = cur->next;
     }
     return nullptr;
