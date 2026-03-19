@@ -5,6 +5,8 @@
 
 namespace kernel::scheduler {
 struct thread;
+enum class thread_prio : uint8_t;
+constexpr int NUM_PRIOS = 3;
 } // namespace kernel::scheduler
 
 namespace kernel::cpu {
@@ -15,6 +17,19 @@ inline constexpr uint32_t MAX_CPUS = 64;
 // Per-CPU data structure. One instance per logical CPU.
 // On amd64: accessed via GS segment base.
 // On ARMv7: accessed via TPIDRPRW (CP15 c13,0,c0,4).
+// Per-CPU run queue: one FIFO queue per priority level.
+// Methods defined out-of-line (scheduler.cpp) because they access thread::next.
+struct run_queue {
+    scheduler::thread* head;
+    scheduler::thread* tail;
+    uint32_t count;
+
+    void init() noexcept;
+    void enqueue(scheduler::thread* t) noexcept;
+    scheduler::thread* dequeue() noexcept;
+    bool empty() const noexcept { return head == nullptr; }
+};
+
 struct per_cpu {
     per_cpu* self;                          // GS:0 self-pointer for fast access
     uint32_t cpu_id;                        // Logical CPU ID (0 = BSP)
@@ -27,7 +42,11 @@ struct per_cpu {
     bool online;                            // CPU is initialized and running
     uint64_t ticks;                         // Per-CPU tick count
 
-    // Scheduler lock — protects this CPU's run queue and thread state transitions
+    // Per-CPU run queues — one per priority level
+    run_queue queues[scheduler::NUM_PRIOS];
+    uint32_t total_runnable;                // Sum of all queue counts
+
+    // Protects this CPU's run queues
     irq_spinlock sched_lock;
 };
 

@@ -7,9 +7,19 @@ namespace kernel::scheduler {
 
 enum class thread_state { READY, RUNNING, BLOCKED, TERMINATED };
 
+// Priority classes — lower number = higher priority
+enum class thread_prio : uint8_t {
+    RT     = 0,   // Real-time (interrupt handlers, critical drivers)
+    NORMAL = 1,   // Normal user/kernel threads
+    IDLE   = 2,   // Idle priority (background work)
+    NUM_PRIOS = 3
+};
+
 struct thread {
     uint32_t tid;
     thread_state state;
+    thread_prio priority;
+    uint32_t last_cpu;         // CPU this thread last ran on (cache affinity)
     uintptr_t stack_pointer;
     uintptr_t stack_base;
     size_t stack_size;
@@ -19,14 +29,13 @@ struct thread {
     thread* send_queue_head;
     thread* send_queue_next;
 
-    // For synchronous IPC, we need a place to store the message if we are blocked
     struct sync_message {
         uint32_t sender;
         uint32_t type;
         uint64_t data[4];
     } queued_msg;
     bool has_queued_msg;
-    void* recv_buffer; // Pointer to the receiver's buffer in their address space
+    void* recv_buffer;
 
     // Async IPC
     static constexpr size_t ASYNC_QUEUE_SIZE = 16;
@@ -44,9 +53,9 @@ struct thread {
     void* user_arg;
     uintptr_t futex_wait_addr;
 
-    // For round-robin or priority
-    thread* next;
-    thread* all_next;
+    // Scheduling links
+    thread* next;     // Next in run queue
+    thread* all_next; // Next in global thread list
 
     // File descriptors (POSIX) — dynamically allocated to save memory
     struct file_descriptor {
