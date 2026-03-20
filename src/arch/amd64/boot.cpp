@@ -14,9 +14,12 @@
 
 #include <arch/amd64/acpi.hpp>
 #include <arch/amd64/apic.hpp>
+#include <arch/amd64/e1000.hpp>
 #include <arch/amd64/smp.hpp>
 #include <arch/amd64/syscall.hpp>
 #include <kernel/ipc/ipc.hpp>
+#include <kernel/net/netif.hpp>
+#include <kernel/net/socket.hpp>
 #include <kernel/memory/slab.hpp>
 #include <kernel/memory/heap.hpp>
 #include <kernel/memory/pmm.hpp>
@@ -309,6 +312,11 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     }
 
     kernel::pci::init();
+
+    // Initialize network stack
+    kernel::net::net_init();
+    kernel::net::socket_manager::init();
+    arch::amd64::e1000::init(); // Probe for E1000 NIC
 
     if (kernel::vfs::ata::init()) {
         uint8_t sector[512];

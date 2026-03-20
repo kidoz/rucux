@@ -76,6 +76,15 @@ if arch == 'x86_64'
         'src/kernel/ipc/ipc.cpp',
         'src/kernel/time.cpp',
         'src/kernel/net/socket.cpp',
+        'src/kernel/net/netbuf.cpp',
+        'src/kernel/net/netif.cpp',
+        'src/kernel/net/ethernet.cpp',
+        'src/kernel/net/arp.cpp',
+        'src/kernel/net/ipv4.cpp',
+        'src/kernel/net/checksum.cpp',
+        'src/kernel/net/tcp.cpp',
+        'src/kernel/net/udp.cpp',
+        'src/arch/amd64/e1000.cpp',
         'lib/string.cpp',
         'lib/new.cpp'
     ]
