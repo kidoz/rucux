@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <arch/armv7/console.hpp>
 #include <arch/armv7/exception.hpp>
 #include <arch/armv7/gic.hpp>
 #include <arch/armv7/psci.hpp>
@@ -32,6 +33,7 @@ static constexpr uint32_t NUM_CPUS = 4;
 
 void kernel_main(rucux_boot_info* info) {
     arch::armv7::uart::init();
+    arch::armv7::console::init_early();
     arch::armv7::exceptions_init();
 
     kernel::print("rucux (armv7) Initialized!\n");

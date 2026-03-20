@@ -25,7 +25,7 @@ struct thread {
     size_t stack_size;
     uintptr_t pml4_phys;
 
-    // IPC
+    // IPC (legacy)
     thread* send_queue_head;
     thread* send_queue_next;
 
@@ -36,6 +36,11 @@ struct thread {
     } queued_msg;
     bool has_queued_msg;
     void* recv_buffer;
+
+    // Fast IPC: direct thread-to-thread register transfer
+    thread* ipc_caller;    // Thread that called us via ipc_call (waiting for reply)
+    uint64_t ipc_regs[4];  // type, d0, d1, d2 — transferred in registers
+    bool ipc_waiting;       // True if blocked in ipc_wait()
 
     // Async IPC
     static constexpr size_t ASYNC_QUEUE_SIZE = 16;

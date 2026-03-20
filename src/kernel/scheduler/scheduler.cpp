@@ -193,6 +193,8 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->send_queue_next = nullptr;
     t->has_queued_msg = false;
     t->recv_buffer = nullptr;
+    t->ipc_caller = nullptr;
+    t->ipc_waiting = false;
     t->fd_table = nullptr;
     t->fd_count = 0;
 
@@ -236,6 +238,8 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     t->user_stack = stack;
     t->user_arg = arg;
     t->futex_wait_addr = 0;
+    t->ipc_caller = nullptr;
+    t->ipc_waiting = false;
 
     uint64_t* kstack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
     *(--kstack) = reinterpret_cast<uint64_t>(clone_trampoline);

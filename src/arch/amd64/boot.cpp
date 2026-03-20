@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <arch/amd64/console.hpp>
 #include <arch/amd64/framebuffer.hpp>
 #include <arch/amd64/gdt.hpp>
 #include <arch/amd64/idt.hpp>
@@ -195,6 +196,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     asm volatile("mov %0, %%cr4" : : "r"(cr4));
 
     arch::amd64::uart::init();
+    arch::amd64::console::init_early();
     arch::amd64::gdt_init();
     arch::amd64::idt_init();
     arch::amd64::pit::init(100);
@@ -248,7 +250,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
         kernel::print("Framebuffer Found: addr=0x{}, {}x{}x{}\n", reinterpret_cast<void*>(info->fb_address),
                       info->fb_width, info->fb_height, info->fb_bpp);
         arch::amd64::framebuffer::init(info->fb_address, info->fb_width, info->fb_height, info->fb_pitch, info->fb_bpp);
-        arch::amd64::framebuffer::fill_rect(10, 10, 100, 100, 0x00FF0000);
+        arch::amd64::console::enable_framebuffer();
     }
 
     kernel::memory::heap::init();

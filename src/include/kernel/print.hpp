@@ -5,7 +5,7 @@
 
 namespace kernel {
 
-// Architecture-specific UART output
+// Kernel console output routed to registered backends
 void kputc(char c) noexcept;
 void kwrite(const char* s) noexcept;
 

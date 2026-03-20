@@ -127,7 +127,12 @@ extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, l
         return kernel::net::socket_manager::sys_getpeername(static_cast<int>(a1), reinterpret_cast<void*>(a2), reinterpret_cast<uint32_t*>(a3));
     case SYS_EXIT:
         kernel::scheduler::scheduler::exit();
-        return 0; // We will not return to user space
+        return 0;
+    case SYS_IPC_CALL:
+        return kernel::ipc::sys_ipc_call(static_cast<uint32_t>(a1),
+                                         reinterpret_cast<kernel::ipc::fast_msg*>(a2));
+    case SYS_IPC_REPLY:
+        return kernel::ipc::sys_ipc_reply(reinterpret_cast<kernel::ipc::fast_msg*>(a1));
     default:
         return -1;
     }
