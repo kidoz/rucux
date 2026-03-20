@@ -58,6 +58,15 @@ struct thread {
     void* user_arg;
     uintptr_t futex_wait_addr;
 
+    // Signals
+    static constexpr int MAX_SIGNALS = 32;
+    using sighandler_t = void (*)(int);
+    sighandler_t sig_handlers[MAX_SIGNALS]; // SIG_DFL=0, SIG_IGN=1, or handler addr
+    uint32_t sig_mask;      // Blocked signals bitmask
+    uint32_t sig_pending;   // Pending signals bitmask
+    int exit_code;          // Exit status (for pthread_join)
+    bool exited;            // True after thread has exited
+
     // Scheduling links
     thread* next;     // Next in run queue
     thread* all_next; // Next in global thread list

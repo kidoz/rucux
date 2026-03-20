@@ -12,10 +12,4 @@ int snprintf(char* str, size_t size, const char* format, ...) {
     return ret;
 }
 
-int vsnprintf(char* str, size_t size, const char* format, va_list ap) {
-    (void)size;
-    // We use our existing vsprintf stub for now
-    return vsprintf(str, format, ap);
-}
-
 }

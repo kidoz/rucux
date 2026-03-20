@@ -137,6 +137,44 @@ int vfs_manager::sys_ioctl(int fd, unsigned long request, void* argp) noexcept {
     return -1;
 }
 
+// getdents: read one dirent from a directory fd.
+// Uses fdesc->offset as the child index, increments on each call.
+// Returns sizeof(dirent_k) on success, 0 on end-of-dir, -1 on error.
+struct dirent_k {
+    unsigned long d_ino;
+    long d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[256];
+};
+
+int vfs_manager::sys_getdents(int fd, void* dirp, size_t count) noexcept {
+    auto* t = scheduler::scheduler::current_thread();
+    auto* fdesc = get_fd(t, fd);
+    if (!fdesc || !fdesc->node || count < sizeof(dirent_k)) return -1;
+
+    vfs_node* node = static_cast<vfs_node*>(fdesc->node);
+    if (node->type != file_type::DIRECTORY || !node->ops || !node->ops->readdir) return -1;
+
+    vfs_node* child = node->ops->readdir(node, fdesc->offset);
+    if (!child) return 0; // End of directory
+
+    auto* de = static_cast<dirent_k*>(dirp);
+    de->d_ino = child->inode;
+    de->d_off = static_cast<long>(fdesc->offset);
+    de->d_reclen = sizeof(dirent_k);
+    de->d_type = (child->type == file_type::DIRECTORY) ? 4 : 8; // DT_DIR=4, DT_REG=8
+
+    // Copy name
+    const char* name = child->name;
+    int i = 0;
+    while (name[i] && i < 255) { de->d_name[i] = name[i]; i++; }
+    de->d_name[i] = '\0';
+
+    fdesc->offset++;
+    return static_cast<int>(sizeof(dirent_k));
+}
+
 int vfs_manager::sys_lseek(int fd, long offset, int whence) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);

@@ -98,25 +98,18 @@ const char* getprogname(void) {
 }
 
 int atoi(const char* nptr) {
-    (void)nptr;
-    return 0; // stub
+    return (int)strtol(nptr, nullptr, 10);
 }
 
 long atol(const char* nptr) {
-    (void)nptr;
-    return 0; // stub
+    return strtol(nptr, nullptr, 10);
 }
 
 double atof(const char* nptr) {
-    (void)nptr;
-    return 0.0; // stub
+    return strtod(nptr, nullptr);
 }
 
-double strtod(const char* nptr, char** endptr) {
-    (void)nptr;
-    if (endptr) *endptr = (char*)nptr;
-    return 0.0; // stub
-}
+// strtod is now implemented in strtol.cpp
 
 int abs(int j) {
     return j < 0 ? -j : j;

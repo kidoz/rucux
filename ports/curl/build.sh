@@ -54,6 +54,8 @@ export LIBS="-lc"
             --without-libidn2 \
             --without-brotli \
             --without-zstd \
+            --without-nghttp2 \
+            --without-nghttp3 \
             curl_cv_func_printf_ptr=yes \
             curl_cv_func_recv_test=yes \
             curl_cv_func_send_test=yes \
@@ -61,6 +63,17 @@ export LIBS="-lc"
             curl_cv_func_poll_test=yes \
             ac_cv_func_fseeko=yes \
             ac_cv_func_gethostbyname=yes \
+            ac_cv_func_getaddrinfo=yes \
+            ac_cv_func_sigaction=yes \
+            ac_cv_func_signal=yes \
+            ac_cv_func_strtoll=yes \
+            ac_cv_func_snprintf=yes \
+            ac_cv_func_inet_pton=yes \
+            ac_cv_func_inet_ntop=yes \
+            ac_cv_func_fcntl=yes \
+            ac_cv_header_pthread_h=yes \
+            ac_cv_header_netdb_h=yes \
+            ac_cv_header_poll_h=yes \
             CFLAGS="${CFLAGS} -O2" \
             LDFLAGS="${LDFLAGS}" \
             OPENSSL_LIBS="-lssl -lcrypto -lz" \

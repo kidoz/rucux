@@ -2,7 +2,7 @@ CXX ?= c++
 CXXFLAGS = -std=c++20 -Wall -Wextra -g -I../src/include
 LDFLAGS = -lpthread
 
-TESTS = test_atomic test_spinlock test_buddy
+TESTS = test_atomic test_spinlock test_buddy test_libc
 
 .PHONY: all clean run
 
@@ -15,6 +15,9 @@ test_spinlock: test_spinlock.cpp test_harness.hpp
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $<
 
 test_buddy: test_buddy.cpp test_harness.hpp
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+test_libc: test_libc.cpp test_harness.hpp
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 run: $(TESTS)

@@ -55,6 +55,7 @@ public:
     static int sys_write(int fd, const void* buffer, size_t size) noexcept;
     static int sys_close(int fd) noexcept;
     static int sys_ioctl(int fd, unsigned long request, void* argp) noexcept;
+    static int sys_getdents(int fd, void* dirp, size_t count) noexcept;
 
     // File Management
     static int sys_lseek(int fd, long offset, int whence) noexcept;

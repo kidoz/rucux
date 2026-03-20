@@ -16,6 +16,8 @@ namespace arch::amd64 {
 
 extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
     switch (num) {
+    case SYS_GETDENTS:
+        return kernel::vfs::vfs_manager::sys_getdents(static_cast<int>(a1), reinterpret_cast<void*>(a2), static_cast<size_t>(a3));
     case SYS_OPEN:
         return kernel::vfs::vfs_manager::sys_open(reinterpret_cast<const char*>(a1), static_cast<int>(a2));
     case SYS_READ:

@@ -195,6 +195,11 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->recv_buffer = nullptr;
     t->ipc_caller = nullptr;
     t->ipc_waiting = false;
+    for (int s = 0; s < thread::MAX_SIGNALS; ++s) t->sig_handlers[s] = nullptr;
+    t->sig_mask = 0;
+    t->sig_pending = 0;
+    t->exit_code = 0;
+    t->exited = false;
     t->fd_table = nullptr;
     t->fd_count = 0;
 
@@ -387,6 +392,7 @@ void scheduler::unblock(thread* t) noexcept {
 void scheduler::exit() noexcept {
     auto* cur = cpu::this_cpu()->current_thread;
     if (!cur) return;
+    cur->exited = true;
     cur->state = thread_state::TERMINATED;
     schedule();
     while (true) {

@@ -34,13 +34,18 @@ export CPPFLAGS="${CPPFLAGS} -I${SYSROOT}/usr/include/ncurses -DHAVE_NCURSES_H"
 export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 
+ac_cv_func_sigaction=yes \
+ac_cv_func_pthread_create=yes \
+ac_cv_func_getaddrinfo=yes \
 ./configure --host=x86_64-elf \
             --prefix="${SYSROOT}/usr" \
             --with-ncurses \
             --with-xmlrpc-c=no \
             --disable-shared \
             --enable-static \
-            --with-libcurl="${SYSROOT}/usr"
+            --with-libcurl="${SYSROOT}/usr" \
+            NCURSES_LIBS="-lncurses" \
+            NCURSES_CFLAGS="-I${SYSROOT}/usr/include/ncurses"
 
 # 4. Compile
 echo "Compiling rtorrent..."

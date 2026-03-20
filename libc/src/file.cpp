@@ -9,9 +9,10 @@
 
 extern "C" {
 
-// Extremely naive FILE wrapper
 struct _FILE {
     int fd;
+    int ungetc_buf; // -1 = empty, else the pushed-back char
+    int eof_flag;
 };
 
 FILE* fopen(const char* filename, const char* mode) {
@@ -35,6 +36,8 @@ FILE* fdopen(int fd, const char* mode) {
     _FILE* f = (_FILE*)malloc(sizeof(_FILE));
     if (!f) return nullptr;
     f->fd = fd;
+    f->ungetc_buf = -1;
+    f->eof_flag = 0;
     return (FILE*)f;
 }
 
@@ -77,17 +80,20 @@ int fclose(FILE* stream) {
     return ret;
 }
 
-// Stubs for zlib
 int fseek(FILE* stream, long int offset, int whence) {
-    (void)stream;
-    (void)offset;
-    (void)whence;
-    return -1;
+    if (!stream) return -1;
+    _FILE* f = (_FILE*)stream;
+    long ret = lseek(f->fd, offset, whence);
+    if (ret < 0) return -1;
+    f->ungetc_buf = -1;
+    f->eof_flag = 0;
+    return 0;
 }
 
 long int ftell(FILE* stream) {
-    (void)stream;
-    return -1;
+    if (!stream) return -1;
+    _FILE* f = (_FILE*)stream;
+    return lseek(f->fd, 0, 1); // SEEK_CUR
 }
 
 int fflush(FILE* stream) {
@@ -101,20 +107,38 @@ int ferror(FILE* stream) {
 }
 
 int feof(FILE* stream) {
-    (void)stream;
-    return 0; // stub
+    if (!stream) return 0;
+    return ((_FILE*)stream)->eof_flag;
 }
 
 char* fgets(char* s, int size, FILE* stream) {
-    (void)s;
-    (void)size;
-    (void)stream;
-    return nullptr; // stub
+    if (!s || size <= 0 || !stream) return nullptr;
+    int i = 0;
+    while (i < size - 1) {
+        int c = fgetc(stream);
+        if (c == EOF) {
+            if (i == 0) return nullptr;
+            break;
+        }
+        s[i++] = (char)c;
+        if (c == '\n') break;
+    }
+    s[i] = '\0';
+    return s;
 }
 
 int fgetc(FILE* stream) {
+    if (!stream) return EOF;
+    _FILE* f = (_FILE*)stream;
+    // Check ungetc buffer first
+    if (f->ungetc_buf >= 0) {
+        int c = f->ungetc_buf;
+        f->ungetc_buf = -1;
+        return c;
+    }
     unsigned char c;
-    if (fread(&c, 1, 1, stream) != 1) return EOF;
+    ssize_t r = read(f->fd, &c, 1);
+    if (r <= 0) { f->eof_flag = 1; return EOF; }
     return c;
 }
 
@@ -141,9 +165,12 @@ int getchar(void) {
 }
 
 int ungetc(int c, FILE* stream) {
-    (void)c;
-    (void)stream;
-    return EOF; // stub
+    if (!stream || c == EOF) return EOF;
+    _FILE* f = (_FILE*)stream;
+    if (f->ungetc_buf >= 0) return EOF; // Only one pushback
+    f->ungetc_buf = c;
+    f->eof_flag = 0;
+    return c;
 }
 
 int rename(const char* oldpath, const char* newpath) {

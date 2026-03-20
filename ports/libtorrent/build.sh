@@ -35,13 +35,18 @@ export CXXFLAGS="${CXXFLAGS} -O2 -std=c++14"
 export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 
+ac_cv_func_posix_memalign=yes \
+ac_cv_func_madvise=yes \
+ac_cv_func_sigaction=yes \
+ac_cv_func_pthread_create=yes \
 ./configure --host=x86_64-elf \
             --prefix="${SYSROOT}/usr" \
             --disable-shared \
             --enable-static \
             --with-zlib="${SYSROOT}/usr" \
             --with-openssl="${SYSROOT}/usr" \
-            --enable-aligned
+            --enable-aligned \
+            --disable-instrumentation
 
 # 4. Compile
 echo "Compiling libtorrent..."
