@@ -29,14 +29,15 @@ void heap::remove_from_free_list(heap::block_header* block) noexcept {
 }
 
 void heap::init() noexcept {
-    void* initial_pages = pmm::alloc_pages(512);
+    constexpr size_t HEAP_PAGES = 1024; // 4 MB (max buddy order)
+    void* initial_pages = pmm::alloc_pages(HEAP_PAGES);
     if (!initial_pages) {
         kernel::print("Failed to allocate initial heap!\n");
         return;
     }
 
     block_header* head = static_cast<block_header*>(initial_pages);
-    head->size = (512 * pmm::PAGE_SIZE) - sizeof(block_header);
+    head->size = (HEAP_PAGES * pmm::PAGE_SIZE) - sizeof(block_header);
     head->is_free = true;
     head->magic = HEAP_MAGIC;
     head->prev_phys = nullptr;
@@ -45,7 +46,7 @@ void heap::init() noexcept {
     g_free_list = nullptr;
     add_to_free_list(head);
 
-    kernel::print("Kernel Heap Initialized at {}, size {} KB\n", head, 2048);
+    kernel::print("Kernel Heap Initialized at {}, size {} KB\n", head, (HEAP_PAGES * pmm::PAGE_SIZE) / 1024);
 }
 
 void* heap::kmalloc(size_t size) noexcept {

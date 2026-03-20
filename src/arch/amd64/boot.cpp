@@ -263,6 +263,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     kernel::vfs::vfs_manager::init();
     kernel::time_manager::init();
 
+    asm volatile("cli");
     // Create Root FS
     auto* root = kernel::vfs::ramfs::create_root();
     kernel::vfs::vfs_manager::set_root(root);
@@ -293,7 +294,15 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     kernel::vfs::ramfs::create_file(bin, "net", net_bin, net_bin_size);
 
     // APIC + SMP initialization
-    if (info->acpi_rsdp) {
+    // Validate RSDP pointer: must be in low memory (<4GB) and start with "RSD PTR "
+    bool rsdp_valid = false;
+    if (info->acpi_rsdp && info->acpi_rsdp < 0x100000000ULL) {
+        auto* rsdp_sig = reinterpret_cast<const char*>(static_cast<uintptr_t>(info->acpi_rsdp));
+        rsdp_valid = (rsdp_sig[0] == 'R' && rsdp_sig[1] == 'S' && rsdp_sig[2] == 'D' &&
+                      rsdp_sig[3] == ' ' && rsdp_sig[4] == 'P' && rsdp_sig[5] == 'T' &&
+                      rsdp_sig[6] == 'R' && rsdp_sig[7] == ' ');
+    }
+    if (rsdp_valid) {
         arch::amd64::acpi::madt_info madt{};
         if (arch::amd64::acpi::parse_madt(static_cast<uintptr_t>(info->acpi_rsdp), madt)) {
             arch::amd64::apic_init(madt);
@@ -333,15 +342,10 @@ extern "C" void kernel_main(rucux_boot_info* info) {
         }
     }
 
-    // Test dynamic allocation
-    int* test_int = new int(123);
-    kernel::print("Dynamic test: value at {} is {}\n", test_int, *test_int);
-    delete test_int;
-
-    kernel::ipc::message msg = {0, 1, {0, 0, 0, 0}};
-    kernel::ipc::ipc_manager::send_sync(1, msg);
-
     kernel::print("rucux (amd64) Complete!\n");
+
+    // Re-enable interrupts now that boot is done
+    asm volatile("sti");
 
     // Spawn User Space
     kernel::scheduler::scheduler::spawn(user_init, 1);

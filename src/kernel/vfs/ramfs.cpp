@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <kernel/print.hpp>
 #include <kernel/vfs/ramfs.hpp>
 #include <lib/string.hpp>
 #include <knew.hpp>
@@ -24,9 +25,11 @@ static vfs_ops g_ramfs_ops = {.read = ramfs::read,
                               .poll = nullptr};
 
 static char* kstrdup(const char* s) noexcept {
-    size_t len = lib::strlen(s);
+    size_t len = 0;
+    while (s[len]) len++;
     char* dup = new char[len + 1];
-    lib::memcpy(dup, s, len + 1);
+    if (!dup) return nullptr;
+    for (size_t i = 0; i <= len; ++i) dup[i] = s[i];
     return dup;
 }
 

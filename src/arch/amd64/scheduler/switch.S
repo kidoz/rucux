@@ -183,8 +183,12 @@ irq1_entry:
     pop %rax
     iretq
 
-.global isr_stub_14
-isr_stub_14:
+// ─── Exception stubs (no error code) ───────────────────────────────────────
+// For vectors 0-7, 9, 16-19 (no hardware error code pushed)
+.macro ISR_NOERR vec
+.global isr_stub_\vec
+isr_stub_\vec:
+    push $0           // dummy error code
     push %rax
     push %rcx
     push %rdx
@@ -194,12 +198,9 @@ isr_stub_14:
     push %r9
     push %r10
     push %r11
-    
-    mov $14, %rdi
-    mov 72(%rsp), %rsi // Get Error Code into rsi (arg2)
-    .extern isr_handler
+    mov $\vec, %rdi
+    mov 80(%rsp), %rsi // error code (dummy 0)
     call isr_handler
-    
     pop %r11
     pop %r10
     pop %r9
@@ -209,6 +210,58 @@ isr_stub_14:
     pop %rdx
     pop %rcx
     pop %rax
-    add $8, %rsp // pop error code
+    add $8, %rsp      // pop error code
     iretq
+.endm
+
+// For vectors 8, 10-14, 17 (hardware pushes error code)
+.macro ISR_ERR vec
+.global isr_stub_\vec
+isr_stub_\vec:
+    push %rax
+    push %rcx
+    push %rdx
+    push %rsi
+    push %rdi
+    push %r8
+    push %r9
+    push %r10
+    push %r11
+    mov $\vec, %rdi
+    mov 72(%rsp), %rsi // error code
+    call isr_handler
+    pop %r11
+    pop %r10
+    pop %r9
+    pop %r8
+    pop %rdi
+    pop %rsi
+    pop %rdx
+    pop %rcx
+    pop %rax
+    add $8, %rsp      // pop error code
+    iretq
+.endm
+
+.extern isr_handler
+
+ISR_NOERR 0   // Divide by zero
+ISR_NOERR 1   // Debug
+ISR_NOERR 2   // NMI
+ISR_NOERR 3   // Breakpoint
+ISR_NOERR 4   // Overflow
+ISR_NOERR 5   // Bound range
+ISR_NOERR 6   // Invalid opcode
+ISR_NOERR 7   // Device not available
+ISR_ERR   8   // Double fault
+ISR_NOERR 9   // Coprocessor segment
+ISR_ERR   10  // Invalid TSS
+ISR_ERR   11  // Segment not present
+ISR_ERR   12  // Stack-segment fault
+ISR_ERR   13  // General protection fault
+ISR_ERR   14  // Page fault
+ISR_NOERR 16  // x87 FPE
+ISR_ERR   17  // Alignment check
+ISR_NOERR 18  // Machine check
+ISR_NOERR 19  // SIMD FPE
 

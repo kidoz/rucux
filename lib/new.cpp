@@ -3,41 +3,34 @@
 #include <kernel/memory/slab.hpp>
 #include <knew.hpp>
 
-// Threshold: objects <= 2048 bytes use slab, larger use heap
-static constexpr size_t SLAB_MAX = 2048;
+// The unsized new/delete path ALWAYS uses the heap (kmalloc/kfree).
+// This ensures any pointer from `new` can be freed by `delete` without
+// needing to know the allocation source.
+//
+// The sized-delete path (C++14) can route small objects to slab caches,
+// but only if slab_alloc was explicitly used (e.g., via named caches).
+// For general `new`, we stick to heap for safety.
 
 void* operator new(size_t size) {
-    void* p = kernel::memory::slab_alloc(size);
-    if (p) return p;
-    return kmalloc(size); // Fallback to heap for large or pre-init allocs
+    return kmalloc(size);
 }
 
 void* operator new[](size_t size) {
-    void* p = kernel::memory::slab_alloc(size);
-    if (p) return p;
     return kmalloc(size);
 }
 
 void operator delete(void* p) noexcept {
-    kfree(p); // Can't determine size → heap free (safe: heap checks magic)
+    kfree(p);
 }
 
 void operator delete[](void* p) noexcept {
     kfree(p);
 }
 
-void operator delete(void* p, size_t size) noexcept {
-    if (size <= SLAB_MAX) {
-        kernel::memory::slab_free(p, size);
-        return;
-    }
+void operator delete(void* p, size_t) noexcept {
     kfree(p);
 }
 
-void operator delete[](void* p, size_t size) noexcept {
-    if (size <= SLAB_MAX) {
-        kernel::memory::slab_free(p, size);
-        return;
-    }
+void operator delete[](void* p, size_t) noexcept {
     kfree(p);
 }
