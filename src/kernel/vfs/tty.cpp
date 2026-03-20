@@ -81,40 +81,83 @@ void feed_input(char c) noexcept {
     }
 
     // Wake up reader if any
-    if (g_tty.waiting_thread && g_tty.lines_available > 0) {
+    bool should_wake = false;
+    if (g_tty.term.c_lflag & ICANON) {
+        should_wake = (g_tty.lines_available > 0);
+    } else {
+        // Raw mode: wake on every character (VMIN=1 is the common case)
+        should_wake = (g_tty.rx_head != g_tty.rx_tail);
+    }
+
+    if (g_tty.waiting_thread && should_wake) {
         scheduler::scheduler::unblock(g_tty.waiting_thread);
         g_tty.waiting_thread = nullptr;
     }
+}
+
+static size_t buf_count() noexcept {
+    return (g_tty.rx_head - g_tty.rx_tail + g_tty.BUF_SIZE) % g_tty.BUF_SIZE;
 }
 
 static size_t tty_read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept {
     (void)node;
     (void)offset;
     char* buf = static_cast<char*>(buffer);
-    size_t read = 0;
+    size_t bytes_read = 0;
 
-    // Block if nothing available
-    while (g_tty.lines_available == 0) {
-        g_tty.waiting_thread = scheduler::scheduler::current_thread();
-        scheduler::scheduler::block(scheduler::thread_state::BLOCKED);
-    }
-
-    while (read < size && g_tty.rx_tail != g_tty.rx_head) {
-        char c = g_tty.rx_buf[g_tty.rx_tail];
-        g_tty.rx_tail = (g_tty.rx_tail + 1) % g_tty.BUF_SIZE;
-        buf[read++] = c;
-
-        if ((g_tty.term.c_lflag & ICANON) && c == 0x0A) {
-            g_tty.lines_available--;
-            break;
+    if (g_tty.term.c_lflag & ICANON) {
+        // ── Canonical mode: block until a full line (\n) is available ──
+        while (g_tty.lines_available == 0) {
+            g_tty.waiting_thread = scheduler::scheduler::current_thread();
+            scheduler::scheduler::block(scheduler::thread_state::BLOCKED);
         }
+
+        while (bytes_read < size && g_tty.rx_tail != g_tty.rx_head) {
+            char c = g_tty.rx_buf[g_tty.rx_tail];
+            g_tty.rx_tail = (g_tty.rx_tail + 1) % g_tty.BUF_SIZE;
+            buf[bytes_read++] = c;
+
+            if (c == 0x0A) {
+                g_tty.lines_available--;
+                break;
+            }
+        }
+    } else {
+        // ── Raw mode: respect VMIN and VTIME ──
+        // VMIN = minimum number of characters before read returns
+        // VTIME = timeout in 1/10 second intervals
+        //
+        // Case 1: VMIN > 0, VTIME = 0 → block until VMIN chars available
+        // Case 2: VMIN = 0, VTIME > 0 → block until 1 char or timeout (stub: return immediately)
+        // Case 3: VMIN > 0, VTIME > 0 → block until VMIN chars or timeout
+        // Case 4: VMIN = 0, VTIME = 0 → return immediately with whatever is available
+
+        unsigned int vmin = g_tty.term.c_cc[6];  // VMIN index = 6
+        // unsigned int vtime = g_tty.term.c_cc[5]; // VTIME index = 5 (TODO: timer-based)
+
+        if (vmin == 0) {
+            // Non-blocking: return whatever is in the buffer
+        } else {
+            // Block until at least VMIN characters (or `size`, whichever is less)
+            size_t need = (vmin < size) ? vmin : size;
+            while (buf_count() < need) {
+                g_tty.waiting_thread = scheduler::scheduler::current_thread();
+                scheduler::scheduler::block(scheduler::thread_state::BLOCKED);
+            }
+        }
+
+        // Read available characters up to `size`
+        while (bytes_read < size && g_tty.rx_tail != g_tty.rx_head) {
+            buf[bytes_read++] = g_tty.rx_buf[g_tty.rx_tail];
+            g_tty.rx_tail = (g_tty.rx_tail + 1) % g_tty.BUF_SIZE;
+        }
+
+        // Decrement lines_available if we consumed any (for poll readiness tracking)
+        if (bytes_read > 0 && g_tty.lines_available > 0)
+            g_tty.lines_available--;
     }
 
-    if (!(g_tty.term.c_lflag & ICANON) && read > 0) {
-        g_tty.lines_available--;
-    }
-
-    return read;
+    return bytes_read;
 }
 
 static size_t tty_write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
@@ -153,6 +196,19 @@ static int tty_ioctl(vfs_node* node, unsigned long request, void* argp) noexcept
     return -1;
 }
 
+static int tty_poll_ready(vfs_node*) noexcept {
+    int events = 4; // POLLOUT — always writable
+    // Check if there's data in the input buffer
+    if (g_tty.rx_head != g_tty.rx_tail) {
+        if (g_tty.term.c_lflag & ICANON) {
+            if (g_tty.lines_available > 0) events |= 1; // POLLIN
+        } else {
+            events |= 1; // POLLIN — any data in raw mode
+        }
+    }
+    return events;
+}
+
 vfs_node* create() noexcept {
     g_tty.rx_head = 0;
     g_tty.rx_tail = 0;
@@ -176,6 +232,7 @@ vfs_node* create() noexcept {
     node->ops->readdir = nullptr;
     node->ops->finddir = nullptr;
     node->ops->mmap = nullptr;
+    node->ops->poll = tty_poll_ready;
     return node;
 }
 

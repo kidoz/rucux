@@ -122,24 +122,138 @@ int abs(int j) {
     return j < 0 ? -j : j;
 }
 
-char* getenv(const char* name) {
-    (void)name;
-    return nullptr; // stub
+// ─── Environment variables ─────────────────────────────────────────────────
+// Simple key=value store for a freestanding environment.
+
+static constexpr int MAX_ENV = 32;
+static char* g_environ[MAX_ENV + 1] = {nullptr}; // NULL-terminated
+
+// Default environment — set before main()
+static char env_term[] = "TERM=linux";
+static char env_home[] = "HOME=/";
+static char env_path[] = "PATH=/bin";
+
+static bool g_env_initialized = false;
+
+static void ensure_env_init() {
+    if (g_env_initialized) return;
+    g_env_initialized = true;
+    g_environ[0] = env_term;
+    g_environ[1] = env_home;
+    g_environ[2] = env_path;
+    g_environ[3] = nullptr;
 }
 
-int putenv(char* string) {
-    (void)string;
-    return 0; // stub
+static size_t env_strlen(const char* s) {
+    const char* p = s;
+    while (*p) p++;
+    return (size_t)(p - s);
+}
+
+char* getenv(const char* name) {
+    ensure_env_init();
+    if (!name) return nullptr;
+    size_t len = env_strlen(name);
+    for (int i = 0; g_environ[i]; ++i) {
+        // Check if g_environ[i] starts with "name="
+        bool match = true;
+        for (size_t j = 0; j < len; ++j) {
+            if (g_environ[i][j] != name[j]) { match = false; break; }
+        }
+        if (match && g_environ[i][len] == '=')
+            return &g_environ[i][len + 1];
+    }
+    return nullptr;
 }
 
 int setenv(const char* name, const char* value, int overwrite) {
-    (void)name; (void)value; (void)overwrite;
-    return 0; // stub
+    ensure_env_init();
+    if (!name || !value) return -1;
+    size_t nlen = env_strlen(name);
+    size_t vlen = env_strlen(value);
+
+    // Check if already exists
+    for (int i = 0; g_environ[i]; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < nlen; ++j) {
+            if (g_environ[i][j] != name[j]) { match = false; break; }
+        }
+        if (match && g_environ[i][nlen] == '=') {
+            if (!overwrite) return 0;
+            // Replace (leak old — acceptable for small env)
+            char* buf = static_cast<char*>(malloc(nlen + vlen + 2));
+            if (!buf) return -1;
+            for (size_t j = 0; j < nlen; ++j) buf[j] = name[j];
+            buf[nlen] = '=';
+            for (size_t j = 0; j < vlen; ++j) buf[nlen + 1 + j] = value[j];
+            buf[nlen + 1 + vlen] = '\0';
+            g_environ[i] = buf;
+            return 0;
+        }
+    }
+
+    // Add new entry
+    int count = 0;
+    while (g_environ[count]) count++;
+    if (count >= MAX_ENV) return -1;
+
+    char* buf = static_cast<char*>(malloc(nlen + vlen + 2));
+    if (!buf) return -1;
+    for (size_t j = 0; j < nlen; ++j) buf[j] = name[j];
+    buf[nlen] = '=';
+    for (size_t j = 0; j < vlen; ++j) buf[nlen + 1 + j] = value[j];
+    buf[nlen + 1 + vlen] = '\0';
+    g_environ[count] = buf;
+    g_environ[count + 1] = nullptr;
+    return 0;
+}
+
+int putenv(char* string) {
+    ensure_env_init();
+    if (!string) return -1;
+    // Find the '='
+    const char* eq = string;
+    while (*eq && *eq != '=') eq++;
+    if (!*eq) return -1;
+    size_t nlen = (size_t)(eq - string);
+
+    // Check if exists
+    for (int i = 0; g_environ[i]; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < nlen; ++j) {
+            if (g_environ[i][j] != string[j]) { match = false; break; }
+        }
+        if (match && g_environ[i][nlen] == '=') {
+            g_environ[i] = string;
+            return 0;
+        }
+    }
+
+    int count = 0;
+    while (g_environ[count]) count++;
+    if (count >= MAX_ENV) return -1;
+    g_environ[count] = string;
+    g_environ[count + 1] = nullptr;
+    return 0;
 }
 
 int unsetenv(const char* name) {
-    (void)name;
-    return 0; // stub
+    ensure_env_init();
+    if (!name) return -1;
+    size_t len = env_strlen(name);
+    for (int i = 0; g_environ[i]; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < len; ++j) {
+            if (g_environ[i][j] != name[j]) { match = false; break; }
+        }
+        if (match && g_environ[i][len] == '=') {
+            // Shift remaining entries
+            for (int j = i; g_environ[j]; ++j)
+                g_environ[j] = g_environ[j + 1];
+            return 0;
+        }
+    }
+    return 0;
 }
 
 void qsort(void* base, size_t nmemb, size_t size, int (*compar)(const void*, const void*)) {

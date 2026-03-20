@@ -175,6 +175,7 @@ static vfs_node* fat32_finddir(vfs_node* node, const char* name) noexcept {
                     v->ops->readdir = nullptr;
                     v->ops->finddir = (v->type == file_type::DIRECTORY) ? fat32_finddir : nullptr;
                     v->ops->mmap = nullptr;
+                    v->ops->poll = nullptr;
 
                     fat32_node_internal* new_internal = new fat32_node_internal();
                     new_internal->vnode = v;
@@ -230,6 +231,7 @@ vfs_node* mount(uint32_t partition_lba) noexcept {
     root->ops->readdir = nullptr;
     root->ops->finddir = fat32_finddir;
     root->ops->mmap = nullptr;
+    root->ops->poll = nullptr;
 
     fat32_node_internal* internal = new fat32_node_internal();
     internal->vnode = root;

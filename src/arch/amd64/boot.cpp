@@ -273,6 +273,13 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     const uint8_t motd[] = "Welcome to rucux!\n";
     kernel::vfs::ramfs::create_file(etc, "motd", motd, sizeof(motd));
 
+    // Create directory structure for terminfo (ncurses needs this)
+    auto* usr = kernel::vfs::ramfs::create_directory(root, "usr");
+    auto* share = kernel::vfs::ramfs::create_directory(usr, "share");
+    auto* terminfo = kernel::vfs::ramfs::create_directory(share, "terminfo");
+    kernel::vfs::ramfs::create_directory(terminfo, "l");
+    kernel::vfs::ramfs::create_directory(terminfo, "x");
+
     auto* bin = kernel::vfs::ramfs::create_directory(root, "bin");
     kernel::vfs::ramfs::create_file(bin, "init", init_bin, init_bin_size);
     kernel::vfs::ramfs::create_file(bin, "console", console_bin, console_bin_size);

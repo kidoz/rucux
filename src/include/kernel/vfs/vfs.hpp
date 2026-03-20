@@ -18,6 +18,8 @@ struct vfs_ops {
     vfs_node* (*readdir)(vfs_node* node, size_t index);
     vfs_node* (*finddir)(vfs_node* node, const char* name);
     uintptr_t (*mmap)(vfs_node* node, size_t offset); // Returns physical address
+    // poll: returns bitmask of ready events (POLLIN=1, POLLOUT=4)
+    int (*poll)(vfs_node* node);
 };
 
 struct vfs_node {

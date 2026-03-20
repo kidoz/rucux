@@ -20,7 +20,8 @@ static vfs_ops g_ramfs_ops = {.read = ramfs::read,
                               .ioctl = nullptr,
                               .readdir = ramfs::readdir,
                               .finddir = ramfs::finddir,
-                              .mmap = nullptr};
+                              .mmap = nullptr,
+                              .poll = nullptr};
 
 static char* kstrdup(const char* s) noexcept {
     size_t len = lib::strlen(s);

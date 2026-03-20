@@ -198,14 +198,113 @@ int vfs_manager::sys_fcntl(int fd, int cmd, long arg) noexcept {
     return -1;
 }
 
-int vfs_manager::sys_select(int nfds, void* readfds, void* writefds, void* exceptfds, void* timeout) noexcept {
-    (void)nfds; (void)readfds; (void)writefds; (void)exceptfds; (void)timeout;
-    return -1;
+// POSIX poll event flags
+#define POLLIN  0x001
+#define POLLOUT 0x004
+#define POLLERR 0x008
+#define POLLHUP 0x010
+#define POLLNVAL 0x020
+
+struct pollfd {
+    int fd;
+    short events;
+    short revents;
+};
+
+// fd_set is a bitmask of 1024 file descriptors
+struct fd_set_kernel {
+    unsigned long fds_bits[1024 / (8 * sizeof(unsigned long))];
+};
+
+static bool fd_isset(int fd, fd_set_kernel* set) {
+    if (!set || fd < 0) return false;
+    size_t word = static_cast<size_t>(fd) / (8 * sizeof(unsigned long));
+    size_t bit = static_cast<size_t>(fd) % (8 * sizeof(unsigned long));
+    return (set->fds_bits[word] >> bit) & 1;
 }
 
-int vfs_manager::sys_poll(void* fds, unsigned int nfds, int timeout) noexcept {
-    (void)fds; (void)nfds; (void)timeout;
-    return -1;
+static void fd_set_bit(int fd, fd_set_kernel* set) {
+    if (!set || fd < 0) return;
+    size_t word = static_cast<size_t>(fd) / (8 * sizeof(unsigned long));
+    size_t bit = static_cast<size_t>(fd) % (8 * sizeof(unsigned long));
+    set->fds_bits[word] |= (1UL << bit);
+}
+
+static void fd_zero(fd_set_kernel* set) {
+    if (!set) return;
+    for (auto& w : set->fds_bits) w = 0;
+}
+
+int vfs_manager::sys_select(int nfds, void* readfds, void* writefds, void* exceptfds, void* timeout) noexcept {
+    (void)timeout; // TODO: implement timeout via timer
+    auto* t = scheduler::scheduler::current_thread();
+    if (!t) return -1;
+
+    auto* rfds = static_cast<fd_set_kernel*>(readfds);
+    auto* wfds = static_cast<fd_set_kernel*>(writefds);
+    auto* efds = static_cast<fd_set_kernel*>(exceptfds);
+
+    // Save the input sets and zero the output sets
+    fd_set_kernel r_in{}, w_in{};
+    if (rfds) { r_in = *rfds; fd_zero(rfds); }
+    if (wfds) { w_in = *wfds; fd_zero(wfds); }
+    if (efds) fd_zero(efds);
+
+    int ready = 0;
+    for (int fd = 0; fd < nfds && fd < static_cast<int>(t->fd_count); ++fd) {
+        auto& fdesc = t->fd_table[fd];
+        if (!fdesc.node) continue;
+
+        vfs_node* node = static_cast<vfs_node*>(fdesc.node);
+        int events = 0;
+        if (node->ops && node->ops->poll)
+            events = node->ops->poll(node);
+        else
+            events = POLLIN | POLLOUT; // Default: always ready for regular files
+
+        if (fd_isset(fd, &r_in) && (events & POLLIN))  { fd_set_bit(fd, rfds); ready++; }
+        if (fd_isset(fd, &w_in) && (events & POLLOUT)) { fd_set_bit(fd, wfds); ready++; }
+    }
+
+    return ready;
+}
+
+int vfs_manager::sys_poll(void* fds_ptr, unsigned int nfds, int timeout) noexcept {
+    (void)timeout; // TODO: implement timeout via timer
+    auto* t = scheduler::scheduler::current_thread();
+    if (!t) return -1;
+
+    auto* pfds = static_cast<pollfd*>(fds_ptr);
+    int ready = 0;
+
+    for (unsigned int i = 0; i < nfds; ++i) {
+        pfds[i].revents = 0;
+        int fd = pfds[i].fd;
+        if (fd < 0 || static_cast<size_t>(fd) >= t->fd_count) {
+            pfds[i].revents = POLLNVAL;
+            ready++;
+            continue;
+        }
+
+        auto& fdesc = t->fd_table[fd];
+        if (!fdesc.node) {
+            pfds[i].revents = POLLNVAL;
+            ready++;
+            continue;
+        }
+
+        vfs_node* node = static_cast<vfs_node*>(fdesc.node);
+        int events = 0;
+        if (node->ops && node->ops->poll)
+            events = node->ops->poll(node);
+        else
+            events = POLLIN | POLLOUT;
+
+        pfds[i].revents = static_cast<short>(events & (pfds[i].events | POLLERR | POLLHUP));
+        if (pfds[i].revents) ready++;
+    }
+
+    return ready;
 }
 
 int vfs_manager::sys_epoll_create(int size) noexcept { (void)size; return -1; }
