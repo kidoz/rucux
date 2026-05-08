@@ -23,6 +23,10 @@ static kernel::irq_spinlock g_threads_lock;
 
 static thread* g_irq_waiters[256] = {nullptr};
 
+// Global sleep queue — protected by g_sleep_queue_lock
+static thread* g_sleep_queue_head = nullptr;
+static kernel::irq_spinlock g_sleep_queue_lock;
+
 extern "C" void switch_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
 extern "C" {
 uintptr_t g_current_kernel_stack = 0;
@@ -259,6 +263,9 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     t->futex_wait_addr = 0;
     t->ipc_caller = nullptr;
     t->ipc_waiting = false;
+    t->wake_tick = 0;
+    t->next_sleeper = nullptr;
+    t->wait_next = nullptr;
 
 #if defined(__x86_64__)
     uint64_t* kstack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
@@ -418,6 +425,58 @@ void scheduler::yield() noexcept {
 void scheduler::unblock(thread* t) noexcept {
     t->state = thread_state::READY;
     add_thread(t);
+}
+
+void scheduler::sleep_until(uint64_t tick) noexcept {
+    auto* cur = cpu::this_cpu()->current_thread;
+    if (!cur) return;
+
+    cur->wake_tick = tick;
+
+    // Insert into sorted sleep queue
+    {
+        kernel::irq_lock_guard guard(g_sleep_queue_lock);
+        thread** ptr = &g_sleep_queue_head;
+        while (*ptr && (*ptr)->wake_tick <= tick) {
+            ptr = &(*ptr)->next_sleeper;
+        }
+        cur->next_sleeper = *ptr;
+        *ptr = cur;
+    }
+
+    // Race window: between dropping g_sleep_queue_lock and the state=BLOCKED
+    // inside block(), another CPU's check_sleepers can splice us out and
+    // call unblock() → add_thread(), which sets state=READY and enqueues
+    // us on a runqueue. block() then overwrites state to BLOCKED, but the
+    // schedule() call inside it picks from the runqueue and unconditionally
+    // sets the picked thread to RUNNING — so the wakeup is preserved even
+    // when unblock and block interleave.
+    block(thread_state::BLOCKED);
+}
+
+void scheduler::check_sleepers(uint64_t current_tick) noexcept {
+    if (!g_sleep_queue_head || g_sleep_queue_head->wake_tick > current_tick) {
+        return; // Fast path: nothing to wake
+    }
+
+    thread* to_wake = nullptr;
+    {
+        kernel::irq_lock_guard guard(g_sleep_queue_lock);
+        while (g_sleep_queue_head && g_sleep_queue_head->wake_tick <= current_tick) {
+            thread* t = g_sleep_queue_head;
+            g_sleep_queue_head = t->next_sleeper;
+            t->next_sleeper = to_wake; // Build local list to unblock outside lock
+            to_wake = t;
+        }
+    }
+
+    while (to_wake) {
+        thread* t = to_wake;
+        to_wake = t->next_sleeper;
+        t->next_sleeper = nullptr;
+        t->wake_tick = 0;
+        unblock(t);
+    }
 }
 
 void scheduler::exit() noexcept {

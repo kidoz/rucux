@@ -72,6 +72,11 @@ struct thread {
     int exit_code;          // Exit status (for pthread_join)
     bool exited;            // True after thread has exited
 
+    // Sleep
+    uint64_t wake_tick;     // Tick when this thread should wake up
+    thread* next_sleeper;   // Next in sleep queue
+    thread* wait_next;      // Next in wait queue
+
     // Scheduling links
     thread* next;     // Next in run queue
     thread* all_next; // Next in global thread list
@@ -100,6 +105,8 @@ public:
     static void yield() noexcept;
     static void block(thread_state reason) noexcept;
     static void unblock(thread* t) noexcept;
+    static void sleep_until(uint64_t tick) noexcept;
+    static void check_sleepers(uint64_t current_tick) noexcept;
     static void exit() noexcept;
     static void cleanup_terminated() noexcept;
 
