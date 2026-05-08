@@ -61,6 +61,7 @@ void bsp_init() noexcept {
     bsp->current_thread = nullptr;
     bsp->idle_thread = nullptr;
     bsp->kernel_stack = 0;
+    bsp->temp_user_rsp = 0;
     bsp->online = true;
     bsp->ticks = 0;
     bsp->total_runnable = 0;
@@ -81,6 +82,7 @@ void ap_init(uint32_t cpu_id, uint32_t apic_id) noexcept {
     ap->current_thread = nullptr;
     ap->idle_thread = nullptr;
     ap->kernel_stack = 0;
+    ap->temp_user_rsp = 0;
     ap->online = true;
     ap->ticks = 0;
     ap->total_runnable = 0;

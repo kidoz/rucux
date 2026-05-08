@@ -38,36 +38,14 @@ switch_context:
 .global syscall_entry
 syscall_entry:
     swapgs
-    
-    // Save user rsp in a scratch register that is NOT r11 or rcx.
-    // r12 is callee-saved, but we haven't pushed it yet. We can just use it,
-    // and then push it. Wait, if we overwrite r12, we lose the user's r12!
-    // We must push the user's registers, but we are on the user stack!
-    // NO! We can't push to the user stack, it might not be valid or mapped properly if we switch CR3!
-    // Wait, the user stack IS mapped, because we haven't switched CR3 yet.
-    // BUT we shouldn't push to it.
-    // Is there a scratch register we can use? 
-    // We can just push the user stack pointer to the KERNEL stack after switching!
-    // But how to switch without a scratch register?
-    // We can exchange! xchg %rsp, g_current_kernel_stack(%rip). But that's memory-to-register xchg, which isn't allowed without a register.
-    // We can use the kernel stack directly:
-    // mov %rsp, %gs:scratch_space? We don't have GS base set up.
-    
-    // Let's just push %rsp to the user stack temporarily, load the new stack,
-    // pop the old %rsp from the user stack into a register, and push it to the kernel stack!
-    push %rsp
-    mov g_current_kernel_stack(%rip), %rsp
-    // Now rsp = kernel stack.
-    // The user stack has the old rsp at the top.
-    // We need to read it. But we don't know the user stack pointer anymore!
-    
-    // Let's use a global variable to temporarily hold the user rsp.
-    // We are not SMP yet, so this is safe.
-    .extern g_temp_user_rsp
-    mov %rsp, g_temp_user_rsp(%rip)
-    .extern g_current_kernel_stack
-    mov g_current_kernel_stack(%rip), %rsp
-    push g_temp_user_rsp(%rip)
+
+    // Stash user rsp in this CPU's per_cpu.temp_user_rsp slot (offset 40),
+    // load this CPU's kernel stack from per_cpu.kernel_stack (offset 32),
+    // then push the saved user rsp onto the freshly-loaded kernel stack.
+    // Both slots live in %gs per_cpu so this is SMP-safe and re-entrant.
+    mov %rsp, %gs:40
+    mov %gs:32, %rsp
+    pushq %gs:40
     
     // Save user registers
     push %rcx // RIP

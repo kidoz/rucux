@@ -26,7 +26,6 @@ static thread* g_irq_waiters[256] = {nullptr};
 extern "C" void switch_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
 extern "C" {
 uintptr_t g_current_kernel_stack = 0;
-uintptr_t g_temp_user_rsp = 0;
 void jump_to_user_space(void* entry, void* stack, void* arg);
 }
 

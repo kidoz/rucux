@@ -37,7 +37,8 @@ struct per_cpu {
 
     scheduler::thread* current_thread;      // Currently running thread on this CPU
     scheduler::thread* idle_thread;         // This CPU's idle thread
-    uintptr_t kernel_stack;                 // Current kernel stack top
+    uintptr_t kernel_stack;                 // Current kernel stack top — read by syscall_entry at %gs:32 (amd64)
+    uintptr_t temp_user_rsp;                // Scratch slot for syscall_entry user rsp save — accessed at %gs:40 (amd64)
 
     bool online;                            // CPU is initialized and running
     uint64_t ticks;                         // Per-CPU tick count
