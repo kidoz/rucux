@@ -31,6 +31,49 @@ switch_context:
     pop {r4-r11, pc}
 
 
+// ─── Save/Restore user-bank return context ────────────────────────────────
+// These helpers are used when a user thread blocks inside SVC mode and the
+// scheduler switches to another thread. ARM keeps User/System SP/LR and
+// SPSR_svc in banked registers, so they must be made per-thread explicitly.
+
+.global _ZN4arch5armv724save_user_return_contextEPjS1_S1_
+_ZN4arch5armv724save_user_return_contextEPjS1_S1_:
+    mov r12, lr
+    mrs r3, cpsr
+    mrs lr, spsr
+    str lr, [r2]
+
+    bic lr, r3, #0x1f
+    orr lr, lr, #0x1f
+    orr lr, lr, #0xc0
+    msr cpsr_c, lr
+
+    str sp, [r0]
+    str lr, [r1]
+
+    msr cpsr_c, r3
+    mov lr, r12
+    bx lr
+
+.global _ZN4arch5armv727restore_user_return_contextEjjj
+_ZN4arch5armv727restore_user_return_contextEjjj:
+    mov r12, lr
+    mrs r3, cpsr
+
+    bic lr, r3, #0x1f
+    orr lr, lr, #0x1f
+    orr lr, lr, #0xc0
+    msr cpsr_c, lr
+
+    mov sp, r0
+    mov lr, r1
+
+    msr cpsr_c, r3
+    msr spsr_cxsf, r2
+    mov lr, r12
+    bx lr
+
+
 // ─── jump_to_user_space ───────────────────────────────────────────────────
 // void jump_to_user_space(void* entry, void* stack, void* arg);
 //   r0 = user entry point
@@ -46,13 +89,18 @@ switch_context:
 .global jump_to_user_space
 jump_to_user_space:
     // Disable IRQs while we set up the exception return frame
-    cpsid i
+    mrs r12, cpsr
+    orr r12, r12, #0x80
+    msr cpsr_c, r12
 
     // Save the argument — it needs to be in r0 when user code starts
     mov r3, r2          // r3 = arg (will be restored to r0 after mode switch)
 
-    // Set SPSR to User mode (0x10), IRQ enabled (I=0), Thumb=0
+    // Set SPSR to User mode (0x10), IRQ enabled (I=0)
+    // and conditionally set Thumb bit (0x20) if entry address has bit 0 set.
     mov r2, #0x10
+    tst r0, #1
+    orrne r2, r2, #0x20
     msr spsr_cxsf, r2
 
     // Set user stack pointer: switch to System mode (shares regs with User),
@@ -69,8 +117,8 @@ jump_to_user_space:
     orr r2, r2, #0x13    // SVC mode = 0x13
     msr cpsr_c, r2
 
-    // Set return address to user entry
-    mov lr, r0
+    // Set return address to user entry (clear Thumb bit if present)
+    bic lr, r0, #1
 
     // Set r0 = arg for user code
     mov r0, r3

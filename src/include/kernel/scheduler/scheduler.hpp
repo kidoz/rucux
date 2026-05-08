@@ -58,6 +58,9 @@ struct thread {
     void* user_entry;
     void* user_stack;
     void* user_arg;
+    uintptr_t user_saved_sp;
+    uintptr_t user_saved_lr;
+    uint32_t user_saved_spsr;
     uintptr_t futex_wait_addr;
 
     // Signals

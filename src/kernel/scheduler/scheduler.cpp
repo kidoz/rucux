@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: MIT
+#if defined(__arm__)
+#include <arch/armv7/exception.hpp>
+#endif
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
@@ -251,15 +254,25 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     t->user_entry = entry;
     t->user_stack = stack;
     t->user_arg = arg;
+    t->user_saved_sp = 0;
+    t->user_saved_lr = 0;
+    t->user_saved_spsr = 0;
     t->futex_wait_addr = 0;
     t->ipc_caller = nullptr;
     t->ipc_waiting = false;
 
+#if defined(__x86_64__)
     uint64_t* kstack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
     *(--kstack) = reinterpret_cast<uint64_t>(clone_trampoline);
     *(--kstack) = 0; *(--kstack) = 0; *(--kstack) = 0;
     *(--kstack) = 0; *(--kstack) = 0; *(--kstack) = 0;
     t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
+#elif defined(__arm__)
+    uint32_t* kstack = reinterpret_cast<uint32_t*>(t->stack_base + t->stack_size);
+    *(--kstack) = reinterpret_cast<uint32_t>(clone_trampoline);
+    for (int i = 0; i < 8; ++i) *(--kstack) = 0;
+    t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
+#endif
 
     {
         kernel::irq_lock_guard guard(g_threads_lock);
@@ -364,6 +377,18 @@ void scheduler::schedule() noexcept {
         kernel::rcu::note_quiescent_state();
 #ifdef __x86_64__
         arch::amd64::tss_set_rsp0(new_kstack);
+#endif
+#if defined(__arm__)
+        if (old_thread && old_thread->pml4_phys) {
+            arch::armv7::save_user_return_context(&old_thread->user_saved_sp,
+                                                  &old_thread->user_saved_lr,
+                                                  &old_thread->user_saved_spsr);
+        }
+        if (new_thread->pml4_phys && new_thread->user_saved_spsr != 0) {
+            arch::armv7::restore_user_return_context(new_thread->user_saved_sp,
+                                                     new_thread->user_saved_lr,
+                                                     new_thread->user_saved_spsr);
+        }
 #endif
         if (new_thread->pml4_phys) {
             kernel::memory::vmm::switch_to(new_thread->pml4_phys);
