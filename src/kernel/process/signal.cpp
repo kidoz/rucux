@@ -19,6 +19,8 @@ struct kernel_sigaction {
 // Signal constants
 static constexpr int SIG_DFL_VAL = 0;
 static constexpr int SIG_IGN_VAL = 1;
+static constexpr int SIGKILL_VAL = 9;
+static constexpr int SIGTERM_VAL = 15;
 
 int signal_manager::sys_sigaction(int signum, const void* act, void* oldact) noexcept {
     if (signum < 1 || signum >= scheduler::thread::MAX_SIGNALS)
@@ -101,6 +103,27 @@ int signal_manager::sys_sigprocmask(int how, const void* set, void* oldset) noex
     }
 
     return 0;
+}
+
+bool signal_manager::consume_fatal_signal(scheduler::thread* t) noexcept {
+    if (!t) return false;
+
+    uint32_t pending = t->sig_pending & ~t->sig_mask;
+    int fatal_sig = 0;
+
+    if (pending & (1U << SIGKILL_VAL)) {
+        fatal_sig = SIGKILL_VAL;
+    } else if (pending & (1U << SIGTERM_VAL)) {
+        fatal_sig = SIGTERM_VAL;
+    }
+
+    if (fatal_sig == 0) return false;
+
+    t->sig_pending &= ~(1U << fatal_sig);
+    t->exit_code = 128 + fatal_sig;
+    t->exited = true;
+    t->state = scheduler::thread_state::TERMINATED;
+    return true;
 }
 
 } // namespace kernel::process

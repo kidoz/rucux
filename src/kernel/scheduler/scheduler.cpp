@@ -5,7 +5,10 @@
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
+#include <kernel/process/signal.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/trace.hpp>
+#include <kernel/vfs/vfs.hpp>
 #include <kernel/sync/futex.hpp>
 #include <kernel/sync/rcu.hpp>
 #include <kernel/sync/spinlock.hpp>
@@ -33,11 +36,43 @@ uintptr_t g_current_kernel_stack = 0;
 void jump_to_user_space(void* entry, void* stack, void* arg);
 }
 
+static thread* find_thread_locked(uint32_t tid, thread** prev_out = nullptr) noexcept {
+    thread* prev = nullptr;
+    thread* cur = g_all_threads;
+    while (cur) {
+        if (cur->tid == tid) {
+            if (prev_out) *prev_out = prev;
+            return cur;
+        }
+        prev = cur;
+        cur = cur->all_next;
+    }
+    return nullptr;
+}
+
 static void destroy_thread(thread* t) noexcept {
     if (!t) return;
     delete[] reinterpret_cast<uint8_t*>(t->stack_base);
     delete[] t->fd_table;
     delete t;
+}
+
+static void reap_thread_locked(thread* victim, thread* prev) noexcept {
+    if (!victim) return;
+    if (prev) prev->all_next = victim->all_next;
+    else g_all_threads = victim->all_next;
+    destroy_thread(victim);
+}
+
+static void notify_parent_of_exit(thread* child) noexcept {
+    if (!child || child->parent_tid == 0) return;
+
+    auto* parent = scheduler::get_thread_by_tid(child->parent_tid);
+    if (!parent || !parent->waiting_for_child) return;
+
+    if (parent->wait_target_tid == -1 || parent->wait_target_tid == static_cast<int32_t>(child->tid)) {
+        scheduler::unblock(parent);
+    }
 }
 
 // ─── FD table ──────────────────────────────────────────────────────────────
@@ -183,6 +218,9 @@ void scheduler::init() noexcept {
     idle->state = thread_state::READY;
     idle->fd_table = nullptr;
     idle->fd_count = 0;
+    idle->parent_tid = 0;
+    idle->wait_target_tid = -1;
+    idle->waiting_for_child = false;
 
     pcpu->idle_thread = idle;
     pcpu->current_thread = nullptr;
@@ -217,6 +255,9 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->sig_pending = 0;
     t->exit_code = 0;
     t->exited = false;
+    t->parent_tid = 0;
+    t->wait_target_tid = -1;
+    t->waiting_for_child = false;
     t->fd_table = nullptr;
     t->fd_count = 0;
 
@@ -271,6 +312,9 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
     t->sig_pending = 0;
     t->exit_code = 0;
     t->exited = false;
+    t->parent_tid = parent ? parent->tid : 0;
+    t->wait_target_tid = -1;
+    t->waiting_for_child = false;
     t->wake_tick = 0;
     t->next_sleeper = nullptr;
     t->wait_next = nullptr;
@@ -305,6 +349,7 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
 long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     thread* parent = current_thread();
     if (!parent) return -1;
+    uint32_t owner_tid = parent->parent_tid ? parent->parent_tid : parent->tid;
 
     thread* t = new thread();
     t->tid = g_next_tid.fetch_add(1, kernel::relaxed) + 1;
@@ -319,8 +364,15 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     t->fd_count = 0;
     if (parent->fd_table && parent->fd_count > 0) {
         t->ensure_fd_capacity(parent->fd_count);
-        for (size_t i = 0; i < t->fd_count && i < parent->fd_count; ++i)
+        for (size_t i = 0; i < t->fd_count && i < parent->fd_count; ++i) {
             t->fd_table[i] = parent->fd_table[i];
+            if (t->fd_table[i].node) {
+                auto* node = static_cast<kernel::vfs::vfs_node*>(t->fd_table[i].node);
+                if (node->ops && node->ops->open) {
+                    node->ops->open(node);
+                }
+            }
+        }
     }
 
     t->async_head = 0;
@@ -338,6 +390,9 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     t->futex_wait_addr = 0;
     t->ipc_caller = nullptr;
     t->ipc_waiting = false;
+    t->parent_tid = owner_tid;
+    t->wait_target_tid = -1;
+    t->waiting_for_child = false;
     t->wake_tick = 0;
     t->next_sleeper = nullptr;
     t->wait_next = nullptr;
@@ -369,6 +424,7 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
 
 void scheduler::add_thread(thread* t) noexcept {
     t->state = thread_state::READY;
+    TRACE_INSTANT(TRACE_EVENT_THREAD_ENQUEUE, t->tid, static_cast<uint64_t>(t->last_cpu));
 
     // Prefer the CPU this thread last ran on (cache affinity)
     uint32_t target_cpu = t->last_cpu;
@@ -391,11 +447,17 @@ void scheduler::cleanup_terminated() noexcept {
     thread* cur = g_all_threads;
     while (cur) {
         if (cur->state == thread_state::TERMINATED && cur != this_thread) {
+            // Defer reaping if the parent is still alive; sys_waitpid()
+            // will collect the corpse and consume the exit status.
+            if (cur->parent_tid != 0 && find_thread_locked(cur->parent_tid) != nullptr) {
+                prev = cur;
+                cur = cur->all_next;
+                continue;
+            }
             thread* to_delete = cur;
             if (prev) prev->all_next = cur->all_next;
             else      g_all_threads = cur->all_next;
             cur = cur->all_next;
-
             destroy_thread(to_delete);
         } else {
             prev = cur;
@@ -412,16 +474,19 @@ void scheduler::schedule() noexcept {
 
     thread* old_thread = pcpu->current_thread;
     thread* new_thread = nullptr;
+    bool old_thread_requeued = false;
 
+choose_next:
     {
         uintptr_t rq_flags = pcpu->sched_lock.lock();
 
         // Re-enqueue the old thread if it was running
         if (old_thread && old_thread->state == thread_state::RUNNING &&
-            old_thread != pcpu->idle_thread) {
+            old_thread != pcpu->idle_thread && !old_thread_requeued) {
             old_thread->state = thread_state::READY;
             old_thread->last_cpu = pcpu->cpu_id;
             enqueue_on_cpu(pcpu, old_thread);
+            old_thread_requeued = true;
         }
 
         // Pick highest-priority runnable thread
@@ -445,6 +510,13 @@ void scheduler::schedule() noexcept {
         new_thread = pcpu->idle_thread;
     }
 
+    if (new_thread != pcpu->idle_thread && kernel::process::signal_manager::consume_fatal_signal(new_thread)) {
+        notify_parent_of_exit(new_thread);
+        cleanup_terminated();
+        new_thread = nullptr;
+        goto choose_next;
+    }
+
     new_thread->state = thread_state::RUNNING;
     new_thread->last_cpu = pcpu->cpu_id;
     pcpu->current_thread = new_thread;
@@ -454,6 +526,8 @@ void scheduler::schedule() noexcept {
     g_current_kernel_stack = new_kstack;
 
     if (old_thread != new_thread) {
+        uint64_t old_tid = old_thread ? old_thread->tid : 0;
+        TRACE_INSTANT(TRACE_EVENT_SCHED_SWITCH, old_tid, new_thread->tid);
         // Context switch = quiescent state for RCU
         kernel::rcu::note_quiescent_state();
 #ifdef __x86_64__
@@ -489,6 +563,7 @@ void scheduler::schedule() noexcept {
 void scheduler::block(thread_state reason) noexcept {
     auto* cur = cpu::this_cpu()->current_thread;
     if (!cur) return;
+    TRACE_INSTANT(TRACE_EVENT_THREAD_BLOCK, cur->tid, static_cast<uint64_t>(reason));
     cur->state = reason;
     schedule();
 }
@@ -554,11 +629,14 @@ void scheduler::check_sleepers(uint64_t current_tick) noexcept {
     }
 }
 
-void scheduler::exit() noexcept {
+void scheduler::exit(int status) noexcept {
     auto* cur = cpu::this_cpu()->current_thread;
     if (!cur) return;
+    TRACE_INSTANT(TRACE_EVENT_THREAD_EXIT, cur->tid, 0);
     cur->exited = true;
+    cur->exit_code = (status & 0xff) << 8;
     cur->state = thread_state::TERMINATED;
+    notify_parent_of_exit(cur);
     schedule();
     while (true) {
 #if defined(__x86_64__)
@@ -585,6 +663,98 @@ thread* scheduler::current_thread() noexcept {
     return cpu::this_cpu()->current_thread;
 }
 
+int scheduler::sys_top(void* buffer, size_t size) noexcept {
+    if (!buffer || size < 8) return -1; // Need at least size for num_processes
+
+    uint32_t* num_processes = static_cast<uint32_t*>(buffer);
+    *num_processes = 0;
+
+    struct top_process_info {
+        uint32_t tid;
+        uint32_t state;
+        uint8_t priority;
+        uint32_t cpu;
+    } __attribute__((packed));
+
+    top_process_info* processes = reinterpret_cast<top_process_info*>(num_processes + 1);
+
+    size_t capacity = (size - sizeof(uint32_t)) / sizeof(top_process_info);
+    if (capacity == 0) return 0;
+
+    kernel::irq_lock_guard guard(g_threads_lock);
+    thread* cur = g_all_threads;
+    while (cur && *num_processes < capacity) {
+        processes[*num_processes].tid = cur->tid;
+        processes[*num_processes].state = static_cast<uint32_t>(cur->state);
+        processes[*num_processes].priority = static_cast<uint8_t>(cur->priority);
+        processes[*num_processes].cpu = cur->last_cpu;
+        (*num_processes)++;
+        cur = cur->all_next;
+    }
+
+    return 0;
+}
+
+long scheduler::sys_waitpid(int pid, int* wstatus, int options) noexcept {
+    constexpr int WNOHANG = 1;
+    if (options & ~WNOHANG) return -1;
+
+    auto* current = current_thread();
+    if (!current) return -1;
+    uint32_t owner_tid = current->parent_tid ? current->parent_tid : current->tid;
+
+    while (true) {
+        bool has_matching_child = false;
+        {
+            kernel::irq_lock_guard guard(g_threads_lock);
+            // Arm the wakeup hook BEFORE the scan, so any concurrent child
+            // exit racing with us takes the unblock() path in
+            // notify_parent_of_exit instead of the silent-skip path.
+            current->wait_target_tid = static_cast<int32_t>(pid);
+            current->waiting_for_child = true;
+
+            thread* prev = nullptr;
+            thread* cur = g_all_threads;
+            while (cur) {
+                bool is_child = cur->parent_tid == owner_tid;
+                bool matches_pid = (pid == -1) || (static_cast<uint32_t>(pid) == cur->tid);
+                if (is_child && matches_pid) {
+                    has_matching_child = true;
+                    if (cur->state == thread_state::TERMINATED) {
+                        int status = cur->exit_code;
+                        uint32_t tid = cur->tid;
+                        reap_thread_locked(cur, prev);
+                        if (wstatus) *wstatus = status;
+                        current->waiting_for_child = false;
+                        current->wait_target_tid = -1;
+                        return tid;
+                    }
+                }
+                prev = cur;
+                cur = cur->all_next;
+            }
+        }
+
+        if (!has_matching_child) {
+            current->waiting_for_child = false;
+            current->wait_target_tid = -1;
+            return -1;
+        }
+        if (options & WNOHANG) {
+            current->waiting_for_child = false;
+            current->wait_target_tid = -1;
+            return 0;
+        }
+
+        // waiting_for_child is set; any child exit between now and the
+        // block() below will call unblock() on us. unblock() enqueues us
+        // unconditionally, and schedule() promotes whatever it picks to
+        // RUNNING — so even the unblock-then-block ordering preserves the
+        // wakeup.
+        block(thread_state::BLOCKED);
+    }
+}
+
 // ─── IRQ waiters ───────────────────────────────────────────────────────────
 
 void scheduler::wait_for_irq(uint8_t irq) noexcept {
@@ -596,6 +766,7 @@ void scheduler::wait_for_irq(uint8_t irq) noexcept {
 
 void scheduler::wake_irq_waiters(uint8_t irq) noexcept {
     if (g_irq_waiters[irq]) {
+        TRACE_INSTANT(TRACE_EVENT_IRQ_WAKE, irq, g_irq_waiters[irq]->tid);
         unblock(g_irq_waiters[irq]);
         g_irq_waiters[irq] = nullptr;
     }

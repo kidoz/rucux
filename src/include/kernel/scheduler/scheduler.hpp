@@ -73,6 +73,9 @@ struct thread {
     uint32_t sig_pending;   // Pending signals bitmask
     int exit_code;          // Exit status (for pthread_join)
     bool exited;            // True after thread has exited
+    uint32_t parent_tid;    // Parent/owner for waitpid-style reaping
+    int32_t wait_target_tid;
+    bool waiting_for_child;
 
     // Sleep
     uint64_t wake_tick;     // Tick when this thread should wake up
@@ -110,8 +113,12 @@ public:
     static void unblock(thread* t) noexcept;
     static void sleep_until(uint64_t tick) noexcept;
     static void check_sleepers(uint64_t current_tick) noexcept;
-    static void exit() noexcept;
+    static void exit(int status = 0) noexcept;
     static void cleanup_terminated() noexcept;
+
+    // Syscalls
+    static int sys_top(void* buffer, size_t size) noexcept;
+    static long sys_waitpid(int pid, int* wstatus, int options) noexcept;
 
     static thread* current_thread() noexcept;
     static thread* get_thread_by_tid(uint32_t tid) noexcept;
