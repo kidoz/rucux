@@ -200,6 +200,7 @@ isr_stub_\vec:
     push %r11
     mov $\vec, %rdi
     mov 80(%rsp), %rsi // error code (dummy 0)
+    mov 88(%rsp), %rdx // rip
     call isr_handler
     pop %r11
     pop %r10
@@ -229,6 +230,7 @@ isr_stub_\vec:
     push %r11
     mov $\vec, %rdi
     mov 72(%rsp), %rsi // error code
+    mov 80(%rsp), %rdx // rip
     call isr_handler
     pop %r11
     pop %r10

@@ -5,6 +5,8 @@
 
 namespace kernel::scheduler {
 
+void idle_task() noexcept;
+
 enum class thread_state { READY, RUNNING, BLOCKED, TERMINATED };
 
 // Priority classes — lower number = higher priority

@@ -27,6 +27,13 @@ uintptr_t g_temp_user_rsp = 0;
 void jump_to_user_space(void* entry, void* stack, void* arg);
 }
 
+static void destroy_thread(thread* t) noexcept {
+    if (!t) return;
+    delete[] reinterpret_cast<uint8_t*>(t->stack_base);
+    delete[] t->fd_table;
+    delete t;
+}
+
 // ─── FD table ──────────────────────────────────────────────────────────────
 
 bool thread::ensure_fd_capacity(size_t n) noexcept {
@@ -122,13 +129,15 @@ static void clone_trampoline() {
 }
 
 static kernel::atomic<uint32_t> g_next_tid{1000};
+static constexpr size_t THREAD_KERNEL_STACK_SIZE = 32 * 1024;
 
-void idle_task() {
+void idle_task() noexcept {
     while (true) {
 #if defined(__x86_64__)
         asm volatile("sti; hlt");
 #elif defined(__arm__)
-        asm volatile("wfi");
+        // Re-enable IRQs first; without this WFI the CPU will sleep forever.
+        asm volatile("cpsie i; wfi");
 #endif
     }
 }
@@ -177,7 +186,7 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->tid = tid;
     t->priority = thread_prio::NORMAL;
     t->last_cpu = cpu::this_cpu()->cpu_id;
-    t->stack_size = 8192;
+    t->stack_size = THREAD_KERNEL_STACK_SIZE;
     t->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[t->stack_size]);
     t->pml4_phys = 0;
 
@@ -221,7 +230,7 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     t->tid = g_next_tid.fetch_add(1, kernel::relaxed) + 1;
     t->priority = parent->priority;
     t->last_cpu = cpu::this_cpu()->cpu_id;
-    t->stack_size = 8192;
+    t->stack_size = THREAD_KERNEL_STACK_SIZE;
     t->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[t->stack_size]);
     t->pml4_phys = parent->pml4_phys;
 
@@ -293,9 +302,7 @@ void scheduler::cleanup_terminated() noexcept {
             else      g_all_threads = cur->all_next;
             cur = cur->all_next;
 
-            delete[] reinterpret_cast<uint8_t*>(to_delete->stack_base);
-            delete[] to_delete->fd_table;
-            delete to_delete;
+            destroy_thread(to_delete);
         } else {
             prev = cur;
             cur = cur->all_next;
