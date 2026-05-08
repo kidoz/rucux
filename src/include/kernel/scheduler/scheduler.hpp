@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <kernel/process/credentials.hpp>
 #include <lib/stddef.hpp>
 #include <stdint.h>
 
@@ -26,6 +27,7 @@ struct thread {
     uintptr_t stack_base;
     size_t stack_size;
     uintptr_t pml4_phys;
+    process::credentials creds;
 
     // IPC (legacy)
     thread* send_queue_head;
@@ -101,6 +103,7 @@ public:
     static void init() noexcept;
     static void schedule() noexcept;
     static thread* spawn(void (*entry)(), uint32_t tid) noexcept;
+    static thread* spawn_user(uintptr_t pml4_phys, void* entry, void* stack, void* arg, uint32_t tid = 0) noexcept;
     static void add_thread(thread* t) noexcept;
     static void yield() noexcept;
     static void block(thread_state reason) noexcept;

@@ -166,6 +166,7 @@ void scheduler::init() noexcept {
     idle->stack_size = 4096;
     idle->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[idle->stack_size]);
     idle->pml4_phys = 0;
+    idle->creds = process::root_credentials(0, 0);
 
 #if defined(__x86_64__)
     uint64_t* stack = reinterpret_cast<uint64_t*>(idle->stack_base + idle->stack_size);
@@ -195,6 +196,7 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->stack_size = THREAD_KERNEL_STACK_SIZE;
     t->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[t->stack_size]);
     t->pml4_phys = 0;
+    t->creds = process::root_credentials(tid, tid);
 
     uint64_t* stack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
     *(--stack) = reinterpret_cast<uint64_t>(entry);
@@ -228,6 +230,78 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     return t;
 }
 
+thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, void* arg, uint32_t tid) noexcept {
+    thread* t = new thread();
+    if (!t) return nullptr;
+    thread* parent = current_thread();
+
+    if (tid == 0) {
+        tid = g_next_tid.fetch_add(1, kernel::relaxed) + 1;
+    }
+
+    t->tid = tid;
+    t->priority = thread_prio::NORMAL;
+    t->last_cpu = cpu::this_cpu()->cpu_id;
+    t->stack_size = THREAD_KERNEL_STACK_SIZE;
+    t->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[t->stack_size]);
+    t->pml4_phys = pml4_phys;
+    t->creds = parent ? parent->creds : process::root_credentials(tid, tid);
+    if (t->creds.sid == 0) t->creds.sid = tid;
+    if (t->creds.pgid == 0) t->creds.pgid = tid;
+
+    t->fd_table = nullptr;
+    t->fd_count = 0;
+    t->async_head = 0;
+    t->async_tail = 0;
+    t->send_queue_head = nullptr;
+    t->send_queue_next = nullptr;
+    t->has_queued_msg = false;
+    t->recv_buffer = nullptr;
+    t->user_entry = entry;
+    t->user_stack = stack;
+    t->user_arg = arg;
+    t->user_saved_sp = 0;
+    t->user_saved_lr = 0;
+    t->user_saved_spsr = 0;
+    t->futex_wait_addr = 0;
+    t->ipc_caller = nullptr;
+    t->ipc_waiting = false;
+    for (int s = 0; s < thread::MAX_SIGNALS; ++s) t->sig_handlers[s] = nullptr;
+    t->sig_mask = 0;
+    t->sig_pending = 0;
+    t->exit_code = 0;
+    t->exited = false;
+    t->wake_tick = 0;
+    t->next_sleeper = nullptr;
+    t->wait_next = nullptr;
+
+#if defined(__x86_64__)
+    uint64_t* kstack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
+    *(--kstack) = reinterpret_cast<uint64_t>(clone_trampoline);
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
+#elif defined(__arm__)
+    uint32_t* kstack = reinterpret_cast<uint32_t*>(t->stack_base + t->stack_size);
+    *(--kstack) = reinterpret_cast<uint32_t>(clone_trampoline);
+    for (int i = 0; i < 8; ++i) *(--kstack) = 0;
+    t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
+#endif
+
+    {
+        kernel::irq_lock_guard guard(g_threads_lock);
+        t->all_next = g_all_threads;
+        g_all_threads = t;
+    }
+
+    add_thread(t);
+    return t;
+}
+
 long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     thread* parent = current_thread();
     if (!parent) return -1;
@@ -239,6 +313,7 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     t->stack_size = THREAD_KERNEL_STACK_SIZE;
     t->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[t->stack_size]);
     t->pml4_phys = parent->pml4_phys;
+    t->creds = parent->creds;
 
     t->fd_table = nullptr;
     t->fd_count = 0;
