@@ -7,6 +7,7 @@
 namespace kernel::memory {
 
 heap::block_header* heap::g_free_list = nullptr;
+kernel::irq_spinlock heap::g_lock;
 
 void heap::add_to_free_list(heap::block_header* block) noexcept {
     block->prev_free = nullptr;
@@ -43,6 +44,7 @@ void heap::init() noexcept {
     head->prev_phys = nullptr;
     head->next_phys = nullptr;
 
+    irq_lock_guard guard(g_lock);
     g_free_list = nullptr;
     add_to_free_list(head);
 
@@ -50,13 +52,16 @@ void heap::init() noexcept {
 }
 
 void* heap::kmalloc(size_t size) noexcept {
-    size = (size + 7) & ~7ULL;
+    size = (size + 15) & ~15ULL; // Align to 16 bytes for stricter alignment
 
+    irq_lock_guard guard(g_lock);
+
+retry_alloc:
     block_header* current = g_free_list;
     while (current) {
         if (current->size >= size) {
             // Split if enough space
-            if (current->size >= size + sizeof(block_header) + 8) {
+            if (current->size >= size + sizeof(block_header) + 16) {
                 block_header* new_block =
                     reinterpret_cast<block_header*>(reinterpret_cast<uint8_t*>(current) + sizeof(block_header) + size);
 
@@ -82,12 +87,31 @@ void* heap::kmalloc(size_t size) noexcept {
         current = current->next_free;
     }
 
+    // Out of memory in the current heap, try expanding
+    size_t expansion_pages = (size + sizeof(block_header) + pmm::PAGE_SIZE - 1) / pmm::PAGE_SIZE;
+    if (expansion_pages < 16) expansion_pages = 16; // minimum expansion
+
+    void* new_pages = pmm::alloc_pages(expansion_pages);
+    if (new_pages) {
+        block_header* head = static_cast<block_header*>(new_pages);
+        head->size = (expansion_pages * pmm::PAGE_SIZE) - sizeof(block_header);
+        head->is_free = true;
+        head->magic = HEAP_MAGIC;
+        head->prev_phys = nullptr;
+        head->next_phys = nullptr;
+
+        add_to_free_list(head);
+        goto retry_alloc;
+    }
+
     kernel::print("kmalloc: Out of heap memory for size {}!\n", size);
     return nullptr;
 }
 
 void heap::kfree(void* ptr) noexcept {
     if (!ptr) return;
+
+    irq_lock_guard guard(g_lock);
 
     block_header* header = reinterpret_cast<block_header*>(reinterpret_cast<uint8_t*>(ptr) - sizeof(block_header));
 
