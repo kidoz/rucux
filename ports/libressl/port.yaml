@@ -1,0 +1,4 @@
+name: libressl
+version: "3.8.2"
+dependencies:
+  - zlib

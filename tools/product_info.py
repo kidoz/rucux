@@ -19,7 +19,10 @@ class ManifestError(RuntimeError):
 
 
 def parse_scalar(value: str) -> str:
-    return value.strip()
+    value = value.strip()
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    return value
 
 
 def parse_simple_yaml(path: Path) -> dict[str, object]:

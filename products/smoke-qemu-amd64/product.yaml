@@ -9,6 +9,9 @@ programs:
   - unixsock_smoke
   - poweroff_smoke
   - powerctl
+  - pkg
+ports:
+  - zlib
 images:
   - uefi-disk
   - qemu-dev

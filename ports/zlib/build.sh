@@ -27,17 +27,29 @@ echo "Configuring zlib for rucux sysroot..."
 # zlib's configure script is simple. We force it to build only static libs.
 # We also have to pass --prefix so it knows where to "install" the headers.
 # CHOST forces cross-compilation mode in zlib's custom configure script.
-CHOST=x86_64-elf ./configure --static --prefix="${SYSROOT}/usr"
+CHOST=x86_64-elf ./configure --static --prefix="/usr"
 
 # 4. Compile
 echo "Compiling..."
 # We have to inject our strict freestanding CFLAGS because zlib might assume Linux
 make -j$(sysctl -n hw.ncpu || nproc) CFLAGS="${CFLAGS} -O2" LDSHARED="x86_64-elf-gcc" LDFLAGS="${LDFLAGS}" LDLIBS="${SYSROOT}/usr/lib/libc.a" libz.a
 
-# 5. Install to Sysroot
-echo "Installing to sysroot..."
-cp zlib.h zconf.h "${SYSROOT}/usr/include/"
-cp libz.a "${SYSROOT}/usr/lib/"
+# 5. Install to Staging
+echo "Installing to staging..."
+STAGE_DIR="${RUCUX_ROOT}/ports/zlib/pkg-stage"
+rm -rf "${STAGE_DIR}"
+mkdir -p "${STAGE_DIR}/usr/include"
+mkdir -p "${STAGE_DIR}/usr/lib"
+cp zlib.h zconf.h "${STAGE_DIR}/usr/include/"
+cp libz.a "${STAGE_DIR}/usr/lib/"
 
 # Clean up shared library cruft it might have accidentally built despite --static
-rm -f "${SYSROOT}/usr/lib/libz.so*"
+rm -f "${STAGE_DIR}/usr/lib/libz.so*"
+
+# 6. Package
+echo "Packaging .rpkg..."
+${RUCUX_ROOT}/tools/package_port.py "${RUCUX_ROOT}/ports/zlib"
+
+# 7. Extract to global sysroot to satisfy build-time dependencies
+echo "Extracting to sysroot..."
+cp -R "${STAGE_DIR}/usr" "${SYSROOT}/"

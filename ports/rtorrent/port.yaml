@@ -1,0 +1,6 @@
+name: rtorrent
+version: "0.9.8"
+dependencies:
+  - libtorrent
+  - curl
+  - ncurses

@@ -9,23 +9,29 @@ import sys
 import product_info
 
 
-PORT_DEPENDENCIES = {
-    "openlibm": [],
-    "zlib": [],
-    "libcxx": ["openlibm"],
-    "libressl": ["zlib"],
-    "ncurses": [],
-    "curl": ["zlib", "libressl"],
-    "libtorrent": ["libcxx", "libressl"],
-    "rtorrent": ["libtorrent", "curl", "ncurses"],
-    "libffi": [],
-    "expat": [],
-    "vulkan-headers": [],
-    "wayland": ["libffi", "expat"],
-    "libdrm": [],
-    "llvm": ["libcxx"],
-    "mesa": ["zlib", "vulkan-headers", "libdrm", "wayland", "libcxx", "llvm"],
-}
+def load_port_dependencies() -> dict[str, list[str]]:
+    ports_dir = product_info.REPO_ROOT / "ports"
+    deps = {}
+    for port_dir in ports_dir.iterdir():
+        if not port_dir.is_dir():
+            continue
+        port_yaml = port_dir / "port.yaml"
+        if not port_yaml.exists():
+            continue
+        
+        try:
+            data = product_info.parse_simple_yaml(port_yaml)
+            name = str(data.get("name", port_dir.name))
+            dependencies = data.get("dependencies", [])
+            if not isinstance(dependencies, list):
+                dependencies = []
+            deps[name] = [str(d) for d in dependencies]
+        except Exception as e:
+            print(f"warning: failed to parse {port_yaml}: {e}", file=sys.stderr)
+    return deps
+
+
+PORT_DEPENDENCIES = load_port_dependencies()
 
 
 def normalize_ports(product_name: str) -> list[str]:

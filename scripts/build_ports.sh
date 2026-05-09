@@ -9,6 +9,7 @@ export RUCUX_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 export SYSROOT="${RUCUX_ROOT}/sysroot"
 
 # Toolchain (AMD64 by default for now)
+export RUCUX_ARCH="amd64"
 export CC="x86_64-elf-gcc"
 export CXX="x86_64-elf-g++"
 export AR="x86_64-elf-ar"
@@ -74,16 +75,28 @@ build_port() {
 }
 
 # 2. Build Dependency Tree
-# Order matters! zlib has no dependencies.
-build_port "openlibm"
-build_port "zlib"
-build_port "libcxx"
+if [ -z "$1" ]; then
+    echo "Error: Please specify a product name (e.g., dev-qemu-amd64)"
+    echo "Usage: $0 <product_name>"
+    exit 1
+fi
 
-# Uncomment as we implement them:
-build_port "libressl"
-build_port "ncurses"
-build_port "curl"
-build_port "libtorrent"
-build_port "rtorrent"
+PRODUCT_NAME=$1
+echo "Resolving ports for product: ${PRODUCT_NAME}..."
 
-echo "All ports built and installed to sysroot successfully!"
+PORTS_TO_BUILD=$(${RUCUX_ROOT}/tools/resolve_ports.py "${PRODUCT_NAME}")
+
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to resolve ports for ${PRODUCT_NAME}"
+    exit 1
+fi
+
+echo "Build order:"
+echo "${PORTS_TO_BUILD}"
+echo "----------------------------------------------"
+
+for port in ${PORTS_TO_BUILD}; do
+    build_port "${port}"
+done
+
+echo "All ports for ${PRODUCT_NAME} built and installed to sysroot successfully!"

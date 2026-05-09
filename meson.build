@@ -34,8 +34,8 @@ if arch == 'x86_64'
         '-mno-red-zone',      # Critical for kernel interrupt handlers
         '-mno-mmx', '-mno-sse', '-mno-sse2' # Disable floating point in early kernel
     ]
-    user_c_args += ['-mcmodel=large']
-    user_cpp_args += ['-mcmodel=large']
+    user_c_args += ['-mcmodel=large', '-DRUCUX_ARCH="amd64"']
+    user_cpp_args += ['-mcmodel=large', '-DRUCUX_ARCH="amd64"']
     src_files = [
         'src/arch/amd64/boot.cpp',
         'src/arch/amd64/gdt.cpp',
@@ -168,7 +168,7 @@ if arch == 'x86_64'
     # User-space setup
     user_linker_script = meson.current_source_dir() + '/userspace/linker.ld'
     user_link_args = ['-nostdlib', '-static', '-T', user_linker_script]
-    user_apps = ['init', 'console', 'echo', 'cat', 'ls', 'kbd', 'net']
+    user_apps = ['init', 'console', 'echo', 'cat', 'ls', 'kbd', 'net', 'pkg']
     embed_script = find_program('scripts/embed.py')
 
     foreach app : user_apps

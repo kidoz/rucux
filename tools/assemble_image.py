@@ -115,6 +115,20 @@ def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Pat
         run_command(["mcopy", "-i", str(output_path), str(persistent_journal_path), "::/journal.log"])
     finally:
         persistent_journal_path.unlink(missing_ok=True)
+
+    product = data.get("product")
+    if isinstance(product, dict):
+        ports = product.get("ports", [])
+        if isinstance(ports, list) and ports:
+            try:
+                run_command(["mmd", "-i", str(output_path), "::/packages"])
+            except AssembleError:
+                pass # directory might already exist
+            packages_dir = REPO_ROOT / "packages"
+            for port in ports:
+                for match in packages_dir.glob(f"{port}-*.rpkg"):
+                    run_command(["mcopy", "-i", str(output_path), str(match), f"::/packages/{match.name}"])
+
     return output_path
 
 

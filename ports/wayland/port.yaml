@@ -1,0 +1,5 @@
+name: wayland
+version: "1.22.0"
+dependencies:
+  - libffi
+  - expat

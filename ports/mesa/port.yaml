@@ -1,0 +1,9 @@
+name: mesa
+version: "23.2.1"
+dependencies:
+  - zlib
+  - vulkan-headers
+  - libdrm
+  - wayland
+  - libcxx
+  - llvm

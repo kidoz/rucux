@@ -1,0 +1,5 @@
+name: curl
+version: "8.4.0"
+dependencies:
+  - zlib
+  - libressl

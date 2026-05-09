@@ -1,0 +1,5 @@
+name: libtorrent
+version: "0.13.8"
+dependencies:
+  - libcxx
+  - libressl

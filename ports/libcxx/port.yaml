@@ -1,0 +1,4 @@
+name: libcxx
+version: "19.1.0"
+dependencies:
+  - openlibm
