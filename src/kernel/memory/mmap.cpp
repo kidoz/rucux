@@ -22,7 +22,11 @@
 
 namespace kernel::memory {
 
+#if defined(__LP64__) || defined(__x86_64__) || defined(__aarch64__)
 static uintptr_t g_next_mmap_addr = 0xA000000000;
+#else
+static uintptr_t g_next_mmap_addr = 0x40000000;
+#endif
 
 // Per-address-space VMA manager.
 // In a full implementation each process would have its own; for now, global.

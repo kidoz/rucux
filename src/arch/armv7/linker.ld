@@ -1,0 +1,27 @@
+/* SPDX-License-Identifier: MIT */
+ENTRY(kernel_main)
+
+SECTIONS {
+    . = 0x8000;
+
+    .text : ALIGN(4K) {
+        KEEP(*(.vectors))
+        *(.text*)
+    }
+
+    .rodata : ALIGN(4K) {
+        *(.rodata*)
+    }
+
+    .data : ALIGN(4K) {
+        *(.data*)
+    }
+
+    .bss : ALIGN(4K) {
+        *(COMMON)
+        *(.bss*)
+    }
+
+    . = ALIGN(4K);
+    kernel_end = .;
+}

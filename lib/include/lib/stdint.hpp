@@ -30,8 +30,13 @@ using uint_fast32_t = uint32_t;
 using int_fast64_t = int64_t;
 using uint_fast64_t = uint64_t;
 
+#if defined(__LP64__) || defined(__x86_64__) || defined(__aarch64__)
 using intptr_t = long long;
 using uintptr_t = unsigned long long;
+#else
+using intptr_t = int;
+using uintptr_t = unsigned int;
+#endif
 
 using intmax_t = int64_t;
 using uintmax_t = uint64_t;

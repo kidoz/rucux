@@ -9,6 +9,8 @@
 
 namespace arch::armv7 {
 
+extern "C" void vector_table();
+
 static constexpr uint32_t TIMER_VIRQ = 27;
 
 // ─── Exception handlers (called from assembly stubs) ───────────────────────
@@ -87,7 +89,6 @@ extern "C" void fiq_handler() noexcept {
 
 void exceptions_init() noexcept {
     // VBAR is set by the assembly vector table linkage
-    extern void vector_table();
     asm volatile("mcr p15, 0, %0, c12, c0, 0" :: "r"(&vector_table));
 
     // Ensure exception vectors use high vectors (0xFFFF0000) disabled
