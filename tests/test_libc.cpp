@@ -251,6 +251,5 @@ TEST(inet_ntop_v4) {
 }
 
 int main() {
-    printf("=== libc Completion Tests ===\n");
-    return test_summary();
+    return RUN_ALL_TESTS("libc Completion Tests");
 }

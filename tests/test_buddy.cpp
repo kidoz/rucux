@@ -304,6 +304,5 @@ TEST(buddy_oom_returns_zero) {
 }
 
 int main() {
-    printf("=== Buddy Allocator Tests ===\n");
-    return test_summary();
+    return RUN_ALL_TESTS("Buddy Allocator Tests");
 }

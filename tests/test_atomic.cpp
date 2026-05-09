@@ -98,6 +98,5 @@ TEST(atomic_uint16_wrap) {
 }
 
 int main() {
-    printf("=== Atomic Tests ===\n");
-    return test_summary();
+    return RUN_ALL_TESTS("Atomic Tests");
 }

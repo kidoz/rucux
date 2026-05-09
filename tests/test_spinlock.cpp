@@ -101,6 +101,5 @@ TEST(irq_lock_guard_scoped) {
 }
 
 int main() {
-    printf("=== Spinlock Tests ===\n");
-    return test_summary();
+    return RUN_ALL_TESTS("Spinlock Tests");
 }
