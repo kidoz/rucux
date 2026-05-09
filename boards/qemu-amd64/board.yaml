@@ -1,0 +1,10 @@
+name: qemu-amd64
+arch: amd64
+boot:
+  firmware: uefi
+  bootloader: custom-uefi
+runtime:
+  emulator: qemu-system-x86_64
+artifacts:
+  kernel: builddir/kernel.elf
+  uefi_image: uefi.img

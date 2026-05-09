@@ -1,0 +1,28 @@
+name: odroid-c2-armv7
+arch: armv7
+boot:
+  firmware: u-boot
+  bootloader: u-boot-handoff
+runtime:
+  hardware: odroid-c2
+artifacts:
+  kernel: builddir-arm/kernel.elf
+platform:
+  cpu_count: 4
+  uart:
+    base: 0xC81004C0
+    fr_offset: 0x0
+    tx_full_mask: 0x0
+  gic:
+    dist_base: 0xC4301000
+    cpu_base: 0xC4302000
+  timer:
+    irq: 27
+  psci:
+    conduit: smc
+  power:
+    shutdown_method: psci
+  memory:
+    ram_base: 0x10000000
+    ram_size: 0x40000000
+    kernel_load_address: 0x8000
