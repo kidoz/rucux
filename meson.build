@@ -153,7 +153,7 @@ if arch == 'x86_64'
          'libc/src/exit.cpp', 'libc/src/unistd_stubs.cpp', 'libc/src/std_files.cpp',
          'libc/src/stdlib.cpp', 'libc/src/ctype.cpp', 'libc/src/strrchr.cpp',
          'libc/src/errno.cpp', 'libc/src/time.cpp', 'libc/src/strdup.cpp',
-         'libc/src/syslog.cpp', 'libc/src/strchr.cpp', 'libc/src/strncmp.cpp',
+         'libc/src/syslog.cpp', 'libc/src/strchr.cpp', 'libc/src/strncmp.cpp', 'libc/src/strlen.cpp',
          'libc/src/strtol.cpp', 'libc/src/netdb.cpp', 'libc/src/strcspn.cpp',
          'libc/src/signal.cpp', 'libc/src/dirent.cpp', 'libc/src/poll.cpp',
          'libc/src/strstr.cpp', 'libc/src/getopt.cpp', 'libc/src/locale.cpp',
