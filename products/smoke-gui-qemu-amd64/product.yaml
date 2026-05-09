@@ -1,0 +1,10 @@
+name: smoke-gui-qemu-amd64
+board: qemu-amd64
+services:
+  - init
+  - console
+programs:
+  - gui_smoke
+images:
+  - uefi-disk
+  - qemu-dev

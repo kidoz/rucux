@@ -1,0 +1,35 @@
+name: dev-qemu-amd64
+board: qemu-amd64
+services:
+  - init
+  - console
+  - kbd
+  - net
+  - traced
+  - logd
+programs:
+  - sh
+  - trace
+  - dmesg
+  - dmesg_smoke
+  - gui_smoke
+  - ls
+  - cat
+  - echo
+  - unixsock_smoke
+  - rtorrent
+  - wm
+  - wm_client
+ports:
+  - zlib
+  - openlibm
+  - libffi
+  - expat
+  - vulkan-headers
+  - wayland
+  - libdrm
+  - llvm
+  - mesa
+images:
+  - uefi-disk
+  - qemu-dev

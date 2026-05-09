@@ -1,0 +1,10 @@
+name: smoke-cred-qemu-amd64
+board: qemu-amd64
+services:
+  - init
+  - console
+programs:
+  - cred_smoke
+images:
+  - uefi-disk
+  - qemu-dev

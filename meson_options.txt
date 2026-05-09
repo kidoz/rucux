@@ -1,0 +1,6 @@
+option(
+  'product',
+  type: 'string',
+  value: 'dev-qemu-amd64',
+  description: 'Product manifest that selects embedded userspace composition'
+)

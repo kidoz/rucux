@@ -1,0 +1,11 @@
+name: bringup-qemu-armv7
+board: qemu-armv7-virt
+services:
+  - init
+  - console
+  - traced
+programs:
+  - sh
+  - trace
+images:
+  - qemu-armv7-virt

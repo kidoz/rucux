@@ -1,0 +1,15 @@
+name: smoke-reboot-qemu-amd64
+board: qemu-amd64
+services:
+  - init
+  - console
+  - logd
+programs:
+  - dmesg_smoke
+  - unixsock_smoke
+  - reboot_smoke
+  - powerctl
+images:
+  - uefi-disk
+  - qemu-dev
+

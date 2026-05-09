@@ -1,0 +1,11 @@
+name: bringup-odroid-c2-armv7
+board: odroid-c2-armv7
+services:
+  - init
+  - console
+  - traced
+programs:
+  - sh
+  - trace
+images:
+  - sdcard-bringup
