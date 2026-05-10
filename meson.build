@@ -134,6 +134,7 @@ elif arch == 'arm'
         'src/kernel/process/signal.cpp',
         'src/kernel/ipc/ipc.cpp',
         'src/kernel/trace.cpp',
+        'src/kernel/time.cpp',
         'src/kernel/net/socket.cpp',
         'src/kernel/net/netbuf.cpp',
         'src/kernel/net/netif.cpp',

@@ -5,7 +5,7 @@
 
 namespace kernel::vfs {
 
-enum class file_type { REGULAR, DIRECTORY, CHAR_DEVICE, BLOCK_DEVICE };
+enum class file_type { REGULAR, DIRECTORY, CHAR_DEVICE, BLOCK_DEVICE, SOCKET, EPOLL };
 
 struct vfs_node;
 
@@ -48,6 +48,12 @@ public:
     static void init() noexcept;
     static vfs_node* get_root() noexcept;
     static void set_root(vfs_node* node) noexcept;
+    static vfs_node* resolve_path(const char* path) noexcept;
+
+    // FD Management
+    static int alloc_fd(vfs_node* node) noexcept;
+    static void free_fd(int fd) noexcept;
+    static vfs_node* get_fd_node(int fd) noexcept;
 
     // POSIX Syscalls
     static int sys_open(const char* path, int flags) noexcept;
