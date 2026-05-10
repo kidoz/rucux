@@ -9,6 +9,8 @@
 #include <arch/armv7/usb.hpp>
 #include <arch/armv7/dwmac.hpp>
 #include <arch/armv7/mali450.hpp>
+#include <arch/armv7/hw_rng.hpp>
+#include <arch/armv7/watchdog.hpp>
 #include <kernel/boot_protocol.hpp>
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/memory/pmm.hpp>
@@ -104,6 +106,12 @@ void kernel_main(rucux_boot_info* info) {
 
     // Initialize USB & Hub
     arch::armv7::usb::init();
+
+    // Initialize Hardware RNG
+    arch::armv7::hw_rng::init();
+
+    // Initialize Watchdog Timer (set to 5 seconds)
+    arch::armv7::watchdog::init(5000);
 
     // Boot secondary cores via PSCI
     arch::armv7::smp_boot_aps(NUM_CPUS);

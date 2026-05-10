@@ -113,6 +113,8 @@ elif arch == 'arm'
         'src/arch/armv7/dwmac.cpp',
         'src/arch/armv7/mali450.cpp',
         'src/arch/armv7/usb.cpp',
+        'src/arch/armv7/hw_rng.cpp',
+        'src/arch/armv7/watchdog.cpp',
         'src/arch/armv7/exception_vectors.S',
         'src/arch/armv7/scheduler/switch.S',
         'src/kernel/memory/pmm.cpp',
