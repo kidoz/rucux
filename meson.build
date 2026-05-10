@@ -129,6 +129,7 @@ elif arch == 'arm'
         'src/kernel/console.cpp',
         'src/kernel/vfs/vfs.cpp',
         'src/kernel/process/elf.cpp',
+        'src/kernel/process/spawn.cpp',
         'src/kernel/process/credentials.cpp',
         'src/kernel/process/signal.cpp',
         'src/kernel/ipc/ipc.cpp',

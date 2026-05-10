@@ -8,6 +8,7 @@
 #include <kernel/memory/mmap.hpp>
 #include <kernel/net/socket.hpp>
 #include <kernel/process/signal.hpp>
+#include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/vfs/vfs.hpp>
 #include <kernel/time.hpp>

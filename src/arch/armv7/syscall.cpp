@@ -5,6 +5,7 @@
 
 #include <kernel/ipc/ipc.hpp>
 #include <kernel/memory/mmap.hpp>
+#include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/vfs/vfs.hpp>
 
@@ -73,6 +74,8 @@ extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, l
     case SYS_IPC_REPLY:
         return kernel::ipc::sys_ipc_reply(
                     reinterpret_cast<kernel::ipc::fast_msg*>(a1));
+    case SYS_SPAWN:
+        return kernel::process::sys_spawn(reinterpret_cast<const char*>(a1));
     default:
         return -1;
     }

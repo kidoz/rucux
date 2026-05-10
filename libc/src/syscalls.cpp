@@ -72,4 +72,8 @@ void _exit(int status) {
     }
 }
 
+long spawn(const char* path) {
+    return (long)__syscall(SYS_SPAWN, (long)path);
+}
+
 } // extern "C"

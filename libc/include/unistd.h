@@ -56,6 +56,7 @@ int symlink(const char *target, const char *linkpath);
 long pathconf(const char *path, int name);
 
 pid_t fork(void);
+long spawn(const char* path);
 int pipe(int pipefd[2]);
 int dup2(int oldfd, int newfd);
 int execvp(const char *file, char *const argv[]);
