@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import struct
 from pathlib import Path
 
 import product_info
@@ -132,6 +133,82 @@ def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Pat
     return output_path
 
 
+import zlib
+import time
+
+def create_boot_scr(script_text: str, output_path: Path) -> None:
+    data = script_text.encode('utf-8')
+    data_crc = zlib.crc32(data) & 0xffffffff
+    size = len(data)
+    magic = 0x27051956
+    timestamp = int(time.time())
+    fmt = '>IIIIIIIBBBB32s'
+    header_without_crc = struct.pack(fmt, magic, 0, timestamp, size, 0, 0, data_crc, 5, 2, 6, 0, b'rucux boot script')
+    hcrc = zlib.crc32(header_without_crc) & 0xffffffff
+    header = struct.pack(fmt, magic, hcrc, timestamp, size, 0, 0, data_crc, 5, 2, 6, 0, b'rucux boot script')
+    output_path.write_bytes(header + data)
+
+def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> Path:
+    image_size_mib = image.get("size_mib", 128)
+    size_mib = int(image_size_mib)
+    output_path = output_path_from_resolved(data, image)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    board = data.get("board")
+    if not isinstance(board, dict):
+        raise AssembleError("resolved board manifest is invalid")
+        
+    kernel_path = kernel_path_from_resolved(board)
+    if not kernel_path.exists():
+        raise AssembleError(f"kernel artifact not found: {kernel_path}")
+
+    with tempfile.TemporaryDirectory(prefix="rucux-sd-") as tmpdir:
+        tmp_path = Path(tmpdir)
+        boot_scr_path = tmp_path / "boot.scr"
+        create_boot_scr("fatload mmc 0:1 0x10000000 kernel.elf\nbootelf 0x10000000\n", boot_scr_path)
+
+        fat_img_path = tmp_path / "fat.img"
+        fat_size_mib = size_mib - 2
+        run_command(["dd", "if=/dev/zero", f"of={fat_img_path}", "bs=1M", f"count={fat_size_mib}", "status=none"])
+        run_command(["mformat", "-i", str(fat_img_path), "-F", "::"])
+        
+        run_command(["mcopy", "-i", str(fat_img_path), str(boot_scr_path), "::/boot.scr"])
+        run_command(["mcopy", "-i", str(fat_img_path), str(kernel_path), "::/kernel.elf"])
+
+        product = data.get("product")
+        if isinstance(product, dict):
+            ports = product.get("ports", [])
+            if isinstance(ports, list) and ports:
+                run_command(["mmd", "-i", str(fat_img_path), "::/packages"])
+                packages_dir = REPO_ROOT / "packages"
+                for port in ports:
+                    for match in packages_dir.glob(f"{port}-*.rpkg"):
+                        run_command(["mcopy", "-i", str(fat_img_path), str(match), f"::/packages/{match.name}"])
+
+        output_path.unlink(missing_ok=True)
+        run_command(["dd", "if=/dev/zero", f"of={output_path}", "bs=1M", f"count={size_mib}", "status=none"])
+        
+        lba_start = 2048
+        num_sectors = (fat_size_mib * 1024 * 1024) // 512
+        mbr = bytearray(512)
+        mbr[446] = 0x80
+        mbr[447:450] = b'\xfe\xff\xff'
+        mbr[450] = 0x0C
+        mbr[451:454] = b'\xfe\xff\xff'
+        mbr[454:458] = lba_start.to_bytes(4, 'little')
+        mbr[458:462] = num_sectors.to_bytes(4, 'little')
+        mbr[510] = 0x55
+        mbr[511] = 0xAA
+
+        with open(output_path, "r+b") as out:
+            out.seek(0)
+            out.write(mbr)
+            out.seek(lba_start * 512)
+            with open(fat_img_path, "rb") as fat:
+                shutil.copyfileobj(fat, out)
+
+    return output_path
+
 def assemble_image(product_name: str, image_name: str) -> Path:
     data = product_info.resolved_image_manifest(product_name, image_name)
     image = data.get("image")
@@ -141,6 +218,8 @@ def assemble_image(product_name: str, image_name: str) -> Path:
     kind = image.get("kind")
     if kind == "fat32-efi-disk":
         return assemble_uefi_disk(data, image)
+    if kind == "raw-sd-image":
+        return assemble_raw_sd_image(data, image)
 
     raise AssembleError(f"unsupported image kind: {kind}")
 
