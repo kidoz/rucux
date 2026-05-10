@@ -26,6 +26,7 @@ public:
     static void unmap(uintptr_t virt) noexcept;
     static void switch_to(uintptr_t pml4_phys) noexcept;
     static uintptr_t get_active_page_table() noexcept;
+    static uintptr_t get_phys(uintptr_t virt) noexcept;
     static void disable_write_protect() noexcept;
     static void enable_write_protect() noexcept;
 

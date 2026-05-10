@@ -257,6 +257,31 @@ uintptr_t vmm::get_active_page_table() noexcept {
     return static_cast<uintptr_t>(lo);
 }
 
+uintptr_t vmm::get_phys(uintptr_t virt) noexcept {
+    size_t l1_idx = (virt >> 30) & 0x3;
+    size_t l2_idx = (virt >> 21) & 0x1FF;
+    size_t l3_idx = (virt >> 12) & 0x1FF;
+
+    uint32_t lo, hi;
+    asm volatile("mrrc p15, 0, %0, %1, c2" : "=r"(lo), "=r"(hi));
+    auto* l1 = reinterpret_cast<uint64_t*>(lo);
+
+    auto* l2 = get_next_table(l1, l1_idx, false);
+    if (!l2) return 0;
+
+    if ((l2[l2_idx] & LPAE_VALID) && !(l2[l2_idx] & LPAE_TABLE)) {
+        return static_cast<uintptr_t>((l2[l2_idx] & 0xFFFFFFE00000ULL) | (virt & 0x1FFFFF));
+    }
+
+    auto* l3 = get_next_table(l2, l2_idx, false);
+    if (!l3) return 0;
+
+    if (l3[l3_idx] & LPAE_VALID) {
+        return static_cast<uintptr_t>((l3[l3_idx] & 0xFFFFFFFFF000ULL) | (virt & 0xFFF));
+    }
+    return 0;
+}
+
 void vmm::disable_write_protect() noexcept {
     // ARMv7 doesn't have a WP bit like x86. Access is controlled per-page.
     // This is a no-op; use map() with WRITABLE flag to change permissions.

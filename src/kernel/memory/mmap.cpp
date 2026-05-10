@@ -113,8 +113,11 @@ int mmap_manager::sys_munmap(void* addr, size_t length) noexcept {
     // Unmap pages and free physical memory
     for (size_t i = 0; i < num_pages; ++i) {
         uintptr_t va = virt + (i * pmm::PAGE_SIZE);
-        // TODO: walk page tables to find physical address and free it
+        uintptr_t phys = vmm::get_phys(va);
         vmm::unmap(va);
+        if (phys) {
+            pmm::free_page(reinterpret_cast<void*>(phys));
+        }
     }
 
     // Remove VMA tracking

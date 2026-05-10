@@ -124,6 +124,35 @@ uintptr_t vmm::get_active_page_table() noexcept {
     return current_cr3;
 }
 
+uintptr_t vmm::get_phys(uintptr_t virt) noexcept {
+    size_t pml4_idx = (virt >> 39) & 0x1FF;
+    size_t pdpt_idx = (virt >> 30) & 0x1FF;
+    size_t pd_idx = (virt >> 21) & 0x1FF;
+    size_t pt_idx = (virt >> 12) & 0x1FF;
+
+    uintptr_t current_cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
+    uintptr_t* pml4 = reinterpret_cast<uintptr_t*>(current_cr3 & ~0xFFFULL);
+
+    uintptr_t* pdpt = get_next_table(pml4, pml4_idx, false);
+    if (!pdpt) return 0;
+    uintptr_t* pd = get_next_table(pdpt, pdpt_idx, false);
+    if (!pd) return 0;
+
+    // Check if this is a 2MB page
+    if (pd[pd_idx] & PAGE_SIZE_BIT) {
+        return (pd[pd_idx] & ~0x1FFFFFULL) | (virt & 0x1FFFFFULL);
+    }
+
+    uintptr_t* pt = get_next_table(pd, pd_idx, false);
+    if (!pt) return 0;
+
+    if (pt[pt_idx] & static_cast<uint64_t>(page_flags::PRESENT)) {
+        return (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFF);
+    }
+    return 0;
+}
+
 void vmm::disable_write_protect() noexcept {
     uint64_t cr0;
     asm volatile("mov %%cr0, %0" : "=r"(cr0));
