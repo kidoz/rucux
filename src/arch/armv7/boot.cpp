@@ -6,12 +6,17 @@
 #include <arch/armv7/smp.hpp>
 #include <arch/armv7/timer.hpp>
 #include <arch/armv7/uart.hpp>
+#include <arch/armv7/usb.hpp>
+#include <arch/armv7/dwmac.hpp>
+#include <arch/armv7/mali450.hpp>
 #include <kernel/boot_protocol.hpp>
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/net/netif.hpp>
+#include <kernel/net/socket.hpp>
 #include <lib/type_traits.hpp>
 #include <stdint.h>
 
@@ -58,6 +63,17 @@ void kernel_main(rucux_boot_info* info) {
         kernel::memory::pmm::init(entries, count);
         kernel::print("PMM: {} MB free\n",
                       (kernel::memory::pmm::get_free_pages() * 4096) / (1024 * 1024));
+    } else {
+        kernel::print("WARNING: No valid boot info found! Using hardcoded Odroid C2 memory map.\n");
+        // Odroid C2 has 2GB of RAM starting at 0x00000000.
+        // We start our usable pool at 0x11000000 to safely skip ROM, ATF, U-Boot, and the kernel itself.
+        kernel::memory::pmm::memory_map_entry entries[1];
+        entries[0].base = 0x11000000;
+        entries[0].length = 0x6E000000; // ~1760 MB (up to 0x7F000000)
+        entries[0].type = 7; // EfiConventionalMemory
+        kernel::memory::pmm::init(entries, 1);
+        kernel::print("PMM fallback: {} MB free\n",
+                      (kernel::memory::pmm::get_free_pages() * 4096) / (1024 * 1024));
     }
 
     kernel::memory::vmm::init();
@@ -77,6 +93,17 @@ void kernel_main(rucux_boot_info* info) {
 
     // Initialize scheduler
     kernel::scheduler::scheduler::init();
+    
+    // Initialize network stack and Odroid C2 Ethernet driver
+    kernel::net::net_init();
+    kernel::net::socket_manager::init();
+    arch::armv7::dwmac::init();
+
+    // Initialize Mali-450 GPU
+    arch::armv7::mali450::init();
+
+    // Initialize USB & Hub
+    arch::armv7::usb::init();
 
     // Boot secondary cores via PSCI
     arch::armv7::smp_boot_aps(NUM_CPUS);
