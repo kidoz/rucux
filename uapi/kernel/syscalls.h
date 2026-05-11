@@ -55,3 +55,4 @@
 #define SYS_IPC_CALL  50   // Fast IPC: send + wait for reply (register-based)
 #define SYS_IPC_REPLY 51   // Fast IPC: reply to caller + resume them
 #define SYS_SPAWN     52   // Process creation: spawn a new process from an ELF file
+#define SYS_SIGRETURN 53   // Return from a user-space signal handler

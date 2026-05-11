@@ -58,6 +58,10 @@ svc_entry:
     // Store return value (r0) into the saved r0 slot so it's returned to user
     str r0, [sp, #0]
 
+    // Pass the saved registers pointer to check_signals
+    mov r0, sp
+    bl check_signals
+
     // Restore user state and return
     ldmfd sp!, {r0-r12, pc}^
 

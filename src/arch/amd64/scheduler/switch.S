@@ -69,6 +69,28 @@ syscall_entry:
     mov %rax, %rdi // arg1 (num)
     
     call syscall_dispatch
+    
+    // Save rax (return value) before calling check_signals
+    push %rax
+    
+    // Pass pointer to saved registers
+    // Current stack:
+    // rsp+0:  rax (return value)
+    // rsp+8:  arg7
+    // rsp+16: r15
+    // rsp+24: r14
+    // rsp+32: r13
+    // rsp+40: r12
+    // rsp+48: rbx
+    // rsp+56: rbp
+    // rsp+64: r11 (RFLAGS)
+    // rsp+72: rcx (RIP)
+    // rsp+80: user rsp
+    mov %rsp, %rdi
+    .extern check_signals
+    call check_signals
+    
+    pop %rax
     add $8, %rsp   // Cleanup arg7
 
     // Restore user registers

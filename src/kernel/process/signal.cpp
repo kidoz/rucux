@@ -43,6 +43,7 @@ int signal_manager::sys_sigaction(int signum, const void* act, void* oldact) noe
     if (act) {
         auto* new_act = reinterpret_cast<const kernel_sigaction*>(act);
         t->sig_handlers[signum] = new_act->sa_handler;
+        t->sig_restorers[signum] = new_act->sa_restorer;
     }
 
     return 0;

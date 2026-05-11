@@ -3,6 +3,24 @@
 #include <uapi/kernel/syscalls.h>
 #include "syscall_impl.h"
 
+#if defined(__x86_64__)
+__asm__(
+    ".global __sigreturn_trampoline\n"
+    "__sigreturn_trampoline:\n"
+    "mov $53, %rax\n"
+    "syscall\n"
+);
+#elif defined(__arm__)
+__asm__(
+    ".global __sigreturn_trampoline\n"
+    "__sigreturn_trampoline:\n"
+    "mov r0, #53\n"
+    "svc #0\n"
+);
+#endif
+
+extern "C" void __sigreturn_trampoline(void);
+
 extern "C" {
 
 sighandler_t signal(int signum, sighandler_t handler) {
@@ -10,6 +28,7 @@ sighandler_t signal(int signum, sighandler_t handler) {
     act.sa_handler = handler;
     sigemptyset(&act.sa_mask);
     act.sa_flags = 0;
+    act.sa_restorer = __sigreturn_trampoline;
     if (sigaction(signum, &act, &oldact) < 0) return SIG_ERR;
     return oldact.sa_handler;
 }
@@ -19,7 +38,12 @@ int raise(int sig) {
 }
 
 int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact) {
-    return (int)__syscall(SYS_SIGACTION, (long)signum, (long)act, (long)oldact);
+    struct sigaction kact;
+    if (act) {
+        kact = *act;
+        kact.sa_restorer = __sigreturn_trampoline;
+    }
+    return (int)__syscall(SYS_SIGACTION, (long)signum, (long)(act ? &kact : nullptr), (long)oldact);
 }
 
 int kill(int pid, int sig) {

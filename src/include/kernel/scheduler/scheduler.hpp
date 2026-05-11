@@ -69,6 +69,7 @@ struct thread {
     static constexpr int MAX_SIGNALS = 32;
     using sighandler_t = void (*)(int);
     sighandler_t sig_handlers[MAX_SIGNALS]; // SIG_DFL=0, SIG_IGN=1, or handler addr
+    void (*sig_restorers[MAX_SIGNALS])(void); // Trampoline addresses
     uint32_t sig_mask;      // Blocked signals bitmask
     uint32_t sig_pending;   // Pending signals bitmask
     int exit_code;          // Exit status (for pthread_join)

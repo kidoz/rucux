@@ -5,11 +5,156 @@
 
 #include <kernel/ipc/ipc.hpp>
 #include <kernel/memory/mmap.hpp>
-#include <kernel/process/spawn.hpp>
-#include <kernel/scheduler/scheduler.hpp>
-#include <kernel/vfs/vfs.hpp>
+#include <kernel/process/signal.hpp>
+#include <uapi/kernel/signal.h>
 
 namespace arch::armv7 {
+
+static inline uint32_t get_user_sp() noexcept {
+    uint32_t sp_usr;
+    asm volatile(
+        "mrs r1, cpsr\n"
+        "bic r2, r1, #0x1f\n"
+        "orr r2, r2, #0x1f\n"
+        "msr cpsr_c, r2\n"
+        "mov %0, sp\n"
+        "msr cpsr_c, r1\n"
+        : "=r"(sp_usr) : : "r1", "r2", "memory"
+    );
+    return sp_usr;
+}
+
+static inline void set_user_sp(uint32_t sp_usr) noexcept {
+    asm volatile(
+        "mrs r1, cpsr\n"
+        "bic r2, r1, #0x1f\n"
+        "orr r2, r2, #0x1f\n"
+        "msr cpsr_c, r2\n"
+        "mov sp, %0\n"
+        "msr cpsr_c, r1\n"
+        : : "r"(sp_usr) : "r1", "r2", "memory"
+    );
+}
+
+static inline uint32_t get_user_lr() noexcept {
+    uint32_t lr_usr;
+    asm volatile(
+        "mrs r1, cpsr\n"
+        "bic r2, r1, #0x1f\n"
+        "orr r2, r2, #0x1f\n"
+        "msr cpsr_c, r2\n"
+        "mov %0, lr\n"
+        "msr cpsr_c, r1\n"
+        : "=r"(lr_usr) : : "r1", "r2", "memory"
+    );
+    return lr_usr;
+}
+
+static inline void set_user_lr(uint32_t lr_usr) noexcept {
+    asm volatile(
+        "mrs r1, cpsr\n"
+        "bic r2, r1, #0x1f\n"
+        "orr r2, r2, #0x1f\n"
+        "msr cpsr_c, r2\n"
+        "mov lr, %0\n"
+        "msr cpsr_c, r1\n"
+        : : "r"(lr_usr) : "r1", "r2", "memory"
+    );
+}
+
+static inline uint32_t get_spsr() noexcept {
+    uint32_t val;
+    asm volatile("mrs %0, spsr" : "=r"(val));
+    return val;
+}
+
+static inline void set_spsr(uint32_t val) noexcept {
+    asm volatile("msr spsr_cxsf, %0" : : "r"(val));
+}
+
+extern "C" void check_signals(uintptr_t* sp_ptr) {
+    auto* t = kernel::scheduler::scheduler::current_thread();
+    if (!t) return;
+
+    if (sp_ptr[0] == 0x5168E700) {
+        uint32_t user_sp = get_user_sp();
+        auto* ctx = reinterpret_cast<sigcontext*>(user_sp);
+        
+        sp_ptr[0] = ctx->r0;
+        sp_ptr[1] = ctx->r1;
+        sp_ptr[2] = ctx->r2;
+        sp_ptr[3] = ctx->r3;
+        sp_ptr[4] = ctx->r4;
+        sp_ptr[5] = ctx->r5;
+        sp_ptr[6] = ctx->r6;
+        sp_ptr[7] = ctx->r7;
+        sp_ptr[8] = ctx->r8;
+        sp_ptr[9] = ctx->r9;
+        sp_ptr[10] = ctx->r10;
+        sp_ptr[11] = ctx->r11;
+        sp_ptr[12] = ctx->r12;
+        sp_ptr[13] = ctx->pc;
+        
+        set_user_sp(ctx->sp);
+        set_user_lr(ctx->lr);
+        set_spsr(ctx->cpsr);
+        
+        t->sig_mask = ctx->oldmask;
+        return;
+    }
+
+    uint32_t pending = t->sig_pending & ~t->sig_mask;
+    if (!pending) return;
+
+    if (kernel::process::signal_manager::consume_fatal_signal(t)) return;
+
+    int signum = -1;
+    for (int i = 1; i < kernel::scheduler::thread::MAX_SIGNALS; ++i) {
+        if (pending & (1U << i)) {
+            signum = i;
+            break;
+        }
+    }
+    if (signum == -1) return;
+
+    auto handler = t->sig_handlers[signum];
+    if (!handler || handler == reinterpret_cast<kernel::scheduler::thread::sighandler_t>(1)) {
+        t->sig_pending &= ~(1U << signum);
+        return;
+    }
+
+    uint32_t user_sp = get_user_sp();
+    user_sp -= sizeof(sigcontext);
+    user_sp &= ~7U; // 8-byte alignment
+
+    auto* ctx = reinterpret_cast<sigcontext*>(user_sp);
+    ctx->r0 = sp_ptr[0];
+    ctx->r1 = sp_ptr[1];
+    ctx->r2 = sp_ptr[2];
+    ctx->r3 = sp_ptr[3];
+    ctx->r4 = sp_ptr[4];
+    ctx->r5 = sp_ptr[5];
+    ctx->r6 = sp_ptr[6];
+    ctx->r7 = sp_ptr[7];
+    ctx->r8 = sp_ptr[8];
+    ctx->r9 = sp_ptr[9];
+    ctx->r10 = sp_ptr[10];
+    ctx->r11 = sp_ptr[11];
+    ctx->r12 = sp_ptr[12];
+    ctx->sp = get_user_sp();
+    ctx->lr = get_user_lr();
+    ctx->pc = sp_ptr[13]; // return address
+    ctx->cpsr = get_spsr();
+    ctx->oldmask = t->sig_mask;
+
+    // Set registers to jump to handler
+    sp_ptr[13] = reinterpret_cast<uint32_t>(handler); // pc
+    set_user_sp(user_sp);
+    set_user_lr(reinterpret_cast<uint32_t>(t->sig_restorers[signum])); // lr = trampoline
+
+    t->sig_pending &= ~(1U << signum);
+    t->sig_mask |= (1U << signum);
+}
 
 // Shared syscall dispatcher — called from the SVC assembly stub.
 // Same interface as amd64: num in first arg, up to 6 args following.
