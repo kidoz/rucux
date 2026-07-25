@@ -12,6 +12,7 @@
 // table; the kernel currently runs identity-mapped, so TTBR1 is unused.
 
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <lib/string.hpp>
@@ -282,12 +283,25 @@ void vmm::enable_write_protect() noexcept {
     // See above.
 }
 
-bool vmm::handle_page_fault(uintptr_t, uint64_t) noexcept {
-    // Demand paging resolves faults against a process VMA set, which requires
-    // the scheduler and a userspace to fault. Neither exists on AArch64 yet, so
-    // every fault here is a genuine kernel bug and must not be papered over —
-    // returning false lets the exception handler report ESR/ELR instead.
-    return false;
+bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t) noexcept {
+    extern vma_manager g_vma;
+    extern bool g_vma_initialized;
+    if (!g_vma_initialized) return false;
+
+    // No VMA covers the address: a genuine fault. Report it rather than
+    // silently backing it with a zero page.
+    vma* v = g_vma.find(fault_addr);
+    if (!v) return false;
+
+    void* phys = pmm::alloc_page();
+    if (!phys) return false;
+    lib::memset(phys, 0, PAGE_SIZE);
+
+    page_flags flags = page_flags::PRESENT | page_flags::USER;
+    if (v->prot & 0x02) flags = flags | page_flags::WRITABLE;
+
+    vmm::map(fault_addr & ~0xFFFULL, reinterpret_cast<uintptr_t>(phys), flags);
+    return true;
 }
 
 } // namespace kernel::memory

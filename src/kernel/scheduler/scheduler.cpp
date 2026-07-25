@@ -182,6 +182,9 @@ void idle_task() noexcept {
 #elif defined(__arm__)
         // Re-enable IRQs first; without this WFI the CPU will sleep forever.
         asm volatile("cpsie i; wfi");
+#elif defined(__aarch64__)
+        // daifclr #2 unmasks IRQ — same reasoning as ARMv7 above.
+        asm volatile("msr daifclr, #2; wfi");
 #endif
     }
 }
@@ -221,6 +224,15 @@ void scheduler::init() noexcept {
     *(--stack) = reinterpret_cast<uint32_t>(idle_task);
     for (int i = 0; i < 8; ++i)
         *(--stack) = 0;
+    idle->stack_pointer = reinterpret_cast<uintptr_t>(stack);
+#elif defined(__aarch64__)
+    // 12 callee-saved slots matching switch.S; slot 11 is x30, which `ret`
+    // jumps to. SP must stay 16-byte aligned.
+    uint64_t* stack = reinterpret_cast<uint64_t*>((idle->stack_base + idle->stack_size) & ~0xFULL);
+    stack -= 12;
+    for (int i = 0; i < 12; ++i)
+        stack[i] = 0;
+    stack[11] = reinterpret_cast<uint64_t>(idle_task);
     idle->stack_pointer = reinterpret_cast<uintptr_t>(stack);
 #endif
     idle->state = thread_state::READY;
@@ -349,6 +361,13 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
     for (int i = 0; i < 8; ++i)
         *(--kstack) = 0;
     t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
+#elif defined(__aarch64__)
+    uint64_t* kstack = reinterpret_cast<uint64_t*>((t->stack_base + t->stack_size) & ~0xFULL);
+    kstack -= 12;
+    for (int i = 0; i < 12; ++i)
+        kstack[i] = 0;
+    kstack[11] = reinterpret_cast<uint64_t>(clone_trampoline);
+    t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
 #endif
 
     {
@@ -427,6 +446,13 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     *(--kstack) = reinterpret_cast<uint32_t>(clone_trampoline);
     for (int i = 0; i < 8; ++i)
         *(--kstack) = 0;
+    t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
+#elif defined(__aarch64__)
+    uint64_t* kstack = reinterpret_cast<uint64_t*>((t->stack_base + t->stack_size) & ~0xFULL);
+    kstack -= 12;
+    for (int i = 0; i < 12; ++i)
+        kstack[i] = 0;
+    kstack[11] = reinterpret_cast<uint64_t>(clone_trampoline);
     t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
 #endif
 
@@ -660,6 +686,8 @@ void scheduler::exit(int status) noexcept {
 #if defined(__x86_64__)
         asm volatile("hlt");
 #elif defined(__arm__)
+        asm volatile("wfi");
+#elif defined(__aarch64__)
         asm volatile("wfi");
 #endif
     }

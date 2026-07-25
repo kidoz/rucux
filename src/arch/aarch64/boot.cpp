@@ -9,6 +9,7 @@
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
+#include <kernel/scheduler/scheduler.hpp>
 #include <stdint.h>
 
 // Hardware defaults come from the board manifest via meson (see board.yaml).
@@ -32,7 +33,39 @@
 #define RUCUX_RAM_SIZE 0x20000000
 #endif
 
+extern "C" void switch_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
+
 namespace {
+
+// Round-trip test for switch.S. scheduler::init() only builds the idle thread;
+// it never switches, so the assembly would otherwise ship unexercised.
+alignas(16) uint8_t g_probe_stack[4096];
+volatile bool g_probe_ran = false;
+uintptr_t g_probe_return_sp = 0;
+
+// Entry for the probe context. Never returns normally — its saved x30 slot is
+// zero — so it must switch back explicitly.
+void probe_entry() noexcept {
+    g_probe_ran = true;
+    switch_context(nullptr, g_probe_return_sp);
+}
+
+void verify_context_switch() noexcept {
+    const auto top = (reinterpret_cast<uintptr_t>(g_probe_stack) + sizeof(g_probe_stack)) & ~0xFULL;
+    auto* frame = reinterpret_cast<uint64_t*>(top) - 12;
+    for (int i = 0; i < 12; ++i)
+        frame[i] = 0;
+    frame[11] = reinterpret_cast<uint64_t>(&probe_entry); // x30, where `ret` lands
+
+    // Switches away, probe_entry runs, then switches back to just after this call.
+    switch_context(&g_probe_return_sp, reinterpret_cast<uintptr_t>(frame));
+
+    if (g_probe_ran) {
+        kernel::print("Scheduler: context switch round-trip verified\n");
+    } else {
+        kernel::print("Scheduler: CONTEXT SWITCH FAILED\n");
+    }
+}
 
 // Confirm translation is actually live. The SCTLR_EL1.M bit only says the MMU
 // was switched on; walking a known address back through the tables proves the
@@ -147,6 +180,9 @@ void kernel_main(uint64_t fdt_addr) {
     // handler, not merely be programmed.
     while (irq_count() < 5)
         asm volatile("wfi");
+
+    kernel::scheduler::scheduler::init();
+    verify_context_switch();
 
     kernel::print("rucux (aarch64) boot complete, 1 CPUs online\n");
 

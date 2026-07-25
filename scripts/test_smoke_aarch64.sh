@@ -18,6 +18,8 @@ required_markers=(
     "Per-CPU: BSP (cpu_id=0) initialized, TPIDR_EL1 set"
     "AArch64 VMM: MMU enabled"
     "MMU: identity translation verified"
+    "Scheduler initialized"
+    "Scheduler: context switch round-trip verified"
     "rucux (aarch64) boot complete, 1 CPUs online"
 )
 
