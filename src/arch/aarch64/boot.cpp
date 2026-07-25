@@ -2,6 +2,7 @@
 #include <arch/aarch64/console.hpp>
 #include <arch/aarch64/exception.hpp>
 #include <arch/aarch64/gic.hpp>
+#include <arch/aarch64/syscall.hpp>
 #include <arch/aarch64/timer.hpp>
 #include <arch/aarch64/uart.hpp>
 #include <kernel/cpu/percpu.hpp>
@@ -65,6 +66,15 @@ void verify_context_switch() noexcept {
     } else {
         kernel::print("Scheduler: CONTEXT SWITCH FAILED\n");
     }
+}
+
+// Runs as a scheduled kernel thread. Reaching this proves the timer tick
+// actually drove schedule() into a context other than idle — preemption end to
+// end, not just a switch primitive that works in isolation.
+void preempt_probe() noexcept {
+    kernel::print("Scheduler: preemption reached a scheduled thread\n");
+    for (;;)
+        asm volatile("wfi");
 }
 
 // Confirm translation is actually live. The SCTLR_EL1.M bit only says the MMU
@@ -183,8 +193,17 @@ void kernel_main(uint64_t fdt_addr) {
 
     kernel::scheduler::scheduler::init();
     verify_context_switch();
+    syscall_init();
+
+    // A real thread so preemption has somewhere to go besides idle.
+    kernel::scheduler::scheduler::spawn(&preempt_probe, 1);
 
     kernel::print("rucux (aarch64) boot complete, 1 CPUs online\n");
+
+    // Hand over: from here the timer tick drives scheduling, and this boot
+    // context is abandoned on the next switch — exactly as ARMv7 does.
+    enable_preemption();
+    kernel::scheduler::scheduler::schedule();
 
     for (;;)
         asm volatile("wfi");

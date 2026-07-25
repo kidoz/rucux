@@ -68,6 +68,18 @@
     eret
 .endm
 
+// Synchronous exception from a lower EL: an SVC syscall, or a fault taken in
+// userspace. The C++ side reads ESR_EL1 to tell them apart and may rewrite the
+// saved x0 with a syscall return value, so the frame pointer is passed in.
+.macro LOWER_SYNC_ENTRY
+    .balign 0x80
+    SAVE_REGS
+    mov     x0, sp
+    bl      aarch64_lower_sync_handler
+    RESTORE_REGS
+    eret
+.endm
+
 .balign 2048
 .global aarch64_vector_table
 .type aarch64_vector_table, %object
@@ -85,7 +97,7 @@ aarch64_vector_table:
     FAULT_ENTRY 7                       // SError
 
     // Lower EL, AArch64
-    FAULT_ENTRY 8                       // synchronous
+    LOWER_SYNC_ENTRY                    // synchronous: SVC, or a fault from EL0
     FAULT_ENTRY 9                       // IRQ
     FAULT_ENTRY 10                      // FIQ
     FAULT_ENTRY 11                      // SError

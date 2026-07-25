@@ -256,6 +256,8 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->pml4_phys = 0;
     t->creds = process::root_credentials(tid, tid);
 
+    // The initial frame must match what the architecture's switch_context pops.
+#if defined(__x86_64__)
     uint64_t* stack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
     *(--stack) = reinterpret_cast<uint64_t>(entry);
     *(--stack) = 0;
@@ -264,8 +266,21 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     *(--stack) = 0;
     *(--stack) = 0;
     *(--stack) = 0;
-
     t->stack_pointer = reinterpret_cast<uintptr_t>(stack);
+#elif defined(__arm__)
+    uint32_t* stack = reinterpret_cast<uint32_t*>(t->stack_base + t->stack_size);
+    *(--stack) = reinterpret_cast<uint32_t>(entry);
+    for (int i = 0; i < 8; ++i)
+        *(--stack) = 0;
+    t->stack_pointer = reinterpret_cast<uintptr_t>(stack);
+#elif defined(__aarch64__)
+    uint64_t* stack = reinterpret_cast<uint64_t*>((t->stack_base + t->stack_size) & ~0xFULL);
+    stack -= 12;
+    for (int i = 0; i < 12; ++i)
+        stack[i] = 0;
+    stack[11] = reinterpret_cast<uint64_t>(entry); // x30, where `ret` lands
+    t->stack_pointer = reinterpret_cast<uintptr_t>(stack);
+#endif
     t->async_head = 0;
     t->async_tail = 0;
     t->send_queue_head = nullptr;

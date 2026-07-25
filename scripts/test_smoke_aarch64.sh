@@ -21,12 +21,15 @@ required_markers=(
     "Scheduler initialized"
     "Scheduler: context switch round-trip verified"
     "rucux (aarch64) boot complete, 1 CPUs online"
+    "Scheduler: preemption reached a scheduled thread"
 )
 
 # A translation mismatch still boots, so assert its absence explicitly rather
 # than relying on the positive markers alone.
 forbidden_markers=(
     "TRANSLATION MISMATCH"
+    "CONTEXT SWITCH FAILED"
+    "AArch64 synchronous fault"
 )
 
 setup_builddir() {
