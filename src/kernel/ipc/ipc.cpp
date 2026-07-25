@@ -37,7 +37,8 @@ void ipc_manager::send_sync(uint32_t target_tid, const message& msg) noexcept {
         target->send_queue_head = current;
     } else {
         scheduler::thread* cur = target->send_queue_head;
-        while (cur->send_queue_next) cur = cur->send_queue_next;
+        while (cur->send_queue_next)
+            cur = cur->send_queue_next;
         cur->send_queue_next = current;
     }
 
@@ -179,9 +180,9 @@ long sys_ipc_call(uint32_t target_tid, fast_msg* regs) noexcept {
         // When we get here, the receiver has replied.
         // Our ipc_regs now contain the reply.
         regs->type = sender->ipc_regs[0];
-        regs->d0   = sender->ipc_regs[1];
-        regs->d1   = sender->ipc_regs[2];
-        regs->d2   = sender->ipc_regs[3];
+        regs->d0 = sender->ipc_regs[1];
+        regs->d1 = sender->ipc_regs[2];
+        regs->d2 = sender->ipc_regs[3];
 
         irq_restore(flags);
         return 0;
@@ -199,9 +200,9 @@ long sys_ipc_call(uint32_t target_tid, fast_msg* regs) noexcept {
     // Woken by reply — read response
     flags = irq_save();
     regs->type = sender->ipc_regs[0];
-    regs->d0   = sender->ipc_regs[1];
-    regs->d1   = sender->ipc_regs[2];
-    regs->d2   = sender->ipc_regs[3];
+    regs->d0 = sender->ipc_regs[1];
+    regs->d1 = sender->ipc_regs[2];
+    regs->d2 = sender->ipc_regs[3];
     irq_restore(flags);
     return 0;
 }
@@ -249,9 +250,9 @@ long sys_ipc_wait(fast_msg* regs) noexcept {
         auto* caller = server->ipc_caller;
         // Copy caller's message to our regs
         regs->type = caller->ipc_regs[0];
-        regs->d0   = caller->ipc_regs[1];
-        regs->d1   = caller->ipc_regs[2];
-        regs->d2   = caller->ipc_regs[3];
+        regs->d0 = caller->ipc_regs[1];
+        regs->d1 = caller->ipc_regs[2];
+        regs->d2 = caller->ipc_regs[3];
 
         irq_restore(flags);
         return 0;
@@ -266,9 +267,9 @@ long sys_ipc_wait(fast_msg* regs) noexcept {
     // Woken by ipc_call direct switch — ipc_regs already populated
     flags = irq_save();
     regs->type = server->ipc_regs[0];
-    regs->d0   = server->ipc_regs[1];
-    regs->d1   = server->ipc_regs[2];
-    regs->d2   = server->ipc_regs[3];
+    regs->d0 = server->ipc_regs[1];
+    regs->d1 = server->ipc_regs[2];
+    regs->d2 = server->ipc_regs[3];
     irq_restore(flags);
     return 0;
 }

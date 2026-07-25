@@ -12,15 +12,22 @@ atomic<uint32_t> g_cpu_count{0};
 void arch_set_percpu_base(per_cpu* p) noexcept {
     // TPIDRPRW — Thread ID Register (Privileged, Read/Write)
     // Only accessible from PL1 (kernel). Perfect for per-CPU pointer.
-    asm volatile("mcr p15, 0, %0, c13, c0, 4" :: "r"(p) : "memory");
+    asm volatile("mcr p15, 0, %0, c13, c0, 4" ::"r"(p) : "memory");
 }
 
-void run_queue::init() noexcept { head = tail = nullptr; count = 0; }
+void run_queue::init() noexcept {
+    head = tail = nullptr;
+    count = 0;
+}
 
 void run_queue::enqueue(scheduler::thread* t) noexcept {
     t->next = nullptr;
-    if (!head) { head = tail = t; }
-    else { tail->next = t; tail = t; }
+    if (!head) {
+        head = tail = t;
+    } else {
+        tail->next = t;
+        tail = t;
+    }
     count++;
 }
 

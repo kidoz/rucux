@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <fcntl.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdio.h>
@@ -6,7 +7,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <fcntl.h>
 
 namespace {
 

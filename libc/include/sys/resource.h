@@ -16,8 +16,8 @@ struct rlimit {
     unsigned long rlim_max;
 };
 
-int getrlimit(int resource, struct rlimit *rlim);
-int setrlimit(int resource, const struct rlimit *rlim);
+int getrlimit(int resource, struct rlimit* rlim);
+int setrlimit(int resource, const struct rlimit* rlim);
 
 #ifdef __cplusplus
 }

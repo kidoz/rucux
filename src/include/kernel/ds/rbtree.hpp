@@ -26,7 +26,8 @@ class rb_tree {
 public:
     using cmp_fn = int (*)(const rb_node* a, const rb_node* b);
 
-    constexpr rb_tree() noexcept : root_{nullptr} {}
+    constexpr rb_tree() noexcept
+        : root_{nullptr} {}
 
     void insert(rb_node* node, cmp_fn cmp) noexcept;
     void remove(rb_node* node) noexcept;
@@ -39,8 +40,8 @@ public:
     // key_cmp should return <0 if key is below node's range, >0 if above, 0 if inside.
     rb_node* find_containing(const rb_node* key, cmp_fn key_cmp) const noexcept;
 
-    rb_node* first() const noexcept;   // Leftmost (smallest)
-    rb_node* last() const noexcept;    // Rightmost (largest)
+    rb_node* first() const noexcept; // Leftmost (smallest)
+    rb_node* last() const noexcept;  // Rightmost (largest)
     bool empty() const noexcept { return root_ == nullptr; }
 
     rb_node* root() const noexcept { return root_; }

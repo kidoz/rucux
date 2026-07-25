@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define EPOLLIN  0x001
+#define EPOLLIN 0x001
 #define EPOLLPRI 0x002
 #define EPOLLOUT 0x004
 #define EPOLLERR 0x008
@@ -31,7 +31,7 @@ extern "C" {
 #define EPOLL_CTL_MOD 3
 
 typedef union epoll_data {
-    void *ptr;
+    void* ptr;
     int fd;
     uint32_t u32;
     uint64_t u64;
@@ -40,12 +40,12 @@ typedef union epoll_data {
 struct epoll_event {
     uint32_t events;
     epoll_data_t data;
-} __attribute__ ((__packed__));
+} __attribute__((__packed__));
 
 int epoll_create(int size);
 int epoll_create1(int flags);
-int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
-int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event* event);
+int epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout);
 
 #ifdef __cplusplus
 }

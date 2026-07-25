@@ -3,8 +3,8 @@
 #include <kernel/print.hpp>
 #include <kernel/vfs/ata.hpp>
 #include <kernel/vfs/fat32.hpp>
-#include <lib/string.hpp>
 #include <knew.hpp>
+#include <lib/string.hpp>
 
 namespace kernel::vfs::fat32 {
 

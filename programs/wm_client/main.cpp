@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 #include <fcntl.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <uapi/kernel/gpu.h>
-#include <uapi/kernel/syscalls.h>
 #include <uapi/kernel/initd.h>
+#include <uapi/kernel/syscalls.h>
 #include <unistd.h>
-#include <stdlib.h>
 #include <wayland-client.h>
 
 extern "C" {
@@ -36,10 +36,10 @@ extern "C" int main() {
     // Wait for ack
     message ack = {};
     syscall(SYS_IPC_RECV, (long)&ack, 0, 0);
-    
+
     setenv("XDG_RUNTIME_DIR", "/run", 1);
 
-    struct wl_display *display = nullptr;
+    struct wl_display* display = nullptr;
     for (int i = 0; i < 100000; ++i) {
         display = wl_display_connect("wayland-0");
         if (display) break;
@@ -59,7 +59,7 @@ extern "C" int main() {
     printf("Client: Completed roundtrip. Wayland wire protocol is active!\n");
 
     wl_display_disconnect(display);
-    
+
     printf("WM Client done.\n");
     return 0;
 }

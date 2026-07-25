@@ -14,7 +14,7 @@ struct utsname {
     char machine[65];
 };
 
-int uname(struct utsname *buf);
+int uname(struct utsname* buf);
 
 #ifdef __cplusplus
 }

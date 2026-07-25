@@ -14,5 +14,4 @@ static _FILE _stderr = {2};
 FILE* stdin = (FILE*)&_stdin;
 FILE* stdout = (FILE*)&_stdout;
 FILE* stderr = (FILE*)&_stderr;
-
 }

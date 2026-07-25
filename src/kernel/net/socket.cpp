@@ -5,8 +5,8 @@
 #include <kernel/net/udp.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/vfs/vfs.hpp>
-#include <lib/string.hpp>
 #include <knew.hpp>
+#include <lib/string.hpp>
 
 namespace kernel::net {
 
@@ -79,10 +79,13 @@ int socket_manager::sys_socket(int domain, int type, int) noexcept {
 
     auto& ks = g_sockets[sidx];
     ks.type = type;
-    if (type == 1)      ks.pcb = tcp_new();
-    else if (type == 2) ks.pcb = udp_new();
-    else return -1;
-    
+    if (type == 1)
+        ks.pcb = tcp_new();
+    else if (type == 2)
+        ks.pcb = udp_new();
+    else
+        return -1;
+
     if (!ks.pcb) return -1;
 
     auto* node = new vfs::vfs_node();
@@ -90,7 +93,7 @@ int socket_manager::sys_socket(int domain, int type, int) noexcept {
     node->type = vfs::file_type::SOCKET;
     node->inode = sidx;
     node->ops = &socket_ops;
-    
+
     int fd = vfs::vfs_manager::alloc_fd(node);
     if (fd < 0) {
         delete node;
@@ -106,8 +109,10 @@ int socket_manager::sys_bind(int sockfd, const void* addr, uint32_t) noexcept {
     auto* ks = get_socket(node->inode);
     if (!ks) return -1;
     auto* sa = reinterpret_cast<const sockaddr_in_k*>(addr);
-    if (ks->type == 1) return tcp_bind(static_cast<tcp_pcb*>(ks->pcb), sa->sin_addr, sa->sin_port);
-    else               return udp_bind(static_cast<udp_pcb*>(ks->pcb), sa->sin_addr, sa->sin_port);
+    if (ks->type == 1)
+        return tcp_bind(static_cast<tcp_pcb*>(ks->pcb), sa->sin_addr, sa->sin_port);
+    else
+        return udp_bind(static_cast<udp_pcb*>(ks->pcb), sa->sin_addr, sa->sin_port);
 }
 
 int socket_manager::sys_listen(int sockfd, int backlog) noexcept {
@@ -127,7 +132,10 @@ int socket_manager::sys_accept(int sockfd, void* addr, uint32_t* addrlen) noexce
     if (!child) return -1;
 
     int nsidx = alloc_socket_idx();
-    if (nsidx < 0) { tcp_free(child); return -1; }
+    if (nsidx < 0) {
+        tcp_free(child);
+        return -1;
+    }
     g_sockets[nsidx] = {1, child};
 
     auto* new_node = new vfs::vfs_node();
@@ -135,7 +143,7 @@ int socket_manager::sys_accept(int sockfd, void* addr, uint32_t* addrlen) noexce
     new_node->type = vfs::file_type::SOCKET;
     new_node->inode = nsidx;
     new_node->ops = &socket_ops;
-    
+
     int nfd = vfs::vfs_manager::alloc_fd(new_node);
     if (nfd < 0) {
         delete new_node;
@@ -146,7 +154,9 @@ int socket_manager::sys_accept(int sockfd, void* addr, uint32_t* addrlen) noexce
 
     if (addr && addrlen) {
         auto* sa = reinterpret_cast<sockaddr_in_k*>(addr);
-        sa->sin_family = 2; sa->sin_port = child->remote_port; sa->sin_addr = child->remote_ip;
+        sa->sin_family = 2;
+        sa->sin_port = child->remote_port;
+        sa->sin_addr = child->remote_ip;
         *addrlen = sizeof(sockaddr_in_k);
     }
     return nfd;
@@ -158,8 +168,10 @@ int socket_manager::sys_connect(int sockfd, const void* addr, uint32_t) noexcept
     auto* ks = get_socket(node->inode);
     if (!ks) return -1;
     auto* sa = reinterpret_cast<const sockaddr_in_k*>(addr);
-    if (ks->type == 1) return tcp_connect(static_cast<tcp_pcb*>(ks->pcb), sa->sin_addr, sa->sin_port);
-    else               return udp_connect(static_cast<udp_pcb*>(ks->pcb), sa->sin_addr, sa->sin_port);
+    if (ks->type == 1)
+        return tcp_connect(static_cast<tcp_pcb*>(ks->pcb), sa->sin_addr, sa->sin_port);
+    else
+        return udp_connect(static_cast<udp_pcb*>(ks->pcb), sa->sin_addr, sa->sin_port);
 }
 
 long socket_manager::sys_send(int sockfd, const void* buf, size_t len, int) noexcept {
@@ -181,8 +193,8 @@ long socket_manager::sys_recv(int sockfd, void* buf, size_t len, int) noexcept {
     return udp_recvfrom(static_cast<udp_pcb*>(ks->pcb), buf, len, nullptr, nullptr);
 }
 
-long socket_manager::sys_sendto(int sockfd, const void* buf, size_t len, int,
-                                 const void* dest_addr, uint32_t) noexcept {
+long socket_manager::sys_sendto(int sockfd, const void* buf, size_t len, int, const void* dest_addr,
+                                uint32_t) noexcept {
     auto* node = vfs::vfs_manager::get_fd_node(sockfd);
     if (!node || node->type != vfs::file_type::SOCKET) return -1;
     auto* ks = get_socket(node->inode);
@@ -191,25 +203,32 @@ long socket_manager::sys_sendto(int sockfd, const void* buf, size_t len, int,
     return udp_sendto(static_cast<udp_pcb*>(ks->pcb), buf, len, sa->sin_addr, sa->sin_port);
 }
 
-long socket_manager::sys_recvfrom(int sockfd, void* buf, size_t len, int,
-                                   void* src_addr, uint32_t* addrlen) noexcept {
+long socket_manager::sys_recvfrom(int sockfd, void* buf, size_t len, int, void* src_addr, uint32_t* addrlen) noexcept {
     auto* node = vfs::vfs_manager::get_fd_node(sockfd);
     if (!node || node->type != vfs::file_type::SOCKET) return -1;
     auto* ks = get_socket(node->inode);
     if (!ks || ks->type != 2) return -1;
-    uint32_t sip = 0; uint16_t sp = 0;
+    uint32_t sip = 0;
+    uint16_t sp = 0;
     long r = udp_recvfrom(static_cast<udp_pcb*>(ks->pcb), buf, len, &sip, &sp);
     if (r > 0 && src_addr && addrlen) {
         auto* sa = reinterpret_cast<sockaddr_in_k*>(src_addr);
-        sa->sin_family = 2; sa->sin_port = sp; sa->sin_addr = sip;
+        sa->sin_family = 2;
+        sa->sin_port = sp;
+        sa->sin_addr = sip;
         *addrlen = sizeof(sockaddr_in_k);
     }
     return r;
 }
 
-int socket_manager::sys_setsockopt(int, int, int, const void*, uint32_t) noexcept { return 0; }
+int socket_manager::sys_setsockopt(int, int, int, const void*, uint32_t) noexcept {
+    return 0;
+}
 int socket_manager::sys_getsockopt(int, int, int, void* v, uint32_t* l) noexcept {
-    if (v && l && *l >= 4) { *reinterpret_cast<int*>(v) = 0; *l = 4; }
+    if (v && l && *l >= 4) {
+        *reinterpret_cast<int*>(v) = 0;
+        *l = 4;
+    }
     return 0;
 }
 
@@ -220,8 +239,15 @@ int socket_manager::sys_getsockname(int sockfd, void* addr, uint32_t* addrlen) n
     if (!ks) return -1;
     auto* sa = reinterpret_cast<sockaddr_in_k*>(addr);
     sa->sin_family = 2;
-    if (ks->type == 1) { auto* p = static_cast<tcp_pcb*>(ks->pcb); sa->sin_port = p->local_port; sa->sin_addr = p->local_ip; }
-    else { auto* p = static_cast<udp_pcb*>(ks->pcb); sa->sin_port = p->local_port; sa->sin_addr = p->local_ip; }
+    if (ks->type == 1) {
+        auto* p = static_cast<tcp_pcb*>(ks->pcb);
+        sa->sin_port = p->local_port;
+        sa->sin_addr = p->local_ip;
+    } else {
+        auto* p = static_cast<udp_pcb*>(ks->pcb);
+        sa->sin_port = p->local_port;
+        sa->sin_addr = p->local_ip;
+    }
     *addrlen = sizeof(sockaddr_in_k);
     return 0;
 }
@@ -233,8 +259,15 @@ int socket_manager::sys_getpeername(int sockfd, void* addr, uint32_t* addrlen) n
     if (!ks) return -1;
     auto* sa = reinterpret_cast<sockaddr_in_k*>(addr);
     sa->sin_family = 2;
-    if (ks->type == 1) { auto* p = static_cast<tcp_pcb*>(ks->pcb); sa->sin_port = p->remote_port; sa->sin_addr = p->remote_ip; }
-    else { auto* p = static_cast<udp_pcb*>(ks->pcb); sa->sin_port = p->remote_port; sa->sin_addr = p->remote_ip; }
+    if (ks->type == 1) {
+        auto* p = static_cast<tcp_pcb*>(ks->pcb);
+        sa->sin_port = p->remote_port;
+        sa->sin_addr = p->remote_ip;
+    } else {
+        auto* p = static_cast<udp_pcb*>(ks->pcb);
+        sa->sin_port = p->remote_port;
+        sa->sin_addr = p->remote_ip;
+    }
     *addrlen = sizeof(sockaddr_in_k);
     return 0;
 }

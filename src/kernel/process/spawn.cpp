@@ -6,8 +6,8 @@
 #include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/vfs/vfs.hpp>
-#include <lib/string.hpp>
 #include <knew.hpp>
+#include <lib/string.hpp>
 
 namespace kernel::process {
 
@@ -101,8 +101,8 @@ long spawn_path(const char* path, uint32_t requested_tid) noexcept {
     kernel::memory::vmm::switch_to(old_pml4);
 
     auto* t = kernel::scheduler::scheduler::spawn_user(pml4, reinterpret_cast<void*>(entry),
-                                                       reinterpret_cast<void*>(USER_STACK_BASE + USER_STACK_SIZE), nullptr,
-                                                       requested_tid);
+                                                       reinterpret_cast<void*>(USER_STACK_BASE + USER_STACK_SIZE),
+                                                       nullptr, requested_tid);
     if (!t) {
         kernel::print("SPAWN: spawn_user failed for {}\n", path);
         return -1;

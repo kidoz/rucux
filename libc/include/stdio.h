@@ -39,7 +39,7 @@ int snprintf(char* str, size_t size, const char* format, ...);
 int vsnprintf(char* str, size_t size, const char* format, va_list ap);
 int vsprintf(char* str, const char* format, va_list ap);
 int vfprintf(FILE* stream, const char* format, va_list ap);
-int vasprintf(char **strp, const char *fmt, va_list ap);
+int vasprintf(char** strp, const char* fmt, va_list ap);
 
 FILE* fopen(const char* pathname, const char* mode);
 FILE* fdopen(int fd, const char* mode);
@@ -82,7 +82,7 @@ void perror(const char* s);
 #define _IOLBF 1
 #define _IONBF 2
 
-int setvbuf(FILE *stream, char *buf, int mode, size_t size);
+int setvbuf(FILE* stream, char* buf, int mode, size_t size);
 void setbuf(FILE* stream, char* buf);
 
 #define BUFSIZ 1024

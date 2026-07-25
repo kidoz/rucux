@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <signal.h>
 #include <stdint.h>
 #include <sys/types.h>
-#include <signal.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,7 +36,7 @@ struct signalfd_siginfo {
     uint8_t __pad[28];
 };
 
-int signalfd(int fd, const sigset_t *mask, int flags);
+int signalfd(int fd, const sigset_t* mask, int flags);
 
 #ifdef __cplusplus
 }

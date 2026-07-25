@@ -12,9 +12,9 @@ enum class thread_state { READY, RUNNING, BLOCKED, TERMINATED };
 
 // Priority classes — lower number = higher priority
 enum class thread_prio : uint8_t {
-    RT     = 0,   // Real-time (interrupt handlers, critical drivers)
-    NORMAL = 1,   // Normal user/kernel threads
-    IDLE   = 2,   // Idle priority (background work)
+    RT = 0,     // Real-time (interrupt handlers, critical drivers)
+    NORMAL = 1, // Normal user/kernel threads
+    IDLE = 2,   // Idle priority (background work)
     NUM_PRIOS = 3
 };
 
@@ -22,7 +22,7 @@ struct thread {
     uint32_t tid;
     thread_state state;
     thread_prio priority;
-    uint32_t last_cpu;         // CPU this thread last ran on (cache affinity)
+    uint32_t last_cpu; // CPU this thread last ran on (cache affinity)
     uintptr_t stack_pointer;
     uintptr_t stack_base;
     size_t stack_size;
@@ -42,9 +42,9 @@ struct thread {
     void* recv_buffer;
 
     // Fast IPC: direct thread-to-thread register transfer
-    thread* ipc_caller;    // Thread that called us via ipc_call (waiting for reply)
-    uint64_t ipc_regs[4];  // type, d0, d1, d2 — transferred in registers
-    bool ipc_waiting;       // True if blocked in ipc_wait()
+    thread* ipc_caller;   // Thread that called us via ipc_call (waiting for reply)
+    uint64_t ipc_regs[4]; // type, d0, d1, d2 — transferred in registers
+    bool ipc_waiting;     // True if blocked in ipc_wait()
 
     // Async IPC
     static constexpr size_t ASYNC_QUEUE_SIZE = 16;
@@ -68,20 +68,20 @@ struct thread {
     // Signals
     static constexpr int MAX_SIGNALS = 32;
     using sighandler_t = void (*)(int);
-    sighandler_t sig_handlers[MAX_SIGNALS]; // SIG_DFL=0, SIG_IGN=1, or handler addr
+    sighandler_t sig_handlers[MAX_SIGNALS];   // SIG_DFL=0, SIG_IGN=1, or handler addr
     void (*sig_restorers[MAX_SIGNALS])(void); // Trampoline addresses
-    uint32_t sig_mask;      // Blocked signals bitmask
-    uint32_t sig_pending;   // Pending signals bitmask
-    int exit_code;          // Exit status (for pthread_join)
-    bool exited;            // True after thread has exited
-    uint32_t parent_tid;    // Parent/owner for waitpid-style reaping
+    uint32_t sig_mask;                        // Blocked signals bitmask
+    uint32_t sig_pending;                     // Pending signals bitmask
+    int exit_code;                            // Exit status (for pthread_join)
+    bool exited;                              // True after thread has exited
+    uint32_t parent_tid;                      // Parent/owner for waitpid-style reaping
     int32_t wait_target_tid;
     bool waiting_for_child;
 
     // Sleep
-    uint64_t wake_tick;     // Tick when this thread should wake up
-    thread* next_sleeper;   // Next in sleep queue
-    thread* wait_next;      // Next in wait queue
+    uint64_t wake_tick;   // Tick when this thread should wake up
+    thread* next_sleeper; // Next in sleep queue
+    thread* wait_next;    // Next in wait queue
 
     // Scheduling links
     thread* next;     // Next in run queue
@@ -93,7 +93,7 @@ struct thread {
         size_t offset;
         int flags;
     };
-    static constexpr size_t INITIAL_FDS = 8;  // Start small, grow on demand
+    static constexpr size_t INITIAL_FDS = 8; // Start small, grow on demand
     static constexpr size_t MAX_FDS = 32;
     file_descriptor* fd_table; // Allocated on first use or inherited from parent
     size_t fd_count;           // Number of allocated slots in fd_table

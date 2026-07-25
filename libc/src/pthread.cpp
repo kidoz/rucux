@@ -20,7 +20,10 @@ static long __syscall(long num, long a1 = 0, long a2 = 0, long a3 = 0, long a4 =
     return ret;
 }
 
-int sched_yield(void) { __syscall(SYS_YIELD); return 0; }
+int sched_yield(void) {
+    __syscall(SYS_YIELD);
+    return 0;
+}
 
 // ─── Thread creation ───────────────────────────────────────────────────────
 
@@ -46,9 +49,13 @@ int pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_
 
     thread_start_info info = {start_routine, arg, 0};
     long tid = __syscall(SYS_CLONE, (long)thread_trampoline, (long)((uintptr_t)stack + stack_size), (long)&info);
-    if (tid < 0) { munmap(stack, stack_size); return -1; }
+    if (tid < 0) {
+        munmap(stack, stack_size);
+        return -1;
+    }
     if (thread) *thread = (pthread_t)tid;
-    while (info.started == 0) sched_yield();
+    while (info.started == 0)
+        sched_yield();
     return 0;
 }
 
@@ -60,14 +67,27 @@ int pthread_join(pthread_t thread, void** retval) {
     return 0;
 }
 
-int pthread_detach(pthread_t) { return 0; }
-int pthread_attr_init(pthread_attr_t *a) { if (a) *a = 0; return 0; }
-int pthread_attr_destroy(pthread_attr_t*) { return 0; }
+int pthread_detach(pthread_t) {
+    return 0;
+}
+int pthread_attr_init(pthread_attr_t* a) {
+    if (a) *a = 0;
+    return 0;
+}
+int pthread_attr_destroy(pthread_attr_t*) {
+    return 0;
+}
 
 // ─── Mutex ─────────────────────────────────────────────────────────────────
 
-int pthread_mutex_init(pthread_mutex_t* m, const pthread_mutexattr_t*) { *m = 0; return 0; }
-int pthread_mutex_destroy(pthread_mutex_t* m) { *m = 0; return 0; }
+int pthread_mutex_init(pthread_mutex_t* m, const pthread_mutexattr_t*) {
+    *m = 0;
+    return 0;
+}
+int pthread_mutex_destroy(pthread_mutex_t* m) {
+    *m = 0;
+    return 0;
+}
 
 int pthread_mutex_lock(pthread_mutex_t* m) {
     while (__sync_val_compare_and_swap(m, 0, 1) != 0)
@@ -88,9 +108,13 @@ int pthread_mutex_unlock(pthread_mutex_t* m) {
 // ─── Condition Variables ───────────────────────────────────────────────────
 
 int pthread_cond_init(pthread_cond_t* c, const pthread_condattr_t*) {
-    c->seq = 0; c->mtx = nullptr; return 0;
+    c->seq = 0;
+    c->mtx = nullptr;
+    return 0;
 }
-int pthread_cond_destroy(pthread_cond_t*) { return 0; }
+int pthread_cond_destroy(pthread_cond_t*) {
+    return 0;
+}
 
 int pthread_cond_wait(pthread_cond_t* c, pthread_mutex_t* m) {
     uint32_t seq = c->seq;
@@ -119,13 +143,23 @@ int pthread_cond_timedwait(pthread_cond_t* c, pthread_mutex_t* m, const void*) {
 // ─── Read-Write Locks ──────────────────────────────────────────────────────
 
 int pthread_rwlock_init(pthread_rwlock_t* rw, const pthread_rwlockattr_t*) {
-    pthread_mutex_init(&rw->lock, nullptr); rw->readers = 0; rw->writer = 0; return 0;
+    pthread_mutex_init(&rw->lock, nullptr);
+    rw->readers = 0;
+    rw->writer = 0;
+    return 0;
 }
-int pthread_rwlock_destroy(pthread_rwlock_t* rw) { pthread_mutex_destroy(&rw->lock); return 0; }
+int pthread_rwlock_destroy(pthread_rwlock_t* rw) {
+    pthread_mutex_destroy(&rw->lock);
+    return 0;
+}
 
 int pthread_rwlock_rdlock(pthread_rwlock_t* rw) {
     pthread_mutex_lock(&rw->lock);
-    while (rw->writer) { pthread_mutex_unlock(&rw->lock); sched_yield(); pthread_mutex_lock(&rw->lock); }
+    while (rw->writer) {
+        pthread_mutex_unlock(&rw->lock);
+        sched_yield();
+        pthread_mutex_lock(&rw->lock);
+    }
     rw->readers++;
     pthread_mutex_unlock(&rw->lock);
     return 0;
@@ -133,7 +167,11 @@ int pthread_rwlock_rdlock(pthread_rwlock_t* rw) {
 
 int pthread_rwlock_wrlock(pthread_rwlock_t* rw) {
     pthread_mutex_lock(&rw->lock);
-    while (rw->writer || rw->readers) { pthread_mutex_unlock(&rw->lock); sched_yield(); pthread_mutex_lock(&rw->lock); }
+    while (rw->writer || rw->readers) {
+        pthread_mutex_unlock(&rw->lock);
+        sched_yield();
+        pthread_mutex_lock(&rw->lock);
+    }
     rw->writer = 1;
     pthread_mutex_unlock(&rw->lock);
     return 0;
@@ -141,7 +179,10 @@ int pthread_rwlock_wrlock(pthread_rwlock_t* rw) {
 
 int pthread_rwlock_unlock(pthread_rwlock_t* rw) {
     pthread_mutex_lock(&rw->lock);
-    if (rw->writer) rw->writer = 0; else if (rw->readers > 0) rw->readers--;
+    if (rw->writer)
+        rw->writer = 0;
+    else if (rw->readers > 0)
+        rw->readers--;
     pthread_mutex_unlock(&rw->lock);
     return 0;
 }
@@ -160,14 +201,30 @@ int pthread_key_create(pthread_key_t* key, void (*)(void*)) {
     g_tsd[g_next_key++] = nullptr;
     return 0;
 }
-int pthread_key_delete(pthread_key_t key) { if (key < MAX_KEYS) { g_tsd_used[key] = 0; g_tsd[key] = nullptr; } return 0; }
-void* pthread_getspecific(pthread_key_t key) { return (key < MAX_KEYS && g_tsd_used[key]) ? g_tsd[key] : nullptr; }
-int pthread_setspecific(pthread_key_t key, const void* val) { if (key >= MAX_KEYS || !g_tsd_used[key]) return -1; g_tsd[key] = (void*)val; return 0; }
+int pthread_key_delete(pthread_key_t key) {
+    if (key < MAX_KEYS) {
+        g_tsd_used[key] = 0;
+        g_tsd[key] = nullptr;
+    }
+    return 0;
+}
+void* pthread_getspecific(pthread_key_t key) {
+    return (key < MAX_KEYS && g_tsd_used[key]) ? g_tsd[key] : nullptr;
+}
+int pthread_setspecific(pthread_key_t key, const void* val) {
+    if (key >= MAX_KEYS || !g_tsd_used[key]) return -1;
+    g_tsd[key] = (void*)val;
+    return 0;
+}
 
 // ─── Misc ──────────────────────────────────────────────────────────────────
 
-pthread_t pthread_self(void) { return 1; }
-int pthread_equal(pthread_t a, pthread_t b) { return a == b; }
+pthread_t pthread_self(void) {
+    return 1;
+}
+int pthread_equal(pthread_t a, pthread_t b) {
+    return a == b;
+}
 
 int pthread_once(pthread_once_t* ctl, void (*fn)(void)) {
     if (!ctl || !fn) return -1;
@@ -175,7 +232,13 @@ int pthread_once(pthread_once_t* ctl, void (*fn)(void)) {
     return 0;
 }
 
-int pthread_setcancelstate(int, int* old) { if (old) *old = 0; return 0; }
-int pthread_setcanceltype(int, int* old) { if (old) *old = 0; return 0; }
+int pthread_setcancelstate(int, int* old) {
+    if (old) *old = 0;
+    return 0;
+}
+int pthread_setcanceltype(int, int* old) {
+    if (old) *old = 0;
+    return 0;
+}
 
 } // extern "C"

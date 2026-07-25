@@ -189,8 +189,7 @@ static long present_buffer(display_buffer& buffer) noexcept {
 
     lib::memset(dst, 0, g_scanout_size);
     for (uint32_t y = 0; y < copy_height; ++y) {
-        lib::memcpy(dst + (static_cast<size_t>(y) * mode.stride),
-                    src + (static_cast<size_t>(y) * buffer.desc.stride),
+        lib::memcpy(dst + (static_cast<size_t>(y) * mode.stride), src + (static_cast<size_t>(y) * buffer.desc.stride),
                     copy_bytes);
     }
 
@@ -242,8 +241,7 @@ long sys_display_ctl(uint32_t op, void* arg, size_t arg_size, uintptr_t flags) n
             info->desc.size_bytes = static_cast<uint64_t>(info->desc.stride) * info->desc.height;
         }
 
-        if (info->desc.format != RUCUX_DISPLAY_FORMAT_XRGB8888 &&
-            info->desc.format != RUCUX_DISPLAY_FORMAT_ARGB8888) {
+        if (info->desc.format != RUCUX_DISPLAY_FORMAT_XRGB8888 && info->desc.format != RUCUX_DISPLAY_FORMAT_ARGB8888) {
             return RUCUX_DISPLAY_ERR_UNSUPPORTED;
         }
 

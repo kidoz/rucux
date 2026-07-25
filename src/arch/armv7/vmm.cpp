@@ -22,10 +22,10 @@ namespace kernel::memory {
 static constexpr size_t PAGE_SIZE = 4096;
 
 // LPAE descriptor bits
-static constexpr uint64_t LPAE_VALID   = (1ULL << 0);
-static constexpr uint64_t LPAE_TABLE   = (1ULL << 1); // L1/L2: next-level table
-static constexpr uint64_t LPAE_BLOCK   = (0ULL << 1); // L1/L2: block mapping (with VALID)
-static constexpr uint64_t LPAE_PAGE    = (1ULL << 1); // L3: page mapping (with VALID)
+static constexpr uint64_t LPAE_VALID = (1ULL << 0);
+static constexpr uint64_t LPAE_TABLE = (1ULL << 1); // L1/L2: next-level table
+static constexpr uint64_t LPAE_BLOCK = (0ULL << 1); // L1/L2: block mapping (with VALID)
+static constexpr uint64_t LPAE_PAGE = (1ULL << 1);  // L3: page mapping (with VALID)
 
 // Access permissions (AP[2:1] at bits [7:6])
 static constexpr uint64_t LPAE_AP_RW_PL1 = (0ULL << 6); // PL1 R/W, PL0 no access
@@ -47,7 +47,7 @@ static constexpr uint64_t LPAE_SH_INNER = (3ULL << 8);
 static constexpr uint64_t LPAE_AF = (1ULL << 10);
 
 // Execute-never (XN, bit 54 for PL1, PXN bit 53)
-static constexpr uint64_t LPAE_XN  = (1ULL << 54);
+static constexpr uint64_t LPAE_XN = (1ULL << 54);
 static constexpr uint64_t LPAE_PXN = (1ULL << 53);
 
 // L1 table: 4 entries (for 32-bit VA space: 4GB / 1GB = 4)
@@ -59,15 +59,14 @@ static uint64_t flags_to_lpae(page_flags flags) noexcept {
     uint64_t bits = LPAE_AF | LPAE_SH_INNER | LPAE_ATTR_NORMAL;
 
     if (static_cast<uint64_t>(flags) & static_cast<uint64_t>(page_flags::USER)) {
-        bits |= (static_cast<uint64_t>(flags) & static_cast<uint64_t>(page_flags::WRITABLE))
-                    ? LPAE_AP_RW_ALL : LPAE_AP_RO_ALL;
+        bits |= (static_cast<uint64_t>(flags) & static_cast<uint64_t>(page_flags::WRITABLE)) ? LPAE_AP_RW_ALL
+                                                                                             : LPAE_AP_RO_ALL;
     } else {
-        bits |= (static_cast<uint64_t>(flags) & static_cast<uint64_t>(page_flags::WRITABLE))
-                    ? LPAE_AP_RW_PL1 : LPAE_AP_RO_PL1;
+        bits |= (static_cast<uint64_t>(flags) & static_cast<uint64_t>(page_flags::WRITABLE)) ? LPAE_AP_RW_PL1
+                                                                                             : LPAE_AP_RO_PL1;
     }
 
-    if (static_cast<uint64_t>(flags) & static_cast<uint64_t>(page_flags::NO_EXECUTE))
-        bits |= LPAE_XN;
+    if (static_cast<uint64_t>(flags) & static_cast<uint64_t>(page_flags::NO_EXECUTE)) bits |= LPAE_XN;
 
     return bits;
 }
@@ -108,7 +107,7 @@ void vmm::init() noexcept {
     //   Attr0 = 0x00 (Device-nGnRnE)
     //   Attr1 = 0xFF (Normal, Write-Back, Write-Allocate, Inner/Outer)
     uint32_t mair = 0x0000FF00;
-    asm volatile("mcr p15, 0, %0, c10, c2, 0" :: "r"(mair)); // MAIR0
+    asm volatile("mcr p15, 0, %0, c10, c2, 0" ::"r"(mair)); // MAIR0
 
     // Identity-map the first 4GB using 2MB blocks (L2 block descriptors)
     // This gives us a working kernel mapping. User mappings will be added later.
@@ -119,8 +118,7 @@ void vmm::init() noexcept {
         for (uint32_t i = 0; i < 512; ++i) {
             uintptr_t phys = (static_cast<uintptr_t>(gb) << 30) | (static_cast<uintptr_t>(i) << 21);
             // 2MB block descriptor: VALID + BLOCK(0) + attributes
-            l2[i] = phys | LPAE_VALID | LPAE_AF | LPAE_SH_INNER |
-                    LPAE_ATTR_NORMAL | LPAE_AP_RW_PL1;
+            l2[i] = phys | LPAE_VALID | LPAE_AF | LPAE_SH_INNER | LPAE_ATTR_NORMAL | LPAE_AP_RW_PL1;
         }
 
         g_l1_table[gb] = reinterpret_cast<uintptr_t>(l2) | LPAE_VALID | LPAE_TABLE;
@@ -129,14 +127,14 @@ void vmm::init() noexcept {
     // Configure TTBCR for LPAE mode
     // EAE (bit 31) = 1 enables LPAE
     // T0SZ = 0 (TTBR0 maps full 32-bit VA range)
-    uint32_t ttbcr = (1U << 31); // EAE=1, T0SZ=0
-    asm volatile("mcr p15, 0, %0, c2, c0, 2" :: "r"(ttbcr)); // TTBCR
+    uint32_t ttbcr = (1U << 31);                            // EAE=1, T0SZ=0
+    asm volatile("mcr p15, 0, %0, c2, c0, 2" ::"r"(ttbcr)); // TTBCR
 
     // Set TTBR0 (64-bit register via MCRR)
     uint64_t ttbr0 = reinterpret_cast<uintptr_t>(g_l1_table);
     uint32_t lo = static_cast<uint32_t>(ttbr0);
     uint32_t hi = static_cast<uint32_t>(ttbr0 >> 32);
-    asm volatile("mcrr p15, 0, %0, %1, c2" :: "r"(lo), "r"(hi)); // TTBR0
+    asm volatile("mcrr p15, 0, %0, %1, c2" ::"r"(lo), "r"(hi)); // TTBR0
 
     // Enable MMU (if not already enabled by bootloader)
     uint32_t sctlr;
@@ -144,10 +142,10 @@ void vmm::init() noexcept {
     sctlr |= (1 << 0);  // M: MMU enable
     sctlr |= (1 << 2);  // C: Data cache enable
     sctlr |= (1 << 12); // I: Instruction cache enable
-    asm volatile("mcr p15, 0, %0, c1, c0, 0" :: "r"(sctlr));
+    asm volatile("mcr p15, 0, %0, c1, c0, 0" ::"r"(sctlr));
 
     // Invalidate TLB
-    asm volatile("mcr p15, 0, %0, c8, c7, 0" :: "r"(0)); // TLBIALL
+    asm volatile("mcr p15, 0, %0, c8, c7, 0" ::"r"(0)); // TLBIALL
     asm volatile("dsb sy; isb" ::: "memory");
 
     kernel::print("ARMv7 VMM: LPAE enabled, L1 at {}\n", reinterpret_cast<void*>(g_l1_table));
@@ -166,9 +164,9 @@ uintptr_t vmm::create_address_space() noexcept {
 
 void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
     // 4KB page mapping through L1 → L2 → L3
-    size_t l1_idx = (virt >> 30) & 0x3;    // 2 bits (4 entries)
-    size_t l2_idx = (virt >> 21) & 0x1FF;  // 9 bits
-    size_t l3_idx = (virt >> 12) & 0x1FF;  // 9 bits
+    size_t l1_idx = (virt >> 30) & 0x3;   // 2 bits (4 entries)
+    size_t l2_idx = (virt >> 21) & 0x1FF; // 9 bits
+    size_t l3_idx = (virt >> 12) & 0x1FF; // 9 bits
 
     // Use current TTBR0
     uint32_t lo, hi;
@@ -196,7 +194,7 @@ void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
     l3[l3_idx] = (phys & ~0xFFFULL) | LPAE_VALID | LPAE_PAGE | flags_to_lpae(flags);
 
     // Invalidate TLB for this address
-    asm volatile("mcr p15, 0, %0, c8, c7, 1" :: "r"(virt)); // TLBIMVA
+    asm volatile("mcr p15, 0, %0, c8, c7, 1" ::"r"(virt)); // TLBIMVA
     asm volatile("dsb sy; isb" ::: "memory");
 }
 
@@ -214,7 +212,7 @@ void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
     // 2MB block descriptor (VALID + not TABLE = block)
     l2[l2_idx] = (phys & ~0x1FFFFFULL) | LPAE_VALID | flags_to_lpae(flags);
 
-    asm volatile("mcr p15, 0, %0, c8, c7, 1" :: "r"(virt));
+    asm volatile("mcr p15, 0, %0, c8, c7, 1" ::"r"(virt));
     asm volatile("dsb sy; isb" ::: "memory");
 }
 
@@ -239,15 +237,15 @@ void vmm::unmap(uintptr_t virt) noexcept {
         l3[l3_idx] = 0;
     }
 
-    asm volatile("mcr p15, 0, %0, c8, c7, 1" :: "r"(virt));
+    asm volatile("mcr p15, 0, %0, c8, c7, 1" ::"r"(virt));
     asm volatile("dsb sy; isb" ::: "memory");
 }
 
 void vmm::switch_to(uintptr_t l1_phys) noexcept {
     uint32_t lo = static_cast<uint32_t>(l1_phys);
     uint32_t hi = 0;
-    asm volatile("mcrr p15, 0, %0, %1, c2" :: "r"(lo), "r"(hi)); // TTBR0
-    asm volatile("mcr p15, 0, %0, c8, c7, 0" :: "r"(0)); // TLBIALL
+    asm volatile("mcrr p15, 0, %0, %1, c2" ::"r"(lo), "r"(hi)); // TTBR0
+    asm volatile("mcr p15, 0, %0, c8, c7, 0" ::"r"(0));         // TLBIALL
     asm volatile("dsb sy; isb" ::: "memory");
 }
 

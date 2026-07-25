@@ -144,10 +144,7 @@ inline unsigned long long detect_current_boot_id(const char* buffer, size_t size
     return current;
 }
 
-inline int extract_boot_section(const char* path,
-                                boot_selector selector,
-                                char** section_out,
-                                size_t* section_size_out,
+inline int extract_boot_section(const char* path, boot_selector selector, char** section_out, size_t* section_size_out,
                                 unsigned long long* boot_id_out = nullptr) {
     char* buffer = nullptr;
     size_t size = 0;

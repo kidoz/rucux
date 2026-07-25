@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <arch/armv7/dwmac.hpp>
-#include <kernel/print.hpp>
 #include <kernel/memory/pmm.hpp>
+#include <kernel/print.hpp>
 #include <kernel/sync/spinlock.hpp>
 #include <lib/string.hpp>
 
@@ -23,7 +23,8 @@ static inline void write_reg(uint32_t offset, uint32_t value) noexcept {
 // MDIO Bus
 static uint16_t mdio_read(uint8_t phy_addr, uint8_t reg) noexcept {
     // Wait until MDIO is not busy (bit 0 is GW_BUSY)
-    while (read_reg(GMII_ADDRESS) & 1) {}
+    while (read_reg(GMII_ADDRESS) & 1) {
+    }
 
     // Construct GMII Address
     // PA (PHY Addr) = bits 15:11, GR (Reg Addr) = bits 10:6
@@ -32,13 +33,15 @@ static uint16_t mdio_read(uint8_t phy_addr, uint8_t reg) noexcept {
     uint32_t addr_val = (phy_addr << 11) | (reg << 6) | (4 << 2) | 1;
     write_reg(GMII_ADDRESS, addr_val);
 
-    while (read_reg(GMII_ADDRESS) & 1) {}
+    while (read_reg(GMII_ADDRESS) & 1) {
+    }
 
     return static_cast<uint16_t>(read_reg(GMII_DATA) & 0xFFFF);
 }
 
 static void mdio_write(uint8_t phy_addr, uint8_t reg, uint16_t data) noexcept {
-    while (read_reg(GMII_ADDRESS) & 1) {}
+    while (read_reg(GMII_ADDRESS) & 1) {
+    }
 
     write_reg(GMII_DATA, data);
 
@@ -46,7 +49,8 @@ static void mdio_write(uint8_t phy_addr, uint8_t reg, uint16_t data) noexcept {
     uint32_t addr_val = (phy_addr << 11) | (reg << 6) | (4 << 2) | 3;
     write_reg(GMII_ADDRESS, addr_val);
 
-    while (read_reg(GMII_ADDRESS) & 1) {}
+    while (read_reg(GMII_ADDRESS) & 1) {
+    }
 }
 
 // DMA state
@@ -98,23 +102,23 @@ static void dwmac_transmit(kernel::net::netif* iface, kernel::net::netbuf* buf) 
 static void rtl8211f_init(uint8_t phy_addr) noexcept {
     uint16_t id1 = mdio_read(phy_addr, MII_PHYSID1);
     uint16_t id2 = mdio_read(phy_addr, MII_PHYSID2);
-    
+
     if (id1 == 0xFFFF) {
         kernel::print("dwmac: No PHY found at address {}\n", phy_addr);
         return;
     }
-    
+
     kernel::print("dwmac: RTL8211F PHY found! OUI: 0x{:04x}{:04x}\n", id1, id2);
 
     // RTL8211F Specific: Enable RGMII TX/RX Delay
     mdio_write(phy_addr, RTL8211F_PAGE_SELECT, RTL8211F_PAGE_EXT);
     uint16_t phycr2 = mdio_read(phy_addr, RTL8211F_TX_RX_DELAY);
-    
+
     phycr2 |= (1 << 8); // TX Delay
     phycr2 |= (1 << 3); // RX Delay
-    
+
     mdio_write(phy_addr, RTL8211F_TX_RX_DELAY, phycr2);
-    
+
     // Restore page 0
     mdio_write(phy_addr, RTL8211F_PAGE_SELECT, 0);
     kernel::print("dwmac: RTL8211F RGMII Delays enabled.\n");
@@ -144,7 +148,8 @@ void init() noexcept {
 
     // Reset DMA
     write_reg(DMA_BUS_MODE, 1);
-    while (read_reg(DMA_BUS_MODE) & 1) {}
+    while (read_reg(DMA_BUS_MODE) & 1) {
+    }
 
     // Init PHY (Assume address 0 for now)
     rtl8211f_init(0);
@@ -189,13 +194,13 @@ void init() noexcept {
     // Bit 11: Port Select (0 = GMII/MII)
     // Bit 14: Speed 100 (0 = 10 or 1000)
     // Bit 11: Duplex (1 = Full)
-    write_reg(MAC_CONFIG, (1 << 11)); 
-    
+    write_reg(MAC_CONFIG, (1 << 11));
+
     // Enable Promiscuous mode for testing
     write_reg(MAC_FRAME_FILTER, 1);
 
     // Start MAC & DMA
-    write_reg(MAC_CONFIG, read_reg(MAC_CONFIG) | (1 << 3) | (1 << 2)); // TX/RX Enable
+    write_reg(MAC_CONFIG, read_reg(MAC_CONFIG) | (1 << 3) | (1 << 2));                  // TX/RX Enable
     write_reg(DMA_OPERATION_MODE, read_reg(DMA_OPERATION_MODE) | (1 << 13) | (1 << 1)); // Start TX/RX
 
     // Setup network interface
@@ -207,7 +212,7 @@ void init() noexcept {
     g_dwmac_iface.mac.bytes[3] = 0x22;
     g_dwmac_iface.mac.bytes[4] = 0x33;
     g_dwmac_iface.mac.bytes[5] = 0x44;
-    
+
     g_dwmac_iface.transmit = dwmac_transmit;
 
     // Hardcoded IP for testing: 10.0.2.15

@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 #include <fcntl.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <uapi/kernel/gpu.h>
-#include <uapi/kernel/syscalls.h>
 #include <uapi/kernel/initd.h>
+#include <uapi/kernel/syscalls.h>
 #include <unistd.h>
-#include <stdlib.h>
 #include <wayland-server.h>
 
 extern "C" {
@@ -23,7 +23,8 @@ struct message {
 }
 
 static void custom_log_handler(const char* fmt, va_list ap) {
-    (void)fmt; (void)ap;
+    (void)fmt;
+    (void)ap;
     printf("WM Wayland Log\n");
 }
 
@@ -45,7 +46,7 @@ extern "C" int main() {
 
     setenv("XDG_RUNTIME_DIR", "/run", 1);
 
-    struct wl_display *display = wl_display_create();
+    struct wl_display* display = wl_display_create();
     if (!display) {
         printf("WM: failed to create display\n");
         return 1;

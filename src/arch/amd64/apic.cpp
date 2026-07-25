@@ -174,7 +174,7 @@ uint32_t calibrate_lapic_timer() noexcept {
 
     // Program PIT channel 2 for one-shot
     outb(0x61, (inb(0x61) & 0xFD) | 1); // Enable speaker gate, disable speaker output
-    outb(0x43, 0xB2);                     // Channel 2, lobyte/hibyte, one-shot
+    outb(0x43, 0xB2);                   // Channel 2, lobyte/hibyte, one-shot
     outb(0x42, pit_count & 0xFF);
     outb(0x42, (pit_count >> 8) & 0xFF);
 

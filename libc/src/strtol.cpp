@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include <stdlib.h>
 #include <limits.h>
+#include <stdlib.h>
 
 extern "C" {
 
@@ -16,31 +16,41 @@ static int detect_base(const char** s, int base) {
     if (base == 0) {
         if (**s == '0') {
             (*s)++;
-            if (**s == 'x' || **s == 'X') { (*s)++; return 16; }
+            if (**s == 'x' || **s == 'X') {
+                (*s)++;
+                return 16;
+            }
             return 8;
         }
         return 10;
     }
-    if (base == 16 && **s == '0' && ((*s)[1] == 'x' || (*s)[1] == 'X'))
-        *s += 2;
+    if (base == 16 && **s == '0' && ((*s)[1] == 'x' || (*s)[1] == 'X')) *s += 2;
     return base;
 }
 
 // Helper: digit value (-1 if invalid)
 static int digit_val(char c, int base) {
     int v;
-    if (c >= '0' && c <= '9')      v = c - '0';
-    else if (c >= 'a' && c <= 'z') v = c - 'a' + 10;
-    else if (c >= 'A' && c <= 'Z') v = c - 'A' + 10;
-    else return -1;
+    if (c >= '0' && c <= '9')
+        v = c - '0';
+    else if (c >= 'a' && c <= 'z')
+        v = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'Z')
+        v = c - 'A' + 10;
+    else
+        return -1;
     return (v < base) ? v : -1;
 }
 
 unsigned long long strtoull(const char* nptr, char** endptr, int base) {
     const char* s = skip_ws(nptr);
     bool neg = false;
-    if (*s == '+') s++;
-    else if (*s == '-') { neg = true; s++; }
+    if (*s == '+')
+        s++;
+    else if (*s == '-') {
+        neg = true;
+        s++;
+    }
 
     base = detect_base(&s, base);
 
@@ -66,8 +76,12 @@ unsigned long long strtoull(const char* nptr, char** endptr, int base) {
 long long strtoll(const char* nptr, char** endptr, int base) {
     const char* s = skip_ws(nptr);
     bool neg = false;
-    if (*s == '+') s++;
-    else if (*s == '-') { neg = true; s++; }
+    if (*s == '+')
+        s++;
+    else if (*s == '-') {
+        neg = true;
+        s++;
+    }
 
     base = detect_base(&s, base);
 
@@ -103,8 +117,11 @@ unsigned long strtoul(const char* nptr, char** endptr, int base) {
 double strtod(const char* nptr, char** endptr) {
     const char* s = skip_ws(nptr);
     bool neg = false;
-    if (*s == '-') { neg = true; s++; }
-    else if (*s == '+') s++;
+    if (*s == '-') {
+        neg = true;
+        s++;
+    } else if (*s == '+')
+        s++;
 
     double result = 0.0;
     bool any = false;
@@ -132,17 +149,23 @@ double strtod(const char* nptr, char** endptr) {
     if (*s == 'e' || *s == 'E') {
         s++;
         bool eneg = false;
-        if (*s == '-') { eneg = true; s++; }
-        else if (*s == '+') s++;
+        if (*s == '-') {
+            eneg = true;
+            s++;
+        } else if (*s == '+')
+            s++;
         int exp = 0;
         while (*s >= '0' && *s <= '9') {
             exp = exp * 10 + (*s - '0');
             s++;
         }
         double mult = 1.0;
-        for (int i = 0; i < exp; ++i) mult *= 10.0;
-        if (eneg) result /= mult;
-        else      result *= mult;
+        for (int i = 0; i < exp; ++i)
+            mult *= 10.0;
+        if (eneg)
+            result /= mult;
+        else
+            result *= mult;
     }
 
     if (endptr) *endptr = const_cast<char*>(any ? s : nptr);

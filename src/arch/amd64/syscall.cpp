@@ -10,8 +10,8 @@
 #include <kernel/process/signal.hpp>
 #include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
-#include <kernel/vfs/vfs.hpp>
 #include <kernel/time.hpp>
+#include <kernel/vfs/vfs.hpp>
 #include <uapi/kernel/signal.h>
 
 namespace arch::amd64 {
@@ -70,14 +70,15 @@ extern "C" void check_signals(uintptr_t* rsp) {
     // We have a signal to deliver!
     // Construct the sigcontext on the user stack.
     uintptr_t user_rsp = rsp[10]; // rsp+80 is user rsp
-    
+
     // Allocate space and align to 16 bytes
     user_rsp -= sizeof(sigcontext);
     user_rsp &= ~15ULL;
 
-    // Make sure the memory is paged in (we should really use copy_to_user, but we are identity mapped or user accessible here)
+    // Make sure the memory is paged in (we should really use copy_to_user, but we are identity mapped or user
+    // accessible here)
     auto* ctx = reinterpret_cast<sigcontext*>(user_rsp);
-    
+
     ctx->rax = rsp[0];
     ctx->r15 = rsp[2];
     ctx->r14 = rsp[3];
@@ -92,7 +93,7 @@ extern "C" void check_signals(uintptr_t* rsp) {
 
     // Set up the registers to jump to the handler
     rsp[9] = reinterpret_cast<uintptr_t>(handler); // New RIP
-    rsp[10] = user_rsp - 8; // New RSP, subtracting 8 to simulate a call (pushing restorer)
+    rsp[10] = user_rsp - 8;                        // New RSP, subtracting 8 to simulate a call (pushing restorer)
 
     // Push the restorer address onto the user stack so the handler returns to it
     *reinterpret_cast<uintptr_t*>(rsp[10]) = reinterpret_cast<uintptr_t>(t->sig_restorers[signum]);
@@ -135,7 +136,8 @@ long sys_sigreturn(uintptr_t* rsp) {
 extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
     switch (num) {
     case SYS_GETDENTS:
-        return kernel::vfs::vfs_manager::sys_getdents(static_cast<int>(a1), reinterpret_cast<void*>(a2), static_cast<size_t>(a3));
+        return kernel::vfs::vfs_manager::sys_getdents(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                      static_cast<size_t>(a3));
     case SYS_OPEN:
         return kernel::vfs::vfs_manager::sys_open(reinterpret_cast<const char*>(a1), static_cast<int>(a2));
     case SYS_READ:
@@ -162,15 +164,20 @@ extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, l
     case SYS_FCNTL:
         return kernel::vfs::vfs_manager::sys_fcntl(static_cast<int>(a1), static_cast<int>(a2), static_cast<long>(a3));
     case SYS_SELECT:
-        return kernel::vfs::vfs_manager::sys_select(static_cast<int>(a1), reinterpret_cast<void*>(a2), reinterpret_cast<void*>(a3), reinterpret_cast<void*>(a4), reinterpret_cast<void*>(a5));
+        return kernel::vfs::vfs_manager::sys_select(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                    reinterpret_cast<void*>(a3), reinterpret_cast<void*>(a4),
+                                                    reinterpret_cast<void*>(a5));
     case SYS_POLL:
-        return kernel::vfs::vfs_manager::sys_poll(reinterpret_cast<void*>(a1), static_cast<unsigned int>(a2), static_cast<int>(a3));
+        return kernel::vfs::vfs_manager::sys_poll(reinterpret_cast<void*>(a1), static_cast<unsigned int>(a2),
+                                                  static_cast<int>(a3));
     case SYS_EPOLL_CREATE:
         return kernel::vfs::vfs_manager::sys_epoll_create(static_cast<int>(a1));
     case SYS_EPOLL_CTL:
-        return kernel::vfs::vfs_manager::sys_epoll_ctl(static_cast<int>(a1), static_cast<int>(a2), static_cast<int>(a3), reinterpret_cast<void*>(a4));
+        return kernel::vfs::vfs_manager::sys_epoll_ctl(static_cast<int>(a1), static_cast<int>(a2), static_cast<int>(a3),
+                                                       reinterpret_cast<void*>(a4));
     case SYS_EPOLL_WAIT:
-        return kernel::vfs::vfs_manager::sys_epoll_wait(static_cast<int>(a1), reinterpret_cast<void*>(a2), static_cast<int>(a3), static_cast<int>(a4));
+        return kernel::vfs::vfs_manager::sys_epoll_wait(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                        static_cast<int>(a3), static_cast<int>(a4));
     case SYS_MMAP:
         return reinterpret_cast<long>(kernel::memory::mmap_manager::sys_mmap(
             reinterpret_cast<void*>(a1), static_cast<size_t>(a2), static_cast<int>(a3), static_cast<int>(a4),
@@ -178,11 +185,14 @@ extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, l
     case SYS_MUNMAP:
         return kernel::memory::mmap_manager::sys_munmap(reinterpret_cast<void*>(a1), static_cast<size_t>(a2));
     case SYS_MPROTECT:
-        return kernel::memory::mmap_manager::sys_mprotect(reinterpret_cast<void*>(a1), static_cast<size_t>(a2), static_cast<int>(a3));
+        return kernel::memory::mmap_manager::sys_mprotect(reinterpret_cast<void*>(a1), static_cast<size_t>(a2),
+                                                          static_cast<int>(a3));
     case SYS_MSYNC:
-        return kernel::memory::mmap_manager::sys_msync(reinterpret_cast<void*>(a1), static_cast<size_t>(a2), static_cast<int>(a3));
+        return kernel::memory::mmap_manager::sys_msync(reinterpret_cast<void*>(a1), static_cast<size_t>(a2),
+                                                       static_cast<int>(a3));
     case SYS_MADVISE:
-        return kernel::memory::mmap_manager::sys_madvise(reinterpret_cast<void*>(a1), static_cast<size_t>(a2), static_cast<int>(a3));
+        return kernel::memory::mmap_manager::sys_madvise(reinterpret_cast<void*>(a1), static_cast<size_t>(a2),
+                                                         static_cast<int>(a3));
     case SYS_CLONE:
         return kernel::scheduler::scheduler::sys_clone(reinterpret_cast<void*>(a1), reinterpret_cast<void*>(a2),
                                                        reinterpret_cast<void*>(a3));
@@ -210,47 +220,66 @@ extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, l
     case SYS_CLOCK_GETTIME:
         return kernel::time_manager::sys_clock_gettime(static_cast<int>(a1), reinterpret_cast<kernel::timespec*>(a2));
     case SYS_GETTIMEOFDAY:
-        return kernel::time_manager::sys_gettimeofday(reinterpret_cast<kernel::timeval*>(a1), reinterpret_cast<void*>(a2));
+        return kernel::time_manager::sys_gettimeofday(reinterpret_cast<kernel::timeval*>(a1),
+                                                      reinterpret_cast<void*>(a2));
     case SYS_NANOSLEEP:
-        return kernel::time_manager::sys_nanosleep(reinterpret_cast<const kernel::timespec*>(a1), reinterpret_cast<kernel::timespec*>(a2));
+        return kernel::time_manager::sys_nanosleep(reinterpret_cast<const kernel::timespec*>(a1),
+                                                   reinterpret_cast<kernel::timespec*>(a2));
     case SYS_SIGACTION:
-        return kernel::process::signal_manager::sys_sigaction(static_cast<int>(a1), reinterpret_cast<const void*>(a2), reinterpret_cast<void*>(a3));
+        return kernel::process::signal_manager::sys_sigaction(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
+                                                              reinterpret_cast<void*>(a3));
     case SYS_KILL:
         return kernel::process::signal_manager::sys_kill(static_cast<int>(a1), static_cast<int>(a2));
     case SYS_SIGPROCMASK:
-        return kernel::process::signal_manager::sys_sigprocmask(static_cast<int>(a1), reinterpret_cast<const void*>(a2), reinterpret_cast<void*>(a3));
+        return kernel::process::signal_manager::sys_sigprocmask(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
+                                                                reinterpret_cast<void*>(a3));
     case SYS_SOCKET:
-        return kernel::net::socket_manager::sys_socket(static_cast<int>(a1), static_cast<int>(a2), static_cast<int>(a3));
+        return kernel::net::socket_manager::sys_socket(static_cast<int>(a1), static_cast<int>(a2),
+                                                       static_cast<int>(a3));
     case SYS_BIND:
-        return kernel::net::socket_manager::sys_bind(static_cast<int>(a1), reinterpret_cast<const void*>(a2), static_cast<uint32_t>(a3));
+        return kernel::net::socket_manager::sys_bind(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
+                                                     static_cast<uint32_t>(a3));
     case SYS_LISTEN:
         return kernel::net::socket_manager::sys_listen(static_cast<int>(a1), static_cast<int>(a2));
     case SYS_ACCEPT:
-        return kernel::net::socket_manager::sys_accept(static_cast<int>(a1), reinterpret_cast<void*>(a2), reinterpret_cast<uint32_t*>(a3));
+        return kernel::net::socket_manager::sys_accept(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                       reinterpret_cast<uint32_t*>(a3));
     case SYS_CONNECT:
-        return kernel::net::socket_manager::sys_connect(static_cast<int>(a1), reinterpret_cast<const void*>(a2), static_cast<uint32_t>(a3));
+        return kernel::net::socket_manager::sys_connect(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
+                                                        static_cast<uint32_t>(a3));
     case SYS_SEND:
-        return kernel::net::socket_manager::sys_send(static_cast<int>(a1), reinterpret_cast<const void*>(a2), static_cast<size_t>(a3), static_cast<int>(a4));
+        return kernel::net::socket_manager::sys_send(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
+                                                     static_cast<size_t>(a3), static_cast<int>(a4));
     case SYS_RECV:
-        return kernel::net::socket_manager::sys_recv(static_cast<int>(a1), reinterpret_cast<void*>(a2), static_cast<size_t>(a3), static_cast<int>(a4));
+        return kernel::net::socket_manager::sys_recv(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                     static_cast<size_t>(a3), static_cast<int>(a4));
     case SYS_SENDTO:
-        return kernel::net::socket_manager::sys_sendto(static_cast<int>(a1), reinterpret_cast<const void*>(a2), static_cast<size_t>(a3), static_cast<int>(a4), reinterpret_cast<const void*>(a5), static_cast<uint32_t>(a6));
+        return kernel::net::socket_manager::sys_sendto(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
+                                                       static_cast<size_t>(a3), static_cast<int>(a4),
+                                                       reinterpret_cast<const void*>(a5), static_cast<uint32_t>(a6));
     case SYS_RECVFROM:
-        return kernel::net::socket_manager::sys_recvfrom(static_cast<int>(a1), reinterpret_cast<void*>(a2), static_cast<size_t>(a3), static_cast<int>(a4), reinterpret_cast<void*>(a5), reinterpret_cast<uint32_t*>(a6));
+        return kernel::net::socket_manager::sys_recvfrom(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                         static_cast<size_t>(a3), static_cast<int>(a4),
+                                                         reinterpret_cast<void*>(a5), reinterpret_cast<uint32_t*>(a6));
     case SYS_SETSOCKOPT:
-        return kernel::net::socket_manager::sys_setsockopt(static_cast<int>(a1), static_cast<int>(a2), static_cast<int>(a3), reinterpret_cast<const void*>(a4), static_cast<uint32_t>(a5));
+        return kernel::net::socket_manager::sys_setsockopt(static_cast<int>(a1), static_cast<int>(a2),
+                                                           static_cast<int>(a3), reinterpret_cast<const void*>(a4),
+                                                           static_cast<uint32_t>(a5));
     case SYS_GETSOCKOPT:
-        return kernel::net::socket_manager::sys_getsockopt(static_cast<int>(a1), static_cast<int>(a2), static_cast<int>(a3), reinterpret_cast<void*>(a4), reinterpret_cast<uint32_t*>(a5));
+        return kernel::net::socket_manager::sys_getsockopt(static_cast<int>(a1), static_cast<int>(a2),
+                                                           static_cast<int>(a3), reinterpret_cast<void*>(a4),
+                                                           reinterpret_cast<uint32_t*>(a5));
     case SYS_GETSOCKNAME:
-        return kernel::net::socket_manager::sys_getsockname(static_cast<int>(a1), reinterpret_cast<void*>(a2), reinterpret_cast<uint32_t*>(a3));
+        return kernel::net::socket_manager::sys_getsockname(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                            reinterpret_cast<uint32_t*>(a3));
     case SYS_GETPEERNAME:
-        return kernel::net::socket_manager::sys_getpeername(static_cast<int>(a1), reinterpret_cast<void*>(a2), reinterpret_cast<uint32_t*>(a3));
+        return kernel::net::socket_manager::sys_getpeername(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                            reinterpret_cast<uint32_t*>(a3));
     case SYS_EXIT:
         kernel::scheduler::scheduler::exit();
         return 0;
     case SYS_IPC_CALL:
-        return kernel::ipc::sys_ipc_call(static_cast<uint32_t>(a1),
-                                         reinterpret_cast<kernel::ipc::fast_msg*>(a2));
+        return kernel::ipc::sys_ipc_call(static_cast<uint32_t>(a1), reinterpret_cast<kernel::ipc::fast_msg*>(a2));
     case SYS_IPC_REPLY:
         return kernel::ipc::sys_ipc_reply(reinterpret_cast<kernel::ipc::fast_msg*>(a1));
     case SYS_SPAWN:

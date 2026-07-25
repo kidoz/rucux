@@ -139,7 +139,8 @@ int strcmp(const char* s1, const char* s2) noexcept {
 
 size_t strlen(const char* s) noexcept {
     const char* p = s;
-    while (*p) p++;
+    while (*p)
+        p++;
     return static_cast<size_t>(p - s);
 }
 

@@ -24,44 +24,44 @@ struct termios {
 };
 
 /* c_iflag bits */
-#define IGNBRK  0000001
-#define BRKINT  0000002
-#define IGNPAR  0000004
-#define PARMRK  0000010
-#define INPCK   0000020
-#define ISTRIP  0000040
-#define INLCR   0000100
-#define IGNCR   0000200
-#define ICRNL   0000400
-#define IUCLC   0001000
-#define IXON    0002000
-#define IXANY   0004000
-#define IXOFF   0010000
+#define IGNBRK 0000001
+#define BRKINT 0000002
+#define IGNPAR 0000004
+#define PARMRK 0000010
+#define INPCK 0000020
+#define ISTRIP 0000040
+#define INLCR 0000100
+#define IGNCR 0000200
+#define ICRNL 0000400
+#define IUCLC 0001000
+#define IXON 0002000
+#define IXANY 0004000
+#define IXOFF 0010000
 #define IMAXBEL 0020000
-#define IUTF8   0040000
+#define IUTF8 0040000
 
 /* c_oflag bits */
-#define OPOST   0000001
-#define OLCUC   0000002
-#define ONLCR   0000004
-#define OCRNL   0000010
-#define ONOCR   0000020
-#define ONLRET  0000040
-#define OFILL   0000100
-#define OFDEL   0000200
+#define OPOST 0000001
+#define OLCUC 0000002
+#define ONLCR 0000004
+#define OCRNL 0000010
+#define ONOCR 0000020
+#define ONLRET 0000040
+#define OFILL 0000100
+#define OFDEL 0000200
 
 /* c_cflag bits */
-#define CSIZE   0000060
-#define CS5     0000000
-#define CS6     0000020
-#define CS7     0000040
-#define CS8     0000060
-#define CSTOPB  0000100
-#define CREAD   0000200
-#define PARENB  0000400
-#define PARODD  0001000
-#define HUPCL   0002000
-#define CLOCAL  0004000
+#define CSIZE 0000060
+#define CS5 0000000
+#define CS6 0000020
+#define CS7 0000040
+#define CS8 0000060
+#define CSTOPB 0000100
+#define CREAD 0000200
+#define PARENB 0000400
+#define PARODD 0001000
+#define HUPCL 0002000
+#define CLOCAL 0004000
 
 /* c_lflag bits */
 #define ISIG 0000001
@@ -124,10 +124,10 @@ struct termios {
 int tcgetattr(int fd, struct termios* termios_p);
 int tcsetattr(int fd, int optional_actions, const struct termios* termios_p);
 int tcflush(int fd, int queue_selector);
-speed_t cfgetospeed(const struct termios *termios_p);
-speed_t cfgetispeed(const struct termios *termios_p);
-int cfsetospeed(struct termios *termios_p, speed_t speed);
-int cfsetispeed(struct termios *termios_p, speed_t speed);
+speed_t cfgetospeed(const struct termios* termios_p);
+speed_t cfgetispeed(const struct termios* termios_p);
+int cfsetospeed(struct termios* termios_p, speed_t speed);
+int cfsetispeed(struct termios* termios_p, speed_t speed);
 
 #ifdef __cplusplus
 }

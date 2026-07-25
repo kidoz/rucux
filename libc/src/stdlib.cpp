@@ -22,7 +22,8 @@ uintptr_t __stack_chk_guard = 0x595e9fbd94fda766;
 void abort(void) {
     // We could print something here if we had stderr wired up simply
     _exit(1);
-    while (1) {}
+    while (1) {
+    }
 }
 
 void __attribute__((noreturn)) __stack_chk_fail(void) {
@@ -139,7 +140,8 @@ static void ensure_env_init() {
 
 static size_t env_strlen(const char* s) {
     const char* p = s;
-    while (*p) p++;
+    while (*p)
+        p++;
     return (size_t)(p - s);
 }
 
@@ -151,10 +153,12 @@ char* getenv(const char* name) {
         // Check if g_environ[i] starts with "name="
         bool match = true;
         for (size_t j = 0; j < len; ++j) {
-            if (g_environ[i][j] != name[j]) { match = false; break; }
+            if (g_environ[i][j] != name[j]) {
+                match = false;
+                break;
+            }
         }
-        if (match && g_environ[i][len] == '=')
-            return &g_environ[i][len + 1];
+        if (match && g_environ[i][len] == '=') return &g_environ[i][len + 1];
     }
     return nullptr;
 }
@@ -169,16 +173,21 @@ int setenv(const char* name, const char* value, int overwrite) {
     for (int i = 0; g_environ[i]; ++i) {
         bool match = true;
         for (size_t j = 0; j < nlen; ++j) {
-            if (g_environ[i][j] != name[j]) { match = false; break; }
+            if (g_environ[i][j] != name[j]) {
+                match = false;
+                break;
+            }
         }
         if (match && g_environ[i][nlen] == '=') {
             if (!overwrite) return 0;
             // Replace (leak old — acceptable for small env)
             char* buf = static_cast<char*>(malloc(nlen + vlen + 2));
             if (!buf) return -1;
-            for (size_t j = 0; j < nlen; ++j) buf[j] = name[j];
+            for (size_t j = 0; j < nlen; ++j)
+                buf[j] = name[j];
             buf[nlen] = '=';
-            for (size_t j = 0; j < vlen; ++j) buf[nlen + 1 + j] = value[j];
+            for (size_t j = 0; j < vlen; ++j)
+                buf[nlen + 1 + j] = value[j];
             buf[nlen + 1 + vlen] = '\0';
             g_environ[i] = buf;
             return 0;
@@ -187,14 +196,17 @@ int setenv(const char* name, const char* value, int overwrite) {
 
     // Add new entry
     int count = 0;
-    while (g_environ[count]) count++;
+    while (g_environ[count])
+        count++;
     if (count >= MAX_ENV) return -1;
 
     char* buf = static_cast<char*>(malloc(nlen + vlen + 2));
     if (!buf) return -1;
-    for (size_t j = 0; j < nlen; ++j) buf[j] = name[j];
+    for (size_t j = 0; j < nlen; ++j)
+        buf[j] = name[j];
     buf[nlen] = '=';
-    for (size_t j = 0; j < vlen; ++j) buf[nlen + 1 + j] = value[j];
+    for (size_t j = 0; j < vlen; ++j)
+        buf[nlen + 1 + j] = value[j];
     buf[nlen + 1 + vlen] = '\0';
     g_environ[count] = buf;
     g_environ[count + 1] = nullptr;
@@ -206,7 +218,8 @@ int putenv(char* string) {
     if (!string) return -1;
     // Find the '='
     const char* eq = string;
-    while (*eq && *eq != '=') eq++;
+    while (*eq && *eq != '=')
+        eq++;
     if (!*eq) return -1;
     size_t nlen = (size_t)(eq - string);
 
@@ -214,7 +227,10 @@ int putenv(char* string) {
     for (int i = 0; g_environ[i]; ++i) {
         bool match = true;
         for (size_t j = 0; j < nlen; ++j) {
-            if (g_environ[i][j] != string[j]) { match = false; break; }
+            if (g_environ[i][j] != string[j]) {
+                match = false;
+                break;
+            }
         }
         if (match && g_environ[i][nlen] == '=') {
             g_environ[i] = string;
@@ -223,7 +239,8 @@ int putenv(char* string) {
     }
 
     int count = 0;
-    while (g_environ[count]) count++;
+    while (g_environ[count])
+        count++;
     if (count >= MAX_ENV) return -1;
     g_environ[count] = string;
     g_environ[count + 1] = nullptr;
@@ -237,7 +254,10 @@ int unsetenv(const char* name) {
     for (int i = 0; g_environ[i]; ++i) {
         bool match = true;
         for (size_t j = 0; j < len; ++j) {
-            if (g_environ[i][j] != name[j]) { match = false; break; }
+            if (g_environ[i][j] != name[j]) {
+                match = false;
+                break;
+            }
         }
         if (match && g_environ[i][len] == '=') {
             // Shift remaining entries
@@ -300,10 +320,10 @@ void srand48(long int seedval) {
     srand(seedval);
 }
 
-int posix_memalign(void **memptr, size_t alignment, size_t size) {
+int posix_memalign(void** memptr, size_t alignment, size_t size) {
     (void)alignment;
     if (!memptr) return 22; // EINVAL
-    void *ptr = malloc(size);
+    void* ptr = malloc(size);
     if (!ptr) return 12; // ENOMEM
     *memptr = ptr;
     return 0;
@@ -317,7 +337,7 @@ void* aligned_alloc(size_t alignment, size_t size) {
     return nullptr;
 }
 
-char *realpath(const char *path, char *resolved_path) {
+char* realpath(const char* path, char* resolved_path) {
     if (!path) return nullptr;
     if (resolved_path) {
         strcpy(resolved_path, path);

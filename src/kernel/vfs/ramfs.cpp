@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/print.hpp>
 #include <kernel/vfs/ramfs.hpp>
-#include <lib/string.hpp>
 #include <knew.hpp>
+#include <lib/string.hpp>
 
 namespace kernel::vfs {
 
@@ -26,10 +26,12 @@ static vfs_ops g_ramfs_ops = {.read = ramfs::read,
 
 static char* kstrdup(const char* s) noexcept {
     size_t len = 0;
-    while (s[len]) len++;
+    while (s[len])
+        len++;
     char* dup = new char[len + 1];
     if (!dup) return nullptr;
-    for (size_t i = 0; i <= len; ++i) dup[i] = s[i];
+    for (size_t i = 0; i <= len; ++i)
+        dup[i] = s[i];
     return dup;
 }
 
@@ -143,8 +145,7 @@ vfs_node* ramfs::finddir(vfs_node* node, const char* name) noexcept {
     uint32_t hash = vfs_node::hash_name(name);
     ramfs_node_internal* cur = internal->first_child;
     while (cur) {
-        if (cur->vnode->name_hash == hash && lib::strcmp(cur->vnode->name, name) == 0)
-            return cur->vnode;
+        if (cur->vnode->name_hash == hash && lib::strcmp(cur->vnode->name, name) == 0) return cur->vnode;
         cur = cur->next;
     }
     return nullptr;

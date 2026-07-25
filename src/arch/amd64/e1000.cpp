@@ -12,64 +12,64 @@ namespace arch::amd64 {
 
 // E1000 Register offsets
 namespace reg {
-    constexpr uint16_t CTRL    = 0x0000;
-    constexpr uint16_t STATUS  = 0x0008;
-    constexpr uint16_t EECD    = 0x0010;
-    constexpr uint16_t EERD    = 0x0014;
-    constexpr uint16_t ICR     = 0x00C0; // Interrupt Cause Read
-    constexpr uint16_t IMS     = 0x00D0; // Interrupt Mask Set
-    constexpr uint16_t IMC     = 0x00D8; // Interrupt Mask Clear
-    constexpr uint16_t RCTL    = 0x0100; // Receive Control
-    constexpr uint16_t TCTL    = 0x0400; // Transmit Control
-    constexpr uint16_t RDBAL   = 0x2800; // RX Descriptor Base Low
-    constexpr uint16_t RDBAH   = 0x2804; // RX Descriptor Base High
-    constexpr uint16_t RDLEN   = 0x2808; // RX Descriptor Length
-    constexpr uint16_t RDH     = 0x2810; // RX Descriptor Head
-    constexpr uint16_t RDT     = 0x2818; // RX Descriptor Tail
-    constexpr uint16_t TDBAL   = 0x3800; // TX Descriptor Base Low
-    constexpr uint16_t TDBAH   = 0x3804; // TX Descriptor Base High
-    constexpr uint16_t TDLEN   = 0x3808; // TX Descriptor Length
-    constexpr uint16_t TDH     = 0x3810; // TX Descriptor Head
-    constexpr uint16_t TDT     = 0x3818; // TX Descriptor Tail
-    constexpr uint16_t RAL0    = 0x5400; // Receive Address Low
-    constexpr uint16_t RAH0    = 0x5404; // Receive Address High
-    constexpr uint16_t MTA     = 0x5200; // Multicast Table Array
+constexpr uint16_t CTRL = 0x0000;
+constexpr uint16_t STATUS = 0x0008;
+constexpr uint16_t EECD = 0x0010;
+constexpr uint16_t EERD = 0x0014;
+constexpr uint16_t ICR = 0x00C0;   // Interrupt Cause Read
+constexpr uint16_t IMS = 0x00D0;   // Interrupt Mask Set
+constexpr uint16_t IMC = 0x00D8;   // Interrupt Mask Clear
+constexpr uint16_t RCTL = 0x0100;  // Receive Control
+constexpr uint16_t TCTL = 0x0400;  // Transmit Control
+constexpr uint16_t RDBAL = 0x2800; // RX Descriptor Base Low
+constexpr uint16_t RDBAH = 0x2804; // RX Descriptor Base High
+constexpr uint16_t RDLEN = 0x2808; // RX Descriptor Length
+constexpr uint16_t RDH = 0x2810;   // RX Descriptor Head
+constexpr uint16_t RDT = 0x2818;   // RX Descriptor Tail
+constexpr uint16_t TDBAL = 0x3800; // TX Descriptor Base Low
+constexpr uint16_t TDBAH = 0x3804; // TX Descriptor Base High
+constexpr uint16_t TDLEN = 0x3808; // TX Descriptor Length
+constexpr uint16_t TDH = 0x3810;   // TX Descriptor Head
+constexpr uint16_t TDT = 0x3818;   // TX Descriptor Tail
+constexpr uint16_t RAL0 = 0x5400;  // Receive Address Low
+constexpr uint16_t RAH0 = 0x5404;  // Receive Address High
+constexpr uint16_t MTA = 0x5200;   // Multicast Table Array
 } // namespace reg
 
 // RCTL bits
-constexpr uint32_t RCTL_EN     = (1 << 1);
-constexpr uint32_t RCTL_BAM    = (1 << 15); // Broadcast Accept
-constexpr uint32_t RCTL_BSIZE  = (0 << 16); // 2048 byte buffers
-constexpr uint32_t RCTL_SECRC  = (1 << 26); // Strip Ethernet CRC
+constexpr uint32_t RCTL_EN = (1 << 1);
+constexpr uint32_t RCTL_BAM = (1 << 15);   // Broadcast Accept
+constexpr uint32_t RCTL_BSIZE = (0 << 16); // 2048 byte buffers
+constexpr uint32_t RCTL_SECRC = (1 << 26); // Strip Ethernet CRC
 
 // TCTL bits
-constexpr uint32_t TCTL_EN     = (1 << 1);
-constexpr uint32_t TCTL_PSP    = (1 << 3);
+constexpr uint32_t TCTL_EN = (1 << 1);
+constexpr uint32_t TCTL_PSP = (1 << 3);
 
 // Descriptor structures (must be 16-byte aligned)
 struct rx_desc {
     uint64_t addr;
     uint16_t length;
     uint16_t checksum;
-    uint8_t  status;
-    uint8_t  errors;
+    uint8_t status;
+    uint8_t errors;
     uint16_t special;
 } __attribute__((packed));
 
 struct tx_desc {
     uint64_t addr;
     uint16_t length;
-    uint8_t  cso;
-    uint8_t  cmd;
-    uint8_t  status;
-    uint8_t  css;
+    uint8_t cso;
+    uint8_t cmd;
+    uint8_t status;
+    uint8_t css;
     uint16_t special;
 } __attribute__((packed));
 
-constexpr uint8_t RX_DESC_STATUS_DD   = (1 << 0); // Descriptor Done
-constexpr uint8_t TX_CMD_EOP  = (1 << 0); // End of Packet
-constexpr uint8_t TX_CMD_IFCS = (1 << 1); // Insert FCS
-constexpr uint8_t TX_CMD_RS   = (1 << 3); // Report Status
+constexpr uint8_t RX_DESC_STATUS_DD = (1 << 0); // Descriptor Done
+constexpr uint8_t TX_CMD_EOP = (1 << 0);        // End of Packet
+constexpr uint8_t TX_CMD_IFCS = (1 << 1);       // Insert FCS
+constexpr uint8_t TX_CMD_RS = (1 << 3);         // Report Status
 constexpr uint8_t TX_DESC_STATUS_DD = (1 << 0);
 
 // Ring sizes
@@ -180,8 +180,8 @@ void e1000::handle_rx() noexcept {
 
 void e1000::irq_handler() noexcept {
     uint32_t icr = read_reg(reg::ICR);
-    if (icr & 0x80) handle_rx();     // RX packet
-    if (icr & 0x04) link_up();       // Link status change
+    if (icr & 0x80) handle_rx(); // RX packet
+    if (icr & 0x04) link_up();   // Link status change
 }
 
 void e1000::link_up() noexcept {
@@ -201,20 +201,20 @@ bool e1000::init() noexcept {
     size_t mmio_size = 128 * 1024; // 128KB MMIO region
     for (size_t i = 0; i < mmio_size; i += 4096) {
         kernel::memory::vmm::map(g_mmio_base + i, g_mmio_base + i,
-            kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE);
+                                 kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE);
     }
 
     // Reset
     write_reg(reg::CTRL, read_reg(reg::CTRL) | (1 << 26));
-    for (int i = 0; i < 100000; i++) asm volatile("" ::: "memory");
+    for (int i = 0; i < 100000; i++)
+        asm volatile("" ::: "memory");
     write_reg(reg::CTRL, read_reg(reg::CTRL) & ~(1 << 26));
 
     // Read MAC address
     read_mac(g_e1000_iface.mac.bytes);
-    kernel::print("E1000: MAC {02x}:{02x}:{02x}:{02x}:{02x}:{02x}\n",
-        g_e1000_iface.mac.bytes[0], g_e1000_iface.mac.bytes[1],
-        g_e1000_iface.mac.bytes[2], g_e1000_iface.mac.bytes[3],
-        g_e1000_iface.mac.bytes[4], g_e1000_iface.mac.bytes[5]);
+    kernel::print("E1000: MAC {02x}:{02x}:{02x}:{02x}:{02x}:{02x}\n", g_e1000_iface.mac.bytes[0],
+                  g_e1000_iface.mac.bytes[1], g_e1000_iface.mac.bytes[2], g_e1000_iface.mac.bytes[3],
+                  g_e1000_iface.mac.bytes[4], g_e1000_iface.mac.bytes[5]);
 
     // Clear multicast table
     for (int i = 0; i < 128; i++)
@@ -232,8 +232,8 @@ bool e1000::init() noexcept {
     g_e1000_iface.transmit = e1000_transmit;
     // Default IP config (can be changed by userspace DHCP later)
     g_e1000_iface.ip.addr = 0x0A00000A;    // 10.0.0.10
-    g_e1000_iface.ip.netmask = 0x00FFFFFF;  // 255.255.255.0
-    g_e1000_iface.ip.gateway = 0x0100000A;  // 10.0.0.1
+    g_e1000_iface.ip.netmask = 0x00FFFFFF; // 255.255.255.0
+    g_e1000_iface.ip.gateway = 0x0100000A; // 10.0.0.1
     kernel::net::netif_register(&g_e1000_iface);
 
     kernel::print("E1000: initialized on PCI {}:{}\n", dev.bus, dev.device);

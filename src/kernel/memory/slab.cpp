@@ -44,8 +44,7 @@ slab* slab_cache::grow() noexcept {
     size_t slab_bytes = pmm::PAGE_SIZE << slab_order_;
 
     // Place slab metadata at the end of the allocated pages
-    auto* s = reinterpret_cast<slab*>(
-        reinterpret_cast<uintptr_t>(pages) + slab_bytes - sizeof(slab));
+    auto* s = reinterpret_cast<slab*>(reinterpret_cast<uintptr_t>(pages) + slab_bytes - sizeof(slab));
     s->base = pages;
     s->in_use = 0;
     s->total = static_cast<uint16_t>(objs_per_slab_);
@@ -163,9 +162,7 @@ void slab_cache::free(void* ptr) noexcept {
 // ─── Generic size-class caches ─────────────────────────────────────────────
 
 static constexpr size_t NUM_SIZE_CLASSES = 9;
-static constexpr size_t SIZE_CLASSES[NUM_SIZE_CLASSES] = {
-    8, 16, 32, 64, 128, 256, 512, 1024, 2048
-};
+static constexpr size_t SIZE_CLASSES[NUM_SIZE_CLASSES] = {8, 16, 32, 64, 128, 256, 512, 1024, 2048};
 
 static slab_cache g_size_caches[NUM_SIZE_CLASSES];
 static slab_cache g_thread_cache;
@@ -173,13 +170,13 @@ static slab_cache g_vfs_node_cache;
 static bool g_slab_initialized = false;
 
 void slab_init() noexcept {
-    const char* names[] = {"slab-8", "slab-16", "slab-32", "slab-64",
-                           "slab-128", "slab-256", "slab-512", "slab-1024", "slab-2048"};
+    const char* names[] = {"slab-8",   "slab-16",  "slab-32",   "slab-64",  "slab-128",
+                           "slab-256", "slab-512", "slab-1024", "slab-2048"};
     for (size_t i = 0; i < NUM_SIZE_CLASSES; ++i)
         g_size_caches[i].init(names[i], SIZE_CLASSES[i]);
 
     // Named caches for hot objects
-    g_thread_cache.init("thread", 512); // thread struct is ~400 bytes
+    g_thread_cache.init("thread", 512);    // thread struct is ~400 bytes
     g_vfs_node_cache.init("vfs_node", 64); // vfs_node is now ~48 bytes
 
     g_slab_initialized = true;
@@ -206,7 +203,11 @@ void slab_free(void* ptr, size_t size) noexcept {
     g_size_caches[cls].free(ptr);
 }
 
-slab_cache& thread_cache() noexcept { return g_thread_cache; }
-slab_cache& vfs_node_cache() noexcept { return g_vfs_node_cache; }
+slab_cache& thread_cache() noexcept {
+    return g_thread_cache;
+}
+slab_cache& vfs_node_cache() noexcept {
+    return g_vfs_node_cache;
+}
 
 } // namespace kernel::memory

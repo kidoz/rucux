@@ -21,13 +21,13 @@ inline void cpu_relax() noexcept {
 inline uintptr_t irq_save() noexcept {
     uintptr_t flags = 0;
 #if !defined(__STDC_HOSTED__) || __STDC_HOSTED__ == 0
-  #if defined(__x86_64__)
-    asm volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
-  #elif defined(__arm__)
-    asm volatile("mrs %0, cpsr; cpsid i" : "=r"(flags) :: "memory");
-  #elif defined(__aarch64__)
-    asm volatile("mrs %0, daif; msr daifset, #0xf" : "=r"(flags) :: "memory");
-  #endif
+#if defined(__x86_64__)
+    asm volatile("pushfq; pop %0; cli" : "=r"(flags)::"memory");
+#elif defined(__arm__)
+    asm volatile("mrs %0, cpsr; cpsid i" : "=r"(flags)::"memory");
+#elif defined(__aarch64__)
+    asm volatile("mrs %0, daif; msr daifset, #0xf" : "=r"(flags)::"memory");
+#endif
 #endif
     return flags;
 }
@@ -35,13 +35,13 @@ inline uintptr_t irq_save() noexcept {
 // Restore previously saved interrupt flags
 inline void irq_restore([[maybe_unused]] uintptr_t flags) noexcept {
 #if !defined(__STDC_HOSTED__) || __STDC_HOSTED__ == 0
-  #if defined(__x86_64__)
-    asm volatile("push %0; popfq" :: "g"(flags) : "memory", "cc");
-  #elif defined(__arm__)
-    asm volatile("msr cpsr_c, %0" :: "r"(flags) : "memory");
-  #elif defined(__aarch64__)
-    asm volatile("msr daif, %0" :: "r"(flags) : "memory");
-  #endif
+#if defined(__x86_64__)
+    asm volatile("push %0; popfq" ::"g"(flags) : "memory", "cc");
+#elif defined(__arm__)
+    asm volatile("msr cpsr_c, %0" ::"r"(flags) : "memory");
+#elif defined(__aarch64__)
+    asm volatile("msr daif, %0" ::"r"(flags) : "memory");
+#endif
 #endif
 }
 
@@ -60,19 +60,14 @@ public:
         }
     }
 
-    void unlock() noexcept {
-        now_serving_.fetch_add(1, release);
-    }
+    void unlock() noexcept { now_serving_.fetch_add(1, release); }
 
     bool try_lock() noexcept {
         uint16_t expected = now_serving_.load(relaxed);
-        return next_ticket_.compare_exchange_strong(expected, expected + 1,
-                                                     acquire, relaxed);
+        return next_ticket_.compare_exchange_strong(expected, expected + 1, acquire, relaxed);
     }
 
-    bool is_locked() const noexcept {
-        return next_ticket_.load(relaxed) != now_serving_.load(relaxed);
-    }
+    bool is_locked() const noexcept { return next_ticket_.load(relaxed) != now_serving_.load(relaxed); }
 };
 
 // Interrupt-safe spinlock: disables local IRQs + acquires spinlock.
@@ -103,7 +98,8 @@ class irq_lock_guard {
 
 public:
     explicit irq_lock_guard(irq_spinlock& lock) noexcept
-        : lock_{lock}, flags_{lock.lock()} {}
+        : lock_{lock}
+        , flags_{lock.lock()} {}
 
     ~irq_lock_guard() noexcept { lock_.unlock(flags_); }
 

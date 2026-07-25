@@ -22,13 +22,19 @@ static udp_pcb* find_udp_pcb(uint16_t local_port) noexcept {
 
 void udp_input(netif* iface, netbuf* buf) noexcept {
     (void)iface;
-    if (buf->len() < UDP_HEADER_LEN) { netbuf::free(buf); return; }
+    if (buf->len() < UDP_HEADER_LEN) {
+        netbuf::free(buf);
+        return;
+    }
 
     auto* udp = reinterpret_cast<udp_header*>(buf->data());
 
     irq_lock_guard guard(g_udp_lock);
     auto* pcb = find_udp_pcb(udp->dst_port);
-    if (!pcb) { netbuf::free(buf); return; }
+    if (!pcb) {
+        netbuf::free(buf);
+        return;
+    }
 
     // Strip UDP header but keep src info
     buf->src_port = udp->src_port;
@@ -38,8 +44,12 @@ void udp_input(netif* iface, netbuf* buf) noexcept {
     // Enqueue to PCB receive list
     uintptr_t flags = pcb->lock.lock();
     buf->next = nullptr;
-    if (!pcb->recv_head) { pcb->recv_head = pcb->recv_tail = buf; }
-    else { pcb->recv_tail->next = buf; pcb->recv_tail = buf; }
+    if (!pcb->recv_head) {
+        pcb->recv_head = pcb->recv_tail = buf;
+    } else {
+        pcb->recv_tail->next = buf;
+        pcb->recv_tail = buf;
+    }
     pcb->recv_count++;
 
     if (pcb->wait_recv) {
@@ -65,7 +75,10 @@ void udp_free(udp_pcb* pcb) noexcept {
     irq_lock_guard guard(g_udp_lock);
     udp_pcb** pp = &g_udp_list;
     while (*pp) {
-        if (*pp == pcb) { *pp = pcb->next; break; }
+        if (*pp == pcb) {
+            *pp = pcb->next;
+            break;
+        }
         pp = &(*pp)->next;
     }
     // Free any queued packets
@@ -91,8 +104,7 @@ int udp_connect(udp_pcb* pcb, uint32_t addr, uint16_t port) noexcept {
     return 0;
 }
 
-long udp_sendto(udp_pcb* pcb, const void* data, size_t len,
-                uint32_t dst_ip, uint16_t dst_port) noexcept {
+long udp_sendto(udp_pcb* pcb, const void* data, size_t len, uint32_t dst_ip, uint16_t dst_port) noexcept {
     auto* buf = netbuf::alloc();
     if (!buf) return -1;
 
@@ -117,8 +129,7 @@ long udp_sendto(udp_pcb* pcb, const void* data, size_t len,
     return static_cast<long>(len);
 }
 
-long udp_recvfrom(udp_pcb* pcb, void* data, size_t len,
-                  uint32_t* src_ip, uint16_t* src_port) noexcept {
+long udp_recvfrom(udp_pcb* pcb, void* data, size_t len, uint32_t* src_ip, uint16_t* src_port) noexcept {
     // Block until data
     while (true) {
         uintptr_t flags = pcb->lock.lock();
@@ -143,7 +154,7 @@ long udp_recvfrom(udp_pcb* pcb, void* data, size_t len,
 }
 
 int udp_poll_events(udp_pcb* pcb) noexcept {
-    int events = 4; // POLLOUT always
+    int events = 4;                  // POLLOUT always
     if (pcb->recv_head) events |= 1; // POLLIN
     return events;
 }

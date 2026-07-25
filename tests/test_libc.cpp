@@ -2,11 +2,11 @@
 // Host-compiled tests for libc completions: vsnprintf, strtol, sscanf, inet
 
 #include "test_harness.hpp"
+#include <arpa/inet.h>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cstdarg>
-#include <arpa/inet.h>
 
 // ── Pull in the libc implementations directly ──────────────────────────────
 // We compile these as part of the test binary using the host compiler.
@@ -155,7 +155,9 @@ TEST(sscanf_mixed) {
     int n = sscanf("192.168.1.1:8080", "%[^:]:%d", host, &port);
     // Our sscanf doesn't support %[...] — verify it handles what it can
     // At minimum it shouldn't crash
-    (void)n; (void)port; (void)host;
+    (void)n;
+    (void)port;
+    (void)host;
     ASSERT(true); // Didn't crash
 }
 
@@ -225,13 +227,15 @@ TEST(snprintf_truncation) {
     char buf[8];
     int ret = snprintf(buf, sizeof(buf), "hello world");
     ASSERT(strcmp(buf, "hello w") == 0); // Truncated at 7 + null
-    ASSERT_EQ(ret, 11); // Would have written 11 chars
+    ASSERT_EQ(ret, 11);                  // Would have written 11 chars
 }
 
 // Test inet functions — basic validation
 TEST(inet_pton_v4) {
     // Using host inet_pton as reference
-    struct { unsigned int s_addr; } addr;
+    struct {
+        unsigned int s_addr;
+    } addr;
     int ret = inet_pton(AF_INET, "10.0.0.1", &addr);
     ASSERT_EQ(ret, 1);
     // 10.0.0.1 in network byte order = 0x0100000a

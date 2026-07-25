@@ -6,15 +6,7 @@ namespace kernel::process {
 
 credentials root_credentials(uint32_t sid, uint32_t pgid) noexcept {
     return {
-        ROOT_UID,
-        ROOT_UID,
-        ROOT_UID,
-        ROOT_GID,
-        ROOT_GID,
-        ROOT_GID,
-        sid,
-        pgid,
-        ROOT_CAPABILITIES,
+        ROOT_UID, ROOT_UID, ROOT_UID, ROOT_GID, ROOT_GID, ROOT_GID, sid, pgid, ROOT_CAPABILITIES,
     };
 }
 

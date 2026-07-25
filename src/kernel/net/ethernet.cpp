@@ -18,9 +18,15 @@ void ethernet_input(netif* iface, netbuf* buf) noexcept {
     buf->pull(ETH_HEADER_LEN); // Strip Ethernet header
 
     switch (type) {
-    case ETH_TYPE_IPV4: ipv4_input(iface, buf); break;
-    case ETH_TYPE_ARP:  arp_input(iface, buf); break;
-    default:            netbuf::free(buf); break;
+    case ETH_TYPE_IPV4:
+        ipv4_input(iface, buf);
+        break;
+    case ETH_TYPE_ARP:
+        arp_input(iface, buf);
+        break;
+    default:
+        netbuf::free(buf);
+        break;
     }
 }
 

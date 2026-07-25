@@ -11,7 +11,7 @@ public:
     ~wait_queue() = default;
 
     // Block the current thread on this queue until woke up.
-    // Optionally accepts a tick deadline (wake_tick). 
+    // Optionally accepts a tick deadline (wake_tick).
     // Returns true if awoken normally (wake_one/wake_all), false if timeout.
     bool wait(uint64_t wake_tick = 0) noexcept;
 

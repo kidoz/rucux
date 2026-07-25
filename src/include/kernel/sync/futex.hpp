@@ -15,9 +15,9 @@ namespace kernel::sync {
 
 struct futex_waiter {
     scheduler::thread* thread;
-    uintptr_t addr;        // Virtual address being waited on
-    uintptr_t addr_space;  // Address space (pml4_phys) for disambiguation
-    futex_waiter* next;    // Next waiter in bucket chain
+    uintptr_t addr;       // Virtual address being waited on
+    uintptr_t addr_space; // Address space (pml4_phys) for disambiguation
+    futex_waiter* next;   // Next waiter in bucket chain
 };
 
 struct futex_bucket {

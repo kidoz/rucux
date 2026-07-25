@@ -16,24 +16,25 @@ int tcsetattr(int fd, int optional_actions, const struct termios* termios_p) {
 }
 
 int tcflush(int fd, int queue_selector) {
-    (void)fd; (void)queue_selector;
+    (void)fd;
+    (void)queue_selector;
     return 0; // stub
 }
 
-speed_t cfgetospeed(const struct termios *termios_p) {
+speed_t cfgetospeed(const struct termios* termios_p) {
     return termios_p->c_ospeed;
 }
 
-speed_t cfgetispeed(const struct termios *termios_p) {
+speed_t cfgetispeed(const struct termios* termios_p) {
     return termios_p->c_ispeed;
 }
 
-int cfsetospeed(struct termios *termios_p, speed_t speed) {
+int cfsetospeed(struct termios* termios_p, speed_t speed) {
     termios_p->c_ospeed = speed;
     return 0;
 }
 
-int cfsetispeed(struct termios *termios_p, speed_t speed) {
+int cfsetispeed(struct termios* termios_p, speed_t speed) {
     termios_p->c_ispeed = speed;
     return 0;
 }

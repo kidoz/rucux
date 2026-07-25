@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <arpa/inet.h>
-#include <string.h>
 #include <stdint.h>
+#include <string.h>
 
 extern "C" {
 
@@ -10,12 +10,16 @@ uint16_t htons(uint16_t hostshort) {
 }
 
 uint32_t htonl(uint32_t hostlong) {
-    return ((hostlong >> 24) & 0xFF) | ((hostlong >> 8) & 0xFF00) |
-           ((hostlong << 8) & 0xFF0000) | ((hostlong << 24) & 0xFF000000);
+    return ((hostlong >> 24) & 0xFF) | ((hostlong >> 8) & 0xFF00) | ((hostlong << 8) & 0xFF0000) |
+           ((hostlong << 24) & 0xFF000000);
 }
 
-uint16_t ntohs(uint16_t netshort) { return htons(netshort); }
-uint32_t ntohl(uint32_t netlong) { return htonl(netlong); }
+uint16_t ntohs(uint16_t netshort) {
+    return htons(netshort);
+}
+uint32_t ntohl(uint32_t netlong) {
+    return htonl(netlong);
+}
 
 char* inet_ntoa(struct in_addr in) {
     static char buf[16];
@@ -24,8 +28,15 @@ char* inet_ntoa(struct in_addr in) {
     for (int i = 0; i < 4; ++i) {
         if (i) *p++ = '.';
         unsigned char v = b[i];
-        if (v >= 100) { *p++ = '0' + v / 100; v %= 100; *p++ = '0' + v / 10; v %= 10; }
-        else if (v >= 10) { *p++ = '0' + v / 10; v %= 10; }
+        if (v >= 100) {
+            *p++ = '0' + v / 100;
+            v %= 100;
+            *p++ = '0' + v / 10;
+            v %= 10;
+        } else if (v >= 10) {
+            *p++ = '0' + v / 10;
+            v %= 10;
+        }
         *p++ = '0' + v;
     }
     *p = '\0';
@@ -71,8 +82,15 @@ const char* inet_ntop(int af, const void* src, char* dst, socklen_t size) {
     for (int i = 0; i < 4; ++i) {
         if (i) *p++ = '.';
         unsigned char v = b[i];
-        if (v >= 100) { *p++ = '0' + v / 100; v %= 100; *p++ = '0' + v / 10; v %= 10; }
-        else if (v >= 10) { *p++ = '0' + v / 10; v %= 10; }
+        if (v >= 100) {
+            *p++ = '0' + v / 100;
+            v %= 100;
+            *p++ = '0' + v / 10;
+            v %= 10;
+        } else if (v >= 10) {
+            *p++ = '0' + v / 10;
+            v %= 10;
+        }
         *p++ = '0' + v;
     }
     *p = '\0';

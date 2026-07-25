@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 #include <pthread.h>
 #include <signal.h>
-#include <unistd.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <uapi/kernel/initd.h>
 #include <uapi/kernel/syscalls.h>
+#include <unistd.h>
 
 #include "config.hpp"
 
@@ -111,7 +111,8 @@ service_entry* ensure_service_locked(const char* name) {
     entry->restart_count = 0;
     entry->restart_budget_used = 0;
     entry->last_exit_status = 0;
-    for (int i = 0; i < MAX_SERVICE_DEPS; ++i) entry->dependencies[i] = nullptr;
+    for (int i = 0; i < MAX_SERVICE_DEPS; ++i)
+        entry->dependencies[i] = nullptr;
     entry->dependency_count = 0;
     entry->start_requested = false;
     return entry;
@@ -165,7 +166,8 @@ void* restart_worker_main(void* arg) {
     }
 
     pthread_mutex_lock(&g_services_lock);
-    if (!entry->restart_pending || entry->restart_generation != generation || entry->tid != 0 || entry->stop_requested) {
+    if (!entry->restart_pending || entry->restart_generation != generation || entry->tid != 0 ||
+        entry->stop_requested) {
         pthread_mutex_unlock(&g_services_lock);
         return nullptr;
     }

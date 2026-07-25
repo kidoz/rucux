@@ -20,7 +20,8 @@ int sscanf(const char* str, const char* format, ...) {
         // Skip whitespace in format
         if (is_space(*format)) {
             format++;
-            while (is_space(*s)) s++;
+            while (is_space(*s))
+                s++;
             continue;
         }
 
@@ -36,7 +37,8 @@ int sscanf(const char* str, const char* format, ...) {
 
         if (*format == '%') {
             if (*s != '%') break;
-            s++; format++;
+            s++;
+            format++;
             continue;
         }
 
@@ -44,8 +46,11 @@ int sscanf(const char* str, const char* format, ...) {
         enum { LEN_NONE, LEN_L, LEN_LL } length = LEN_NONE;
         if (*format == 'l') {
             format++;
-            if (*format == 'l') { length = LEN_LL; format++; }
-            else length = LEN_L;
+            if (*format == 'l') {
+                length = LEN_LL;
+                format++;
+            } else
+                length = LEN_L;
         } else if (*format == 'h') {
             format++;
             if (*format == 'h') format++;
@@ -58,9 +63,12 @@ int sscanf(const char* str, const char* format, ...) {
             long long val = strtoll(s, &end, (*format == 'i') ? 0 : 10);
             if (end == s) goto done;
             s = end;
-            if (length == LEN_LL)     *va_arg(ap, long long*) = val;
-            else if (length == LEN_L) *va_arg(ap, long*) = static_cast<long>(val);
-            else                      *va_arg(ap, int*) = static_cast<int>(val);
+            if (length == LEN_LL)
+                *va_arg(ap, long long*) = val;
+            else if (length == LEN_L)
+                *va_arg(ap, long*) = static_cast<long>(val);
+            else
+                *va_arg(ap, int*) = static_cast<int>(val);
             matched++;
             break;
         }
@@ -69,9 +77,12 @@ int sscanf(const char* str, const char* format, ...) {
             unsigned long long val = strtoull(s, &end, 10);
             if (end == s) goto done;
             s = end;
-            if (length == LEN_LL)     *va_arg(ap, unsigned long long*) = val;
-            else if (length == LEN_L) *va_arg(ap, unsigned long*) = static_cast<unsigned long>(val);
-            else                      *va_arg(ap, unsigned int*) = static_cast<unsigned int>(val);
+            if (length == LEN_LL)
+                *va_arg(ap, unsigned long long*) = val;
+            else if (length == LEN_L)
+                *va_arg(ap, unsigned long*) = static_cast<unsigned long>(val);
+            else
+                *va_arg(ap, unsigned int*) = static_cast<unsigned int>(val);
             matched++;
             break;
         }
@@ -81,9 +92,12 @@ int sscanf(const char* str, const char* format, ...) {
             unsigned long long val = strtoull(s, &end, 16);
             if (end == s) goto done;
             s = end;
-            if (length == LEN_LL)     *va_arg(ap, unsigned long long*) = val;
-            else if (length == LEN_L) *va_arg(ap, unsigned long*) = static_cast<unsigned long>(val);
-            else                      *va_arg(ap, unsigned int*) = static_cast<unsigned int>(val);
+            if (length == LEN_LL)
+                *va_arg(ap, unsigned long long*) = val;
+            else if (length == LEN_L)
+                *va_arg(ap, unsigned long*) = static_cast<unsigned long>(val);
+            else
+                *va_arg(ap, unsigned int*) = static_cast<unsigned int>(val);
             matched++;
             break;
         }
@@ -92,15 +106,19 @@ int sscanf(const char* str, const char* format, ...) {
             unsigned long long val = strtoull(s, &end, 8);
             if (end == s) goto done;
             s = end;
-            if (length == LEN_LL)     *va_arg(ap, unsigned long long*) = val;
-            else if (length == LEN_L) *va_arg(ap, unsigned long*) = static_cast<unsigned long>(val);
-            else                      *va_arg(ap, unsigned int*) = static_cast<unsigned int>(val);
+            if (length == LEN_LL)
+                *va_arg(ap, unsigned long long*) = val;
+            else if (length == LEN_L)
+                *va_arg(ap, unsigned long*) = static_cast<unsigned long>(val);
+            else
+                *va_arg(ap, unsigned int*) = static_cast<unsigned int>(val);
             matched++;
             break;
         }
         case 's': {
             char* dst = va_arg(ap, char*);
-            while (*s && !is_space(*s)) *dst++ = *s++;
+            while (*s && !is_space(*s))
+                *dst++ = *s++;
             *dst = '\0';
             matched++;
             break;
@@ -121,8 +139,10 @@ int sscanf(const char* str, const char* format, ...) {
             double val = strtod(s, &end);
             if (end == s) goto done;
             s = end;
-            if (length == LEN_L) *va_arg(ap, double*) = val;
-            else                 *va_arg(ap, float*) = static_cast<float>(val);
+            if (length == LEN_L)
+                *va_arg(ap, double*) = val;
+            else
+                *va_arg(ap, float*) = static_cast<float>(val);
             matched++;
             break;
         }

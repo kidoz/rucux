@@ -26,10 +26,10 @@ public:
 // On amd64: passed in rdi/rsi/rdx/r10 (matching syscall ABI).
 // No memory copy required — data stays in registers through the entire path.
 struct fast_msg {
-    uint64_t type;     // Message type / opcode
-    uint64_t d0;       // Data register 0
-    uint64_t d1;       // Data register 1
-    uint64_t d2;       // Data register 2
+    uint64_t type; // Message type / opcode
+    uint64_t d0;   // Data register 0
+    uint64_t d1;   // Data register 1
+    uint64_t d2;   // Data register 2
 };
 
 // sys_ipc_call: Send a fast message to target_tid, block until reply.

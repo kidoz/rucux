@@ -111,12 +111,10 @@ static uint32_t current_thread_id() noexcept {
 }
 
 void record(uint16_t type, uint16_t event, uint64_t arg0, uint64_t arg1) noexcept {
-    if (!is_enabled())
-        return;
+    if (!is_enabled()) return;
 
     auto* pcpu = kernel::cpu::this_cpu();
-    if (!pcpu || pcpu->cpu_id >= kernel::cpu::MAX_CPUS)
-        return;
+    if (!pcpu || pcpu->cpu_id >= kernel::cpu::MAX_CPUS) return;
 
     trace_cpu_buffer& buffer = g_buffers[pcpu->cpu_id];
     uint64_t seq = buffer.write_pos.fetch_add(1, kernel::relaxed);
@@ -137,15 +135,14 @@ void record(uint16_t type, uint16_t event, uint64_t arg0, uint64_t arg1) noexcep
 }
 
 void record_crash(uint16_t type, uint16_t event, uint64_t arg0, uint64_t arg1) noexcept {
-    if (g_crash_ring.magic != CRASH_RING_MAGIC)
-        return;
+    if (g_crash_ring.magic != CRASH_RING_MAGIC) return;
 
     auto* pcpu = kernel::cpu::this_cpu();
     uint32_t cpu_id = (pcpu && pcpu->cpu_id < kernel::cpu::MAX_CPUS) ? pcpu->cpu_id : 0xFFFFFFFF;
-    
+
     uint32_t seq = g_crash_ring.write_pos.fetch_add(1, kernel::relaxed);
     trace_record& rec = g_crash_ring.slots[seq % CRASH_BUFFER_CAPACITY];
-    
+
     rec.timestamp = clock_now();
     rec.seq_no = seq;
     rec.arg0 = arg0;
@@ -161,17 +158,17 @@ void dump_crash_ring() noexcept {
     if (g_crash_ring.magic != CRASH_RING_MAGIC) {
         return;
     }
-    
+
     uint32_t written = g_crash_ring.write_pos.load(kernel::relaxed);
     if (written == 0) return;
-    
+
     kernel::print("=== CRASH TRACE RING DUMP ===\n");
     uint32_t start = (written > CRASH_BUFFER_CAPACITY) ? (written - CRASH_BUFFER_CAPACITY) : 0;
     for (uint32_t seq = start; seq < written; ++seq) {
         const trace_record& rec = g_crash_ring.slots[seq % CRASH_BUFFER_CAPACITY];
         kernel::print("[%u] CPU %u TID %u TYPE %u EVENT %u ARG0 0x%x ARG1 0x%x\n",
-            static_cast<uint32_t>(rec.timestamp & 0xFFFFFFFF), rec.cpu_id, rec.thread_id,
-            rec.type, rec.event, rec.arg0, rec.arg1);
+                      static_cast<uint32_t>(rec.timestamp & 0xFFFFFFFF), rec.cpu_id, rec.thread_id, rec.type, rec.event,
+                      rec.arg0, rec.arg1);
     }
     kernel::print("=============================\n");
 }
@@ -189,15 +186,13 @@ static void fill_stats(trace_stats& stats) noexcept {
     for (uint32_t cpu = 0; cpu < stats.cpu_count && cpu < kernel::cpu::MAX_CPUS; ++cpu) {
         uint64_t written = g_buffers[cpu].write_pos.load(kernel::acquire);
         stats.records_written += written;
-        if (written > TRACE_BUFFER_CAPACITY)
-            stats.records_overwritten += written - TRACE_BUFFER_CAPACITY;
+        if (written > TRACE_BUFFER_CAPACITY) stats.records_overwritten += written - TRACE_BUFFER_CAPACITY;
         stats.records_available += (written < TRACE_BUFFER_CAPACITY) ? written : TRACE_BUFFER_CAPACITY;
     }
 }
 
 static long snapshot(void* buffer, size_t size) noexcept {
-    if (!buffer || size < sizeof(trace_snapshot_header))
-        return -1;
+    if (!buffer || size < sizeof(trace_snapshot_header)) return -1;
 
     auto* header = static_cast<trace_snapshot_header*>(buffer);
     auto* out = reinterpret_cast<trace_record*>(header + 1);
@@ -214,8 +209,7 @@ static long snapshot(void* buffer, size_t size) noexcept {
         for (uint64_t seq = start; seq < written && out_count < max_records; ++seq) {
             trace_slot& slot = g_buffers[cpu].slots[seq % TRACE_BUFFER_CAPACITY];
             uint64_t committed = __atomic_load_n(&slot.committed_seq, __ATOMIC_ACQUIRE);
-            if (committed != seq + 1)
-                continue;
+            if (committed != seq + 1) continue;
             out[out_count++] = slot.record;
         }
     }
@@ -249,8 +243,7 @@ long sys_trace_ctl(uint32_t op, void* arg0, size_t arg1, uintptr_t arg2) noexcep
     case TRACE_CTL_SNAPSHOT:
         return snapshot(arg0, arg1);
     case TRACE_CTL_STATS:
-        if (!arg0 || arg1 < sizeof(trace_stats))
-            return -1;
+        if (!arg0 || arg1 < sizeof(trace_stats)) return -1;
         fill_stats(*static_cast<trace_stats*>(arg0));
         return 0;
     default:

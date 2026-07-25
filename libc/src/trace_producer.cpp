@@ -138,7 +138,8 @@ int trace_producer_emit(trace_producer_handle* handle, uint16_t event, uint64_t 
     header.wrapped = handle->wrapped;
     header.next_seq = handle->next_seq;
 
-    if (header.write_offset < sizeof(trace_producer_buffer_header) || header.write_offset > TRACE_PRODUCER_BUFFER_BYTES) {
+    if (header.write_offset < sizeof(trace_producer_buffer_header) ||
+        header.write_offset > TRACE_PRODUCER_BUFFER_BYTES) {
         header.write_offset = sizeof(trace_producer_buffer_header);
     }
 

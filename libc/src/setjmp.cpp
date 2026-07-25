@@ -9,18 +9,22 @@ int setjmp(jmp_buf env) {
 }
 
 void longjmp(jmp_buf env, int val) {
-    (void)env; (void)val;
-    while(1);
+    (void)env;
+    (void)val;
+    while (1)
+        ;
 }
 
 int sigsetjmp(sigjmp_buf env, int savesigs) {
-    (void)env; (void)savesigs;
+    (void)env;
+    (void)savesigs;
     return 0;
 }
 
 void siglongjmp(sigjmp_buf env, int val) {
-    (void)env; (void)val;
-    while(1);
+    (void)env;
+    (void)val;
+    while (1)
+        ;
 }
-
 }

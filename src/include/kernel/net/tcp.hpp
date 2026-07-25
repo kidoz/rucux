@@ -14,8 +14,8 @@ struct tcp_header {
     uint16_t dst_port;
     uint32_t seq_num;
     uint32_t ack_num;
-    uint8_t  data_offset; // upper 4 bits = header length in 32-bit words
-    uint8_t  flags;
+    uint8_t data_offset; // upper 4 bits = header length in 32-bit words
+    uint8_t flags;
     uint16_t window;
     uint16_t checksum;
     uint16_t urgent_ptr;
@@ -55,12 +55,12 @@ struct tcp_pcb {
     uint16_t remote_port;
 
     // Sequence numbers
-    uint32_t snd_una;  // Oldest unacknowledged
-    uint32_t snd_nxt;  // Next to send
-    uint32_t snd_wnd;  // Send window
-    uint32_t rcv_nxt;  // Next expected receive seq
-    uint32_t rcv_wnd;  // Receive window
-    uint32_t iss;      // Initial send sequence number
+    uint32_t snd_una; // Oldest unacknowledged
+    uint32_t snd_nxt; // Next to send
+    uint32_t snd_wnd; // Send window
+    uint32_t rcv_nxt; // Next expected receive seq
+    uint32_t rcv_wnd; // Receive window
+    uint32_t iss;     // Initial send sequence number
 
     // Send buffer (data queued for transmission)
     uint8_t* snd_buf;
@@ -76,7 +76,7 @@ struct tcp_pcb {
     // Backlog (for LISTEN sockets)
     tcp_pcb* accept_queue;
     tcp_pcb* accept_tail;
-    tcp_pcb* next_accept;  // Link in accept queue
+    tcp_pcb* next_accept; // Link in accept queue
     int backlog;
     int pending_count;
 

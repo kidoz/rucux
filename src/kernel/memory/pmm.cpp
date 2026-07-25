@@ -81,8 +81,7 @@ void* pmm::alloc_page() noexcept {
     auto* pcpu = cpu::this_cpu();
     auto& cache = g_pcpu_caches[pcpu->cpu_id];
 
-    if (cache.count == 0)
-        cache_refill(cache);
+    if (cache.count == 0) cache_refill(cache);
 
     uintptr_t addr = 0;
     if (cache.count > 0) {
@@ -109,8 +108,7 @@ void pmm::free_page(void* ptr) noexcept {
     auto* pcpu = cpu::this_cpu();
     auto& cache = g_pcpu_caches[pcpu->cpu_id];
 
-    if (cache.count >= PCPU_CACHE_SIZE)
-        cache_drain(cache);
+    if (cache.count >= PCPU_CACHE_SIZE) cache_drain(cache);
 
     cache.pages[cache.count++] = reinterpret_cast<uintptr_t>(ptr);
     kernel::irq_restore(flags);

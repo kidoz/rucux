@@ -38,9 +38,12 @@ void* __builtin_memset(void* s, int c, size_t n);
 }
 #endif
 
-#define FD_ZERO(s) do { __builtin_memset((s), 0, sizeof(fd_set)); } while(0)
-#define FD_SET(d, s)   ((s)->fds_bits[(d)/(8*sizeof(long))] |= (1UL << ((d)%(8*sizeof(long)))))
-#define FD_CLR(d, s)   ((s)->fds_bits[(d)/(8*sizeof(long))] &= ~(1UL << ((d)%(8*sizeof(long)))))
-#define FD_ISSET(d, s) !!((s)->fds_bits[(d)/(8*sizeof(long))] & (1UL << ((d)%(8*sizeof(long)))))
+#define FD_ZERO(s)                                                                                                     \
+    do {                                                                                                               \
+        __builtin_memset((s), 0, sizeof(fd_set));                                                                      \
+    } while (0)
+#define FD_SET(d, s) ((s)->fds_bits[(d) / (8 * sizeof(long))] |= (1UL << ((d) % (8 * sizeof(long)))))
+#define FD_CLR(d, s) ((s)->fds_bits[(d) / (8 * sizeof(long))] &= ~(1UL << ((d) % (8 * sizeof(long)))))
+#define FD_ISSET(d, s) !!((s)->fds_bits[(d) / (8 * sizeof(long))] & (1UL << ((d) % (8 * sizeof(long)))))
 
 #endif // _SYS_TYPES_H

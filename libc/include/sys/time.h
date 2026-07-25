@@ -2,8 +2,8 @@
 #ifndef _SYS_TIME_H
 #define _SYS_TIME_H
 
-#include <time.h>
 #include <sys/select.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,7 +17,7 @@ struct timezone {
 };
 
 int gettimeofday(struct timeval* tv, void* tz);
-int utimes(const char *filename, const struct timeval times[2]);
+int utimes(const char* filename, const struct timeval times[2]);
 
 #ifdef __cplusplus
 }

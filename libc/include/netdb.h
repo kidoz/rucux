@@ -27,17 +27,17 @@ struct addrinfo {
 #define NI_NUMERICHOST 1
 #define NI_NUMERICSERV 2
 
-#define EAI_BADFLAGS    -1
-#define EAI_NONAME      -2
-#define EAI_AGAIN       -3
-#define EAI_FAIL        -4
-#define EAI_FAMILY      -6
-#define EAI_SOCKTYPE    -7
-#define EAI_SERVICE     -8
-#define EAI_MEMORY      -10
-#define EAI_SYSTEM      -11
-#define EAI_OVERFLOW    -12
-#define EAI_NODATA      -13
+#define EAI_BADFLAGS -1
+#define EAI_NONAME -2
+#define EAI_AGAIN -3
+#define EAI_FAIL -4
+#define EAI_FAMILY -6
+#define EAI_SOCKTYPE -7
+#define EAI_SERVICE -8
+#define EAI_MEMORY -10
+#define EAI_SYSTEM -11
+#define EAI_OVERFLOW -12
+#define EAI_NODATA -13
 
 struct hostent {
     char* h_name;
@@ -48,10 +48,10 @@ struct hostent {
 };
 
 struct servent {
-    char *s_name;
-    char **s_aliases;
+    char* s_name;
+    char** s_aliases;
     int s_port;
-    char *s_proto;
+    char* s_proto;
 };
 
 int getaddrinfo(const char* node, const char* service, const struct addrinfo* hints, struct addrinfo** res);
@@ -60,7 +60,7 @@ const char* gai_strerror(int errcode);
 int getnameinfo(const struct sockaddr* sa, socklen_t salen, char* host, socklen_t hostlen, char* serv,
                 socklen_t servlen, int flags);
 struct hostent* gethostbyname(const char* name);
-struct servent *getservbyname(const char *name, const char *proto);
+struct servent* getservbyname(const char* name, const char* proto);
 
 #ifdef __cplusplus
 }

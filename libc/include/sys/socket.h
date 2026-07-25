@@ -11,10 +11,10 @@ extern "C" {
 
 // Types
 #define SOCK_STREAM 1
-#define SOCK_DGRAM  2
+#define SOCK_DGRAM 2
 
 // Protocols
-#define IPPROTO_IP  0
+#define IPPROTO_IP 0
 #define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
 
@@ -56,18 +56,18 @@ struct sockaddr_storage {
 };
 
 #define AF_UNSPEC 0
-#define AF_UNIX   1
-#define AF_LOCAL  1
+#define AF_UNIX 1
+#define AF_LOCAL 1
 #define PF_UNSPEC AF_UNSPEC
-#define PF_UNIX   AF_UNIX
-#define PF_LOCAL  AF_LOCAL
-#define AF_INET  2
+#define PF_UNIX AF_UNIX
+#define PF_LOCAL AF_LOCAL
+#define AF_INET 2
 #define AF_INET6 10
 #define PF_INET AF_INET
 #define PF_INET6 AF_INET6
 
-#define SHUT_RD   0
-#define SHUT_WR   1
+#define SHUT_RD 0
+#define SHUT_WR 1
 #define SHUT_RDWR 2
 
 #define INET_ADDRSTRLEN 16
@@ -89,25 +89,25 @@ extern const struct in6_addr in6addr_any;
 #define IPV6_V6ONLY 26
 #define IPPROTO_IPV6 41
 
-#define MSG_OOB       0x01
-#define MSG_PEEK      0x02
+#define MSG_OOB 0x01
+#define MSG_PEEK 0x02
 #define MSG_DONTROUTE 0x04
 
 int socket(int domain, int type, int protocol);
 int socketpair(int domain, int type, int protocol, int sv[2]);
-int bind(int sockfd, const struct sockaddr *addr, unsigned int addrlen);
+int bind(int sockfd, const struct sockaddr* addr, unsigned int addrlen);
 int listen(int sockfd, int backlog);
-int accept(int sockfd, struct sockaddr *addr, unsigned int *addrlen);
-int connect(int sockfd, const struct sockaddr *addr, unsigned int addrlen);
-ssize_t send(int sockfd, const void *buf, size_t len, int flags);
-ssize_t recv(int sockfd, void *buf, size_t len, int flags);
-ssize_t sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen);
-ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen);
+int accept(int sockfd, struct sockaddr* addr, unsigned int* addrlen);
+int connect(int sockfd, const struct sockaddr* addr, unsigned int addrlen);
+ssize_t send(int sockfd, const void* buf, size_t len, int flags);
+ssize_t recv(int sockfd, void* buf, size_t len, int flags);
+ssize_t sendto(int sockfd, const void* buf, size_t len, int flags, const struct sockaddr* dest_addr, socklen_t addrlen);
+ssize_t recvfrom(int sockfd, void* buf, size_t len, int flags, struct sockaddr* src_addr, socklen_t* addrlen);
 int shutdown(int sockfd, int how);
-int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
-int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen);
-int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
-int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+int setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+int getsockopt(int sockfd, int level, int optname, void* optval, socklen_t* optlen);
+int getsockname(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
+int getpeername(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
 
 #ifdef __cplusplus
 }

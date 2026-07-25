@@ -17,16 +17,16 @@ typedef int fexcept_t;
 #define FE_UPWARD 0
 
 int feclearexcept(int excepts);
-int fegetexceptflag(fexcept_t *flagp, int excepts);
+int fegetexceptflag(fexcept_t* flagp, int excepts);
 int feraiseexcept(int excepts);
-int fesetexceptflag(const fexcept_t *flagp, int excepts);
+int fesetexceptflag(const fexcept_t* flagp, int excepts);
 int fetestexcept(int excepts);
 int fegetround(void);
 int fesetround(int round);
-int fegetenv(fenv_t *envp);
-int feholdexcept(fenv_t *envp);
-int fesetenv(const fenv_t *envp);
-int feupdateenv(const fenv_t *envp);
+int fegetenv(fenv_t* envp);
+int feholdexcept(fenv_t* envp);
+int fesetenv(const fenv_t* envp);
+int feupdateenv(const fenv_t* envp);
 
 #ifdef __cplusplus
 }

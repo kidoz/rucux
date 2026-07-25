@@ -4,10 +4,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <uapi/kernel/trace_producer.h>
 #include <sys/trace.h>
 #include <uapi/kernel/initd.h>
 #include <uapi/kernel/syscalls.h>
+#include <uapi/kernel/trace_producer.h>
 #include <uapi/kernel/traced.h>
 #include <uapi/kernel/traced_export.h>
 #include <unistd.h>
@@ -161,10 +161,7 @@ void handle_session_control(uint32_t sender, uint32_t type) {
         break;
     }
 
-    send_reply(sender,
-               TRACED_MSG_CONTROL_REPLY,
-               rc < 0 ? TRACED_CTL_EFAIL : TRACED_CTL_OK,
-               current_session_meta(),
+    send_reply(sender, TRACED_MSG_CONTROL_REPLY, rc < 0 ? TRACED_CTL_EFAIL : TRACED_CTL_OK, current_session_meta(),
                producer_count());
 }
 
@@ -175,12 +172,8 @@ void handle_info(uint32_t sender) {
         return;
     }
 
-    send_reply(sender,
-               TRACED_MSG_INFO_REPLY,
-               TRACED_CTL_OK,
-               pack_u32_pair(stats.enabled, stats.clock_id),
-               pack_u32_pair(stats.cpu_count, stats.record_capacity_per_cpu),
-               stats.clock_freq_hz);
+    send_reply(sender, TRACED_MSG_INFO_REPLY, TRACED_CTL_OK, pack_u32_pair(stats.enabled, stats.clock_id),
+               pack_u32_pair(stats.cpu_count, stats.record_capacity_per_cpu), stats.clock_freq_hz);
 }
 
 void handle_counters(uint32_t sender) {
@@ -190,20 +183,12 @@ void handle_counters(uint32_t sender) {
         return;
     }
 
-    send_reply(sender,
-               TRACED_MSG_COUNTERS_REPLY,
-               TRACED_CTL_OK,
-               stats.records_written,
-               stats.records_overwritten,
+    send_reply(sender, TRACED_MSG_COUNTERS_REPLY, TRACED_CTL_OK, stats.records_written, stats.records_overwritten,
                stats.records_available);
 }
 
 void handle_get_session(uint32_t sender) {
-    send_reply(sender,
-               TRACED_MSG_SESSION_REPLY,
-               TRACED_CTL_OK,
-               current_session_meta(),
-               producer_count(),
+    send_reply(sender, TRACED_MSG_SESSION_REPLY, TRACED_CTL_OK, current_session_meta(), producer_count(),
                g_last_snapshot_bytes);
 }
 
@@ -231,11 +216,7 @@ void handle_register_producer(uint32_t sender, const message& msg) {
     }
 
     producer->tid = sender;
-    send_reply(sender,
-               TRACED_MSG_PRODUCER_REPLY,
-               TRACED_CTL_OK,
-               producer->id,
-               current_session_meta(),
+    send_reply(sender, TRACED_MSG_PRODUCER_REPLY, TRACED_CTL_OK, producer->id, current_session_meta(),
                producer->category);
 }
 
@@ -372,8 +353,8 @@ void handle_capture_export(uint32_t sender) {
     export_header.total_size += kernel_section.section_size;
     munmap(kernel_buffer, snapshot_size);
 
-    constexpr size_t max_records = (TRACE_PRODUCER_BUFFER_BYTES - sizeof(trace_producer_buffer_header)) /
-                                   sizeof(trace_producer_record);
+    constexpr size_t max_records =
+        (TRACE_PRODUCER_BUFFER_BYTES - sizeof(trace_producer_buffer_header)) / sizeof(trace_producer_record);
     trace_producer_record ordered_records[max_records] = {};
 
     for (auto& producer : g_producers) {
@@ -388,8 +369,7 @@ void handle_capture_export(uint32_t sender) {
 
         trace_producer_buffer_header producer_header = {};
         if (read_all(producer_fd, &producer_header, sizeof(producer_header)) < 0 ||
-            producer_header.magic != TRACE_PRODUCER_MAGIC ||
-            producer_header.version != TRACE_PRODUCER_VERSION) {
+            producer_header.magic != TRACE_PRODUCER_MAGIC || producer_header.version != TRACE_PRODUCER_VERSION) {
             close(producer_fd);
             continue;
         }
@@ -398,8 +378,8 @@ void handle_capture_export(uint32_t sender) {
         if (producer_header.wrapped) {
             available_records = static_cast<uint32_t>(max_records);
         } else if (producer_header.write_offset >= sizeof(trace_producer_buffer_header)) {
-            available_records = static_cast<uint32_t>((producer_header.write_offset - sizeof(trace_producer_buffer_header)) /
-                                                      sizeof(trace_producer_record));
+            available_records = static_cast<uint32_t>(
+                (producer_header.write_offset - sizeof(trace_producer_buffer_header)) / sizeof(trace_producer_record));
         }
         if (available_records > producer_header.record_count) available_records = producer_header.record_count;
         if (available_records == 0) {

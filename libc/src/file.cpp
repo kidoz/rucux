@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
+#include "syscall_impl.h"
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <uapi/kernel/syscalls.h>
 #include <unistd.h>
-#include "syscall_impl.h"
 
 extern "C" {
 
@@ -138,7 +138,10 @@ int fgetc(FILE* stream) {
     }
     unsigned char c;
     ssize_t r = read(f->fd, &c, 1);
-    if (r <= 0) { f->eof_flag = 1; return EOF; }
+    if (r <= 0) {
+        f->eof_flag = 1;
+        return EOF;
+    }
     return c;
 }
 
@@ -151,7 +154,8 @@ int fputc(int c, FILE* stream) {
 int fputs(const char* s, FILE* stream) {
     if (!s || !stream) return EOF;
     size_t len = 0;
-    while (s[len]) len++;
+    while (s[len])
+        len++;
     if (fwrite(s, 1, len, stream) != len) return EOF;
     return 0;
 }
@@ -174,7 +178,8 @@ int ungetc(int c, FILE* stream) {
 }
 
 int rename(const char* oldpath, const char* newpath) {
-    (void)oldpath; (void)newpath;
+    (void)oldpath;
+    (void)newpath;
     return -1; // stub
 }
 
@@ -205,7 +210,8 @@ int mkdir(const char* pathname, mode_t mode) {
 }
 
 int chmod(const char* pathname, mode_t mode) {
-    (void)pathname; (void)mode;
+    (void)pathname;
+    (void)mode;
     return 0; // stub
 }
 

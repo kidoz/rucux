@@ -38,4 +38,3 @@ long sys_power_ctl(uint32_t command) noexcept {
 }
 
 } // namespace kernel::power
-

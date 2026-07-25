@@ -22,10 +22,10 @@ constexpr uint32_t COLORS[16] = {
 };
 
 struct fb_state {
-    uint32_t cols;        // Terminal columns
-    uint32_t rows;        // Terminal rows
-    uint32_t cx, cy;      // Cursor position (character cells, 0-based)
-    uint32_t fg, bg;      // Current colors (RGB)
+    uint32_t cols;   // Terminal columns
+    uint32_t rows;   // Terminal rows
+    uint32_t cx, cy; // Cursor position (character cells, 0-based)
+    uint32_t fg, bg; // Current colors (RGB)
     bool bold;
     bool reverse;
     bool cursor_visible;
@@ -33,7 +33,7 @@ struct fb_state {
     // ANSI parser state
     bool in_escape;
     bool in_csi;
-    bool got_question;    // CSI ? prefix (private modes)
+    bool got_question; // CSI ? prefix (private modes)
     int params[MAX_PARAMS];
     int nparam;
 
@@ -42,7 +42,7 @@ struct fb_state {
         char ch;
         uint32_t fg, bg;
     };
-    cell* screen;         // cols * rows cells (allocated after framebuffer init)
+    cell* screen; // cols * rows cells (allocated after framebuffer init)
 };
 
 fb_state g_fb = {};
@@ -99,12 +99,13 @@ void scroll_up() noexcept {
     }
     // Move rows 1..N-1 to 0..N-2
     size_t line_cells = g_fb.cols;
-    lib::memmove(g_fb.screen, g_fb.screen + line_cells,
-                 line_cells * (g_fb.rows - 1) * sizeof(fb_state::cell));
+    lib::memmove(g_fb.screen, g_fb.screen + line_cells, line_cells * (g_fb.rows - 1) * sizeof(fb_state::cell));
     // Clear last row
     for (uint32_t c = 0; c < g_fb.cols; ++c) {
         auto& cell = g_fb.screen[(g_fb.rows - 1) * g_fb.cols + c];
-        cell.ch = ' '; cell.fg = g_fb.fg; cell.bg = g_fb.bg;
+        cell.ch = ' ';
+        cell.fg = g_fb.fg;
+        cell.bg = g_fb.bg;
     }
     // Redraw entire screen (could be optimized with framebuffer scroll later)
     for (uint32_t r = 0; r < g_fb.rows; ++r)
@@ -116,11 +117,12 @@ void scroll_up() noexcept {
 void scroll_down() noexcept {
     if (!g_fb.screen) return;
     size_t line_cells = g_fb.cols;
-    lib::memmove(g_fb.screen + line_cells, g_fb.screen,
-                 line_cells * (g_fb.rows - 1) * sizeof(fb_state::cell));
+    lib::memmove(g_fb.screen + line_cells, g_fb.screen, line_cells * (g_fb.rows - 1) * sizeof(fb_state::cell));
     for (uint32_t c = 0; c < g_fb.cols; ++c) {
         auto& cell = g_fb.screen[c];
-        cell.ch = ' '; cell.fg = g_fb.fg; cell.bg = g_fb.bg;
+        cell.ch = ' ';
+        cell.fg = g_fb.fg;
+        cell.bg = g_fb.bg;
     }
     for (uint32_t r = 0; r < g_fb.rows; ++r)
         for (uint32_t c = 0; c < g_fb.cols; ++c)
@@ -138,21 +140,41 @@ void reset_parser() noexcept {
     g_fb.in_csi = false;
     g_fb.got_question = false;
     g_fb.nparam = 0;
-    for (auto& p : g_fb.params) p = 0;
+    for (auto& p : g_fb.params)
+        p = 0;
 }
 
 void apply_sgr(int code) noexcept {
-    if (code == 0)       { g_fb.fg = COLORS[7]; g_fb.bg = COLORS[0]; g_fb.bold = false; g_fb.reverse = false; }
-    else if (code == 1)  { g_fb.bold = true; }
-    else if (code == 2)  { g_fb.bold = false; } // dim
-    else if (code == 7)  { g_fb.reverse = true; }
-    else if (code == 27) { g_fb.reverse = false; }
-    else if (code >= 30 && code <= 37)   { g_fb.fg = COLORS[code - 30 + (g_fb.bold ? 8 : 0)]; }
-    else if (code == 39)                 { g_fb.fg = COLORS[7]; } // default fg
-    else if (code >= 40 && code <= 47)   { g_fb.bg = COLORS[code - 40]; }
-    else if (code == 49)                 { g_fb.bg = COLORS[0]; } // default bg
-    else if (code >= 90 && code <= 97)   { g_fb.fg = COLORS[code - 90 + 8]; } // bright fg
-    else if (code >= 100 && code <= 107) { g_fb.bg = COLORS[code - 100 + 8]; } // bright bg
+    if (code == 0) {
+        g_fb.fg = COLORS[7];
+        g_fb.bg = COLORS[0];
+        g_fb.bold = false;
+        g_fb.reverse = false;
+    } else if (code == 1) {
+        g_fb.bold = true;
+    } else if (code == 2) {
+        g_fb.bold = false;
+    } // dim
+    else if (code == 7) {
+        g_fb.reverse = true;
+    } else if (code == 27) {
+        g_fb.reverse = false;
+    } else if (code >= 30 && code <= 37) {
+        g_fb.fg = COLORS[code - 30 + (g_fb.bold ? 8 : 0)];
+    } else if (code == 39) {
+        g_fb.fg = COLORS[7];
+    } // default fg
+    else if (code >= 40 && code <= 47) {
+        g_fb.bg = COLORS[code - 40];
+    } else if (code == 49) {
+        g_fb.bg = COLORS[0];
+    } // default bg
+    else if (code >= 90 && code <= 97) {
+        g_fb.fg = COLORS[code - 90 + 8];
+    } // bright fg
+    else if (code >= 100 && code <= 107) {
+        g_fb.bg = COLORS[code - 100 + 8];
+    } // bright bg
 }
 
 void finish_csi(char cmd) noexcept {
@@ -181,41 +203,55 @@ void finish_csi(char cmd) noexcept {
         if (g_fb.cy >= g_fb.rows) g_fb.cy = g_fb.rows - 1;
         if (g_fb.cx >= g_fb.cols) g_fb.cx = g_fb.cols - 1;
         break;
-    case 'J': // Erase in Display
+    case 'J':                // Erase in Display
         if (param(0) == 0) { // Erase from cursor to end
-            for (uint32_t c = g_fb.cx; c < g_fb.cols; ++c) clear_cell(c, g_fb.cy);
+            for (uint32_t c = g_fb.cx; c < g_fb.cols; ++c)
+                clear_cell(c, g_fb.cy);
             for (uint32_t r = g_fb.cy + 1; r < g_fb.rows; ++r)
-                for (uint32_t c = 0; c < g_fb.cols; ++c) clear_cell(c, r);
+                for (uint32_t c = 0; c < g_fb.cols; ++c)
+                    clear_cell(c, r);
         } else if (param(0) == 1) { // Erase from start to cursor
             for (uint32_t r = 0; r < g_fb.cy; ++r)
-                for (uint32_t c = 0; c < g_fb.cols; ++c) clear_cell(c, r);
-            for (uint32_t c = 0; c <= g_fb.cx; ++c) clear_cell(c, g_fb.cy);
+                for (uint32_t c = 0; c < g_fb.cols; ++c)
+                    clear_cell(c, r);
+            for (uint32_t c = 0; c <= g_fb.cx; ++c)
+                clear_cell(c, g_fb.cy);
         } else if (param(0) == 2) { // Erase entire screen
             for (uint32_t r = 0; r < g_fb.rows; ++r)
-                for (uint32_t c = 0; c < g_fb.cols; ++c) clear_cell(c, r);
+                for (uint32_t c = 0; c < g_fb.cols; ++c)
+                    clear_cell(c, r);
             g_fb.cx = g_fb.cy = 0;
         }
         break;
-    case 'K': // Erase in Line
+    case 'K':                // Erase in Line
         if (param(0) == 0) { // Erase from cursor to end of line
-            for (uint32_t c = g_fb.cx; c < g_fb.cols; ++c) clear_cell(c, g_fb.cy);
+            for (uint32_t c = g_fb.cx; c < g_fb.cols; ++c)
+                clear_cell(c, g_fb.cy);
         } else if (param(0) == 1) { // Erase from start to cursor
-            for (uint32_t c = 0; c <= g_fb.cx; ++c) clear_cell(c, g_fb.cy);
+            for (uint32_t c = 0; c <= g_fb.cx; ++c)
+                clear_cell(c, g_fb.cy);
         } else if (param(0) == 2) { // Erase entire line
-            for (uint32_t c = 0; c < g_fb.cols; ++c) clear_cell(c, g_fb.cy);
+            for (uint32_t c = 0; c < g_fb.cols; ++c)
+                clear_cell(c, g_fb.cy);
         }
         break;
     case 'L': // Insert N lines (scroll down from cursor)
         n = param(0, 1);
-        for (uint32_t i = 0; i < n; ++i) scroll_down();
+        for (uint32_t i = 0; i < n; ++i)
+            scroll_down();
         break;
     case 'M': // Delete N lines (scroll up from cursor)
         n = param(0, 1);
-        for (uint32_t i = 0; i < n; ++i) scroll_up();
+        for (uint32_t i = 0; i < n; ++i)
+            scroll_up();
         break;
     case 'm': // SGR (Select Graphic Rendition)
-        if (g_fb.nparam == 0) { apply_sgr(0); }
-        else { for (int i = 0; i < g_fb.nparam; ++i) apply_sgr(g_fb.params[i]); }
+        if (g_fb.nparam == 0) {
+            apply_sgr(0);
+        } else {
+            for (int i = 0; i < g_fb.nparam; ++i)
+                apply_sgr(g_fb.params[i]);
+        }
         break;
     case 'h': // Set Mode
         if (g_fb.got_question && param(0) == 25) g_fb.cursor_visible = true;
@@ -233,11 +269,13 @@ void finish_csi(char cmd) noexcept {
         break;
     case 'S': // Scroll Up N lines
         n = param(0, 1);
-        for (uint32_t i = 0; i < n; ++i) scroll_up();
+        for (uint32_t i = 0; i < n; ++i)
+            scroll_up();
         break;
     case 'T': // Scroll Down N lines
         n = param(0, 1);
-        for (uint32_t i = 0; i < n; ++i) scroll_down();
+        for (uint32_t i = 0; i < n; ++i)
+            scroll_down();
         break;
     case 'X': // Erase N characters
         n = param(0, 1);
@@ -251,7 +289,8 @@ void finish_csi(char cmd) noexcept {
                 g_fb.screen[g_fb.cy * g_fb.cols + c] = g_fb.screen[g_fb.cy * g_fb.cols + c + n];
                 redraw_cell(c, g_fb.cy);
             }
-            for (uint32_t c = g_fb.cols - n; c < g_fb.cols; ++c) clear_cell(c, g_fb.cy);
+            for (uint32_t c = g_fb.cols - n; c < g_fb.cols; ++c)
+                clear_cell(c, g_fb.cy);
         }
         break;
     case '@': // Insert N blank characters (shift right)
@@ -261,7 +300,8 @@ void finish_csi(char cmd) noexcept {
                 g_fb.screen[g_fb.cy * g_fb.cols + c] = g_fb.screen[g_fb.cy * g_fb.cols + c - n];
                 redraw_cell(c, g_fb.cy);
             }
-            for (uint32_t c = g_fb.cx; c < g_fb.cx + n && c < g_fb.cols; ++c) clear_cell(c, g_fb.cy);
+            for (uint32_t c = g_fb.cx; c < g_fb.cx + n && c < g_fb.cols; ++c)
+                clear_cell(c, g_fb.cy);
         }
         break;
     default:
@@ -292,7 +332,8 @@ void framebuffer_sink_putc(char c) noexcept {
             g_fb.in_csi = true;
             g_fb.nparam = 0;
             g_fb.got_question = false;
-            for (auto& p : g_fb.params) p = 0;
+            for (auto& p : g_fb.params)
+                p = 0;
         } else {
             reset_parser();
         }

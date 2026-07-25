@@ -20,7 +20,7 @@ static int vma_find_cmp(const kernel::rb_node* key, const kernel::rb_node* node)
     auto* k = kernel::container_of(const_cast<kernel::rb_node*>(key), &vma::tree_node);
     auto* n = kernel::container_of(const_cast<kernel::rb_node*>(node), &vma::tree_node);
     if (k->start < n->start) return -1;
-    if (k->start >= n->end)  return 1;
+    if (k->start >= n->end) return 1;
     return 0; // k->start is within [n->start, n->end)
 }
 
@@ -28,8 +28,7 @@ void vma_manager::init() noexcept {
     tree_ = kernel::rb_tree{};
 }
 
-vma* vma_manager::insert(uintptr_t start, uintptr_t end, uint32_t prot,
-                          uint32_t flags, int fd, long offset) noexcept {
+vma* vma_manager::insert(uintptr_t start, uintptr_t end, uint32_t prot, uint32_t flags, int fd, long offset) noexcept {
     auto* v = new vma();
     if (!v) return nullptr;
 

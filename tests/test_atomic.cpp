@@ -4,8 +4,8 @@
 // We directly include the kernel header — it uses __atomic builtins
 // which work on host compilers (GCC/Clang) without any kernel runtime.
 
-#include "test_harness.hpp"
 #include "../src/include/kernel/sync/atomic.hpp"
+#include "test_harness.hpp"
 
 TEST(atomic_default_init) {
     kernel::atomic<int> a;

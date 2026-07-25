@@ -6,8 +6,8 @@
 #include <kernel/sync/spinlock.hpp>
 #include <kernel/trace.hpp>
 #include <kernel/vfs/vfs.hpp>
-#include <lib/string.hpp>
 #include <knew.hpp>
+#include <lib/string.hpp>
 
 namespace kernel::log {
 namespace {
@@ -77,12 +77,8 @@ static size_t copy_bounded(char* dst, size_t dst_size, const char* src, size_t s
     return len;
 }
 
-static void append_record_locked(uint32_t source,
-                                 uint32_t priority,
-                                 const char* ident,
-                                 size_t ident_length,
-                                 const char* message,
-                                 size_t message_length) noexcept {
+static void append_record_locked(uint32_t source, uint32_t priority, const char* ident, size_t ident_length,
+                                 const char* message, size_t message_length) noexcept {
     uint64_t sequence = g_records_written++;
     log_record& record = g_records[sequence % LOG_RING_CAPACITY];
 
@@ -93,15 +89,12 @@ static void append_record_locked(uint32_t source,
     record.source = source;
     record.priority = priority;
     record.ident_length = static_cast<uint16_t>(copy_bounded(record.ident, sizeof(record.ident), ident, ident_length));
-    record.message_length = static_cast<uint16_t>(copy_bounded(record.message, sizeof(record.message), message, message_length));
+    record.message_length =
+        static_cast<uint16_t>(copy_bounded(record.message, sizeof(record.message), message, message_length));
 }
 
-static void append_record(uint32_t source,
-                          uint32_t priority,
-                          const char* ident,
-                          size_t ident_length,
-                          const char* message,
-                          size_t message_length) noexcept {
+static void append_record(uint32_t source, uint32_t priority, const char* ident, size_t ident_length,
+                          const char* message, size_t message_length) noexcept {
     if (!g_initialized || !message) {
         return;
     }
@@ -115,12 +108,7 @@ static void flush_console_line_locked() noexcept {
         return;
     }
 
-    append_record_locked(RUCUX_LOG_SOURCE_KERNEL,
-                         RUCUX_LOG_INFO,
-                         "kernel",
-                         6,
-                         g_console_line,
-                         g_console_line_length);
+    append_record_locked(RUCUX_LOG_SOURCE_KERNEL, RUCUX_LOG_INFO, "kernel", 6, g_console_line, g_console_line_length);
     g_console_line_length = 0;
     g_console_line[0] = '\0';
 }
@@ -189,11 +177,8 @@ static size_t format_record(const log_record& record, char* buffer, size_t capac
     return length;
 }
 
-static size_t copy_records_locked(uint64_t start_sequence,
-                                  char* buffer,
-                                  size_t buffer_size,
-                                  uint64_t* next_sequence_out,
-                                  uint64_t* dropped_records_out) noexcept {
+static size_t copy_records_locked(uint64_t start_sequence, char* buffer, size_t buffer_size,
+                                  uint64_t* next_sequence_out, uint64_t* dropped_records_out) noexcept {
     if (next_sequence_out) {
         *next_sequence_out = start_sequence;
     }
@@ -250,7 +235,8 @@ static size_t kmsg_read(kernel::vfs::vfs_node*, size_t offset, size_t size, void
 
     irq_lock_guard guard(g_log_lock);
 
-    for (uint64_t sequence = oldest_visible_sequence_locked(); sequence < g_records_written && copied < size; ++sequence) {
+    for (uint64_t sequence = oldest_visible_sequence_locked(); sequence < g_records_written && copied < size;
+         ++sequence) {
         const log_record& record = g_records[sequence % LOG_RING_CAPACITY];
         char line[384];
         size_t line_length = format_record(record, line, sizeof(line));
@@ -370,11 +356,7 @@ long sys_log_ctl(uint32_t op, void* arg0, size_t arg1, uintptr_t arg2) noexcept 
         if (!request->message) {
             return -1;
         }
-        append_record(RUCUX_LOG_SOURCE_USER,
-                      request->priority,
-                      request->ident,
-                      request->ident_length,
-                      request->message,
+        append_record(RUCUX_LOG_SOURCE_USER, request->priority, request->ident, request->ident_length, request->message,
                       request->message_length);
         return 0;
     }
@@ -393,7 +375,8 @@ long sys_log_ctl(uint32_t op, void* arg0, size_t arg1, uintptr_t arg2) noexcept 
         stats->record_capacity = LOG_RING_CAPACITY;
         stats->records_written = g_records_written;
         stats->records_visible = (g_records_written < LOG_RING_CAPACITY) ? g_records_written : LOG_RING_CAPACITY;
-        stats->records_overwritten = (g_records_written > LOG_RING_CAPACITY) ? (g_records_written - LOG_RING_CAPACITY) : 0;
+        stats->records_overwritten =
+            (g_records_written > LOG_RING_CAPACITY) ? (g_records_written - LOG_RING_CAPACITY) : 0;
         return 0;
     }
     case RUCUX_LOG_CTL_READ: {
@@ -416,11 +399,8 @@ long sys_log_ctl(uint32_t op, void* arg0, size_t arg1, uintptr_t arg2) noexcept 
         size_t copied = 0;
         {
             irq_lock_guard guard(g_log_lock);
-            copied = copy_records_locked(request->start_sequence,
-                                         scratch,
-                                         request->buffer_size,
-                                         &request->next_sequence,
-                                         &request->dropped_records);
+            copied = copy_records_locked(request->start_sequence, scratch, request->buffer_size,
+                                         &request->next_sequence, &request->dropped_records);
             request->bytes_written = static_cast<uint32_t>(copied);
             request->reserved = 0;
         }

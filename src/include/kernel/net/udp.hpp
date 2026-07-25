@@ -45,10 +45,8 @@ udp_pcb* udp_new() noexcept;
 void udp_free(udp_pcb* pcb) noexcept;
 int udp_bind(udp_pcb* pcb, uint32_t addr, uint16_t port) noexcept;
 int udp_connect(udp_pcb* pcb, uint32_t addr, uint16_t port) noexcept;
-long udp_sendto(udp_pcb* pcb, const void* data, size_t len,
-                uint32_t dst_ip, uint16_t dst_port) noexcept;
-long udp_recvfrom(udp_pcb* pcb, void* data, size_t len,
-                  uint32_t* src_ip, uint16_t* src_port) noexcept;
+long udp_sendto(udp_pcb* pcb, const void* data, size_t len, uint32_t dst_ip, uint16_t dst_port) noexcept;
+long udp_recvfrom(udp_pcb* pcb, void* data, size_t len, uint32_t* src_ip, uint16_t* src_port) noexcept;
 int udp_poll_events(udp_pcb* pcb) noexcept;
 
 } // namespace kernel::net

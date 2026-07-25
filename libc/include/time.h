@@ -44,7 +44,7 @@ time_t mktime(struct tm* tm);
 size_t strftime(char* s, size_t max, const char* format, const struct tm* tm);
 
 #include <locale.h>
-size_t strftime_l(char *s, size_t max, const char *format, const struct tm *tm, locale_t loc);
+size_t strftime_l(char* s, size_t max, const char* format, const struct tm* tm, locale_t loc);
 
 clock_t clock(void);
 double difftime(time_t time1, time_t time0);

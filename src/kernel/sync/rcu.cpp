@@ -37,8 +37,7 @@ void note_quiescent_state() noexcept {
 static bool all_cpus_passed(uint64_t gp) noexcept {
     uint32_t ncpus = cpu::g_cpu_count.load(relaxed);
     for (uint32_t i = 0; i < ncpus; ++i) {
-        if (g_cpu_qs[i].load(acquire) < gp)
-            return false;
+        if (g_cpu_qs[i].load(acquire) < gp) return false;
     }
     return true;
 }

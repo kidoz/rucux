@@ -132,7 +132,7 @@ static size_t tty_read(vfs_node* node, size_t offset, size_t size, void* buffer)
         // Case 3: VMIN > 0, VTIME > 0 → block until VMIN chars or timeout
         // Case 4: VMIN = 0, VTIME = 0 → return immediately with whatever is available
 
-        unsigned int vmin = g_tty.term.c_cc[6];  // VMIN index = 6
+        unsigned int vmin = g_tty.term.c_cc[6]; // VMIN index = 6
         // unsigned int vtime = g_tty.term.c_cc[5]; // VTIME index = 5 (TODO: timer-based)
 
         if (vmin == 0) {
@@ -153,8 +153,7 @@ static size_t tty_read(vfs_node* node, size_t offset, size_t size, void* buffer)
         }
 
         // Decrement lines_available if we consumed any (for poll readiness tracking)
-        if (bytes_read > 0 && g_tty.lines_available > 0)
-            g_tty.lines_available--;
+        if (bytes_read > 0 && g_tty.lines_available > 0) g_tty.lines_available--;
     }
 
     return bytes_read;

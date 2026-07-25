@@ -2,8 +2,8 @@
 #ifndef _LANGINFO_H
 #define _LANGINFO_H
 
-#include <nl_types.h>
 #include <locale.h>
+#include <nl_types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -65,8 +65,8 @@ extern "C" {
 #define NOEXPR 54
 #define CRNCYSTR 55
 
-char *nl_langinfo(nl_item item);
-char *nl_langinfo_l(nl_item item, locale_t loc);
+char* nl_langinfo(nl_item item);
+char* nl_langinfo_l(nl_item item, locale_t loc);
 
 #ifdef __cplusplus
 }

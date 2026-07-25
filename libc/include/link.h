@@ -2,8 +2,8 @@
 #ifndef _LINK_H
 #define _LINK_H
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,12 +28,12 @@ typedef struct {
 
 struct dl_phdr_info {
     Elf_Addr dlpi_addr;
-    const char *dlpi_name;
-    const Elf_Phdr *dlpi_phdr;
+    const char* dlpi_name;
+    const Elf_Phdr* dlpi_phdr;
     Elf_Half dlpi_phnum;
 };
 
-static inline int dl_iterate_phdr(int (*callback) (struct dl_phdr_info *info, size_t size, void *data), void *data) {
+static inline int dl_iterate_phdr(int (*callback)(struct dl_phdr_info* info, size_t size, void* data), void* data) {
     (void)callback;
     (void)data;
     return 0;

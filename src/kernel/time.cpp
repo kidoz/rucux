@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-#include <kernel/time.hpp>
-#include <kernel/scheduler/scheduler.hpp>
 #include <kernel/print.hpp>
+#include <kernel/scheduler/scheduler.hpp>
+#include <kernel/time.hpp>
 
 namespace kernel {
 
@@ -43,7 +43,7 @@ int time_manager::sys_gettimeofday(timeval* tv, void* tz) noexcept {
 
 int time_manager::sys_nanosleep(const timespec* req, timespec* rem) noexcept {
     if (!req) return -1;
-    
+
     // Very naive sleep implementation for now
     uint64_t sleep_ticks = (req->tv_sec * TICK_RATE_HZ) + (req->tv_nsec / NANOS_PER_TICK);
     uint64_t wake_tick = g_ticks + sleep_ticks;

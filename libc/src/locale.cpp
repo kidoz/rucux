@@ -4,8 +4,9 @@
 
 extern "C" {
 
-char *setlocale(int category, const char *locale) {
-    (void)category; (void)locale;
+char* setlocale(int category, const char* locale) {
+    (void)category;
+    (void)locale;
     return (char*)"C";
 }
 
@@ -35,8 +36,7 @@ static struct lconv g_lconv = {
     127,        // int_p_sign_posn
     127         // int_n_sign_posn
 };
-struct lconv *localeconv(void) {
+struct lconv* localeconv(void) {
     return &g_lconv;
 }
-
 }

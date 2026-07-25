@@ -7,4 +7,3 @@ void reboot() noexcept;
 void power_off() noexcept;
 
 } // namespace arch::armv7::power
-

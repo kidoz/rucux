@@ -20,11 +20,14 @@ extern "C" {
 #define FTW_SKIP_SUBTREE 2
 #define FTW_SKIP_SIBLINGS 3
 struct stat;
-typedef int (*__ftw_func_t)(const char *, const struct stat *, int);
-typedef int (*__nftw_func_t)(const char *, const struct stat *, int, struct FTW *);
-struct FTW { int base; int level; };
-int ftw(const char *dirpath, __ftw_func_t fn, int nopenfd);
-int nftw(const char *dirpath, __nftw_func_t fn, int nopenfd, int flags);
+typedef int (*__ftw_func_t)(const char*, const struct stat*, int);
+typedef int (*__nftw_func_t)(const char*, const struct stat*, int, struct FTW*);
+struct FTW {
+    int base;
+    int level;
+};
+int ftw(const char* dirpath, __ftw_func_t fn, int nopenfd);
+int nftw(const char* dirpath, __nftw_func_t fn, int nopenfd, int flags);
 #ifdef __cplusplus
 }
 #endif

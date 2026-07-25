@@ -18,8 +18,12 @@ static netif* g_loopback = nullptr;
 void netif::enqueue_tx(netbuf* buf) noexcept {
     uintptr_t flags = tx_lock.lock();
     buf->next = nullptr;
-    if (!tx_head) { tx_head = tx_tail = buf; }
-    else { tx_tail->next = buf; tx_tail = buf; }
+    if (!tx_head) {
+        tx_head = tx_tail = buf;
+    } else {
+        tx_tail->next = buf;
+        tx_tail = buf;
+    }
     tx_lock.unlock(flags);
 }
 
@@ -39,12 +43,8 @@ void netif_register(netif* iface) noexcept {
     iface->next_iface = g_iface_list;
     iface->tx_head = iface->tx_tail = nullptr;
     g_iface_list = iface;
-    kernel::print("NET: registered interface '{}' IP={}.{}.{}.{}\n",
-                  iface->name,
-                  (iface->ip.addr >> 0) & 0xFF,
-                  (iface->ip.addr >> 8) & 0xFF,
-                  (iface->ip.addr >> 16) & 0xFF,
-                  (iface->ip.addr >> 24) & 0xFF);
+    kernel::print("NET: registered interface '{}' IP={}.{}.{}.{}\n", iface->name, (iface->ip.addr >> 0) & 0xFF,
+                  (iface->ip.addr >> 8) & 0xFF, (iface->ip.addr >> 16) & 0xFF, (iface->ip.addr >> 24) & 0xFF);
 }
 
 netif* netif_default() noexcept {
@@ -62,7 +62,9 @@ netif* netif_find(const char* name) noexcept {
     return nullptr;
 }
 
-netif* netif_loopback() noexcept { return g_loopback; }
+netif* netif_loopback() noexcept {
+    return g_loopback;
+}
 
 // ─── Loopback interface ────────────────────────────────────────────────────
 
@@ -93,7 +95,7 @@ void net_init() noexcept {
     // Create loopback interface
     g_lo_iface.name = "lo";
     lib::memset(g_lo_iface.mac.bytes, 0, 6);
-    g_lo_iface.ip.addr = 0x0100007F;   // 127.0.0.1 in network byte order
+    g_lo_iface.ip.addr = 0x0100007F;    // 127.0.0.1 in network byte order
     g_lo_iface.ip.netmask = 0x000000FF; // 255.0.0.0
     g_lo_iface.ip.gateway = 0;
     g_lo_iface.mtu = 65535;

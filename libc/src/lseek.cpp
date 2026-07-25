@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-#include <unistd.h>
-#include <uapi/kernel/syscalls.h>
 #include "syscall_impl.h"
+#include <uapi/kernel/syscalls.h>
+#include <unistd.h>
 
 extern "C" {
 

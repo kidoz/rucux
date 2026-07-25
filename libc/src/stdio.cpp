@@ -23,7 +23,8 @@ int printf(const char* format, ...) {
 int puts(const char* s) {
     if (!s) return -1;
     size_t len = 0;
-    while(s[len]) len++;
+    while (s[len])
+        len++;
     write(1, s, len);
     write(1, "\n", 1);
     return 1;
@@ -64,13 +65,16 @@ int vfprintf(FILE* stream, const char* format, va_list ap) {
     return ret;
 }
 
-int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
-    (void)stream; (void)buf; (void)mode; (void)size;
+int setvbuf(FILE* stream, char* buf, int mode, size_t size) {
+    (void)stream;
+    (void)buf;
+    (void)mode;
+    (void)size;
     return 0; // stub
 }
 
 void setbuf(FILE* stream, char* buf) {
-    (void)stream; (void)buf;
+    (void)stream;
+    (void)buf;
 }
-
 }

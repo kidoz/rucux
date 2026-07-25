@@ -45,8 +45,7 @@ void gic_distributor::init(uintptr_t base) noexcept {
     // Enable distributor
     write(gicd_reg::CTLR, 1);
 
-    kernel::print("GIC Distributor: {} IRQs, base=0x{x}\n",
-                  num_irqs, reinterpret_cast<void*>(base));
+    kernel::print("GIC Distributor: {} IRQs, base=0x{x}\n", num_irqs, reinterpret_cast<void*>(base));
 }
 
 void gic_distributor::enable_irq(uint32_t irq) noexcept {
@@ -71,8 +70,7 @@ void gic_distributor::set_target(uint32_t irq, uint8_t cpu_mask) noexcept {
 
 void gic_distributor::send_sgi(uint8_t target_cpu, uint8_t sgi_id) noexcept {
     // SGIR: TargetListFilter=0 (use target list), CPUTargetList in bits [23:16], INTID in [3:0]
-    uint32_t val = (static_cast<uint32_t>(1 << target_cpu) << 16) |
-                   (sgi_id & 0x0F);
+    uint32_t val = (static_cast<uint32_t>(1 << target_cpu) << 16) | (sgi_id & 0x0F);
     write(gicd_reg::SGIR, val);
 }
 

@@ -68,7 +68,7 @@ retry_alloc:
                 new_block->size = current->size - size - sizeof(block_header);
                 new_block->is_free = true;
                 new_block->magic = HEAP_MAGIC;
-                
+
                 new_block->prev_phys = current;
                 new_block->next_phys = current->next_phys;
                 if (new_block->next_phys) {

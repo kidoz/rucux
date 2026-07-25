@@ -9,8 +9,8 @@ using credentials = rucux_credentials;
 
 constexpr uint32_t ROOT_UID = 0;
 constexpr uint32_t ROOT_GID = 0;
-constexpr uint32_t ROOT_CAPABILITIES = RUCUX_CAP_SPAWN_AS | RUCUX_CAP_DISPLAY_ADMIN |
-                                       RUCUX_CAP_INPUT_ADMIN | RUCUX_CAP_SESSION_ADMIN | RUCUX_CAP_POWER;
+constexpr uint32_t ROOT_CAPABILITIES =
+    RUCUX_CAP_SPAWN_AS | RUCUX_CAP_DISPLAY_ADMIN | RUCUX_CAP_INPUT_ADMIN | RUCUX_CAP_SESSION_ADMIN | RUCUX_CAP_POWER;
 
 credentials root_credentials(uint32_t sid = 0, uint32_t pgid = 0) noexcept;
 

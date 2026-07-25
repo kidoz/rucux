@@ -18,12 +18,12 @@
 #include <arch/amd64/smp.hpp>
 #include <arch/amd64/syscall.hpp>
 #include <kernel/ipc/ipc.hpp>
-#include <kernel/net/netif.hpp>
-#include <kernel/net/socket.hpp>
-#include <kernel/memory/slab.hpp>
 #include <kernel/memory/heap.hpp>
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/slab.hpp>
 #include <kernel/memory/vmm.hpp>
+#include <kernel/net/netif.hpp>
+#include <kernel/net/socket.hpp>
 #include <kernel/pci.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/vfs/ata.hpp>
@@ -31,8 +31,8 @@
 #include <kernel/vfs/ramfs.hpp>
 #include <kernel/vfs/tty.hpp>
 #include <kernel/vfs/vfs.hpp>
-#include <lib/string.hpp>
 #include <knew.hpp>
+#include <lib/string.hpp>
 
 // Verification of type_traits
 static_assert(lib::is_same_v<lib::int32_t, int>);
@@ -298,9 +298,8 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     bool rsdp_valid = false;
     if (info->acpi_rsdp && info->acpi_rsdp < 0x100000000ULL) {
         auto* rsdp_sig = reinterpret_cast<const char*>(static_cast<uintptr_t>(info->acpi_rsdp));
-        rsdp_valid = (rsdp_sig[0] == 'R' && rsdp_sig[1] == 'S' && rsdp_sig[2] == 'D' &&
-                      rsdp_sig[3] == ' ' && rsdp_sig[4] == 'P' && rsdp_sig[5] == 'T' &&
-                      rsdp_sig[6] == 'R' && rsdp_sig[7] == ' ');
+        rsdp_valid = (rsdp_sig[0] == 'R' && rsdp_sig[1] == 'S' && rsdp_sig[2] == 'D' && rsdp_sig[3] == ' ' &&
+                      rsdp_sig[4] == 'P' && rsdp_sig[5] == 'T' && rsdp_sig[6] == 'R' && rsdp_sig[7] == ' ');
     }
     if (rsdp_valid) {
         arch::amd64::acpi::madt_info madt{};

@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include <sys/trace_producer.h>
 #include <uapi/kernel/initd.h>
-#include <uapi/kernel/trace_producer.h>
 #include <uapi/kernel/syscalls.h>
+#include <uapi/kernel/trace_producer.h>
 #include <unistd.h>
 
 extern "C" {

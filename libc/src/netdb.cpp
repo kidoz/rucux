@@ -2,9 +2,9 @@
 // DNS resolver: sends UDP queries to resolve hostnames via getaddrinfo.
 // Supports A records (IPv4). Default DNS server: 8.8.8.8:53.
 #include <netdb.h>
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -15,11 +15,20 @@ static int parse_ipv4(const char* str, uint32_t* ip) {
     int field = 0, val = 0;
     const char* p = str;
     while (*p) {
-        if (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); }
-        else if (*p == '.') {
-            if (field == 0) a = val; else if (field == 1) b = val; else if (field == 2) c = val;
-            val = 0; field++;
-        } else { return 0; }
+        if (*p >= '0' && *p <= '9') {
+            val = val * 10 + (*p - '0');
+        } else if (*p == '.') {
+            if (field == 0)
+                a = val;
+            else if (field == 1)
+                b = val;
+            else if (field == 2)
+                c = val;
+            val = 0;
+            field++;
+        } else {
+            return 0;
+        }
         p++;
     }
     if (field != 3) return 0;
@@ -40,11 +49,13 @@ static int dns_encode_name(const char* name, uint8_t* out, int max_len) {
     const char* p = name;
     while (*p) {
         const char* dot = p;
-        while (*dot && *dot != '.') dot++;
+        while (*dot && *dot != '.')
+            dot++;
         int len = (int)(dot - p);
         if (pos + 1 + len >= max_len) return -1;
         out[pos++] = (uint8_t)len;
-        for (int i = 0; i < len; ++i) out[pos++] = (uint8_t)p[i];
+        for (int i = 0; i < len; ++i)
+            out[pos++] = (uint8_t)p[i];
         p = (*dot == '.') ? dot + 1 : dot;
     }
     if (pos >= max_len) return -1;
@@ -65,8 +76,10 @@ static int dns_resolve(const char* hostname, uint32_t* out_ip) {
     if (nlen < 0) return -1;
 
     int qpos = (int)sizeof(dns_header) + nlen;
-    query[qpos++] = 0; query[qpos++] = 1; // QTYPE=A
-    query[qpos++] = 0; query[qpos++] = 1; // QCLASS=IN
+    query[qpos++] = 0;
+    query[qpos++] = 1; // QTYPE=A
+    query[qpos++] = 0;
+    query[qpos++] = 1; // QCLASS=IN
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) return -1;
@@ -78,7 +91,10 @@ static int dns_resolve(const char* hostname, uint32_t* out_ip) {
     dns_addr.sin_addr.s_addr = __builtin_bswap32(0x08080808); // 8.8.8.8
 
     ssize_t sent = sendto(sock, query, (size_t)qpos, 0, (struct sockaddr*)&dns_addr, sizeof(dns_addr));
-    if (sent < 0) { close(sock); return -1; }
+    if (sent < 0) {
+        close(sock);
+        return -1;
+    }
 
     uint8_t resp[512];
     ssize_t rlen = recv(sock, resp, sizeof(resp), 0);
@@ -95,14 +111,21 @@ static int dns_resolve(const char* hostname, uint32_t* out_ip) {
 
     for (int i = 0; i < ancount && rpos < (int)rlen; ++i) {
         // Skip name (compressed pointer or label)
-        if ((resp[rpos] & 0xC0) == 0xC0) rpos += 2;
-        else { while (rpos < (int)rlen && resp[rpos] != 0) rpos += 1 + resp[rpos]; rpos++; }
+        if ((resp[rpos] & 0xC0) == 0xC0)
+            rpos += 2;
+        else {
+            while (rpos < (int)rlen && resp[rpos] != 0)
+                rpos += 1 + resp[rpos];
+            rpos++;
+        }
 
         if (rpos + 10 > (int)rlen) break;
-        uint16_t rtype = __builtin_bswap16(*(uint16_t*)(resp + rpos)); rpos += 2;
+        uint16_t rtype = __builtin_bswap16(*(uint16_t*)(resp + rpos));
+        rpos += 2;
         rpos += 2; // class
         rpos += 4; // ttl
-        uint16_t rdlen = __builtin_bswap16(*(uint16_t*)(resp + rpos)); rpos += 2;
+        uint16_t rdlen = __builtin_bswap16(*(uint16_t*)(resp + rpos));
+        rpos += 2;
 
         if (rtype == 1 && rdlen == 4 && rpos + 4 <= (int)rlen) {
             memcpy(out_ip, resp + rpos, 4);
@@ -122,7 +145,10 @@ int getaddrinfo(const char* node, const char* service, const struct addrinfo* hi
     if (!info) return EAI_MEMORY;
 
     struct sockaddr_in* sa = (struct sockaddr_in*)calloc(1, sizeof(struct sockaddr_in));
-    if (!sa) { free(info); return EAI_MEMORY; }
+    if (!sa) {
+        free(info);
+        return EAI_MEMORY;
+    }
 
     info->ai_family = AF_INET;
     info->ai_socktype = SOCK_STREAM;
@@ -139,7 +165,8 @@ int getaddrinfo(const char* node, const char* service, const struct addrinfo* hi
             if (strcmp(node, "localhost") == 0) {
                 sa->sin_addr.s_addr = __builtin_bswap32(0x7F000001);
             } else if (dns_resolve(node, &sa->sin_addr.s_addr) != 0) {
-                free(info); free(sa);
+                free(info);
+                free(sa);
                 return EAI_NONAME;
             }
         }
@@ -166,15 +193,19 @@ void freeaddrinfo(struct addrinfo* res) {
 
 const char* gai_strerror(int errcode) {
     switch (errcode) {
-        case EAI_NONAME: return "Name or service not known";
-        case EAI_MEMORY: return "Memory allocation failure";
-        case EAI_FAMILY: return "Address family not supported";
-        default: return "Unknown error";
+    case EAI_NONAME:
+        return "Name or service not known";
+    case EAI_MEMORY:
+        return "Memory allocation failure";
+    case EAI_FAMILY:
+        return "Address family not supported";
+    default:
+        return "Unknown error";
     }
 }
 
-int getnameinfo(const struct sockaddr* sa, socklen_t salen, char* host, socklen_t hostlen,
-                char* serv, socklen_t servlen, int flags) {
+int getnameinfo(const struct sockaddr* sa, socklen_t salen, char* host, socklen_t hostlen, char* serv,
+                socklen_t servlen, int flags) {
     (void)flags;
     if (!sa || salen < sizeof(struct sockaddr_in)) return -1;
     const struct sockaddr_in* sin = (const struct sockaddr_in*)sa;
@@ -182,8 +213,7 @@ int getnameinfo(const struct sockaddr* sa, socklen_t salen, char* host, socklen_
         const unsigned char* b = (const unsigned char*)&sin->sin_addr.s_addr;
         snprintf(host, (size_t)hostlen, "%d.%d.%d.%d", b[0], b[1], b[2], b[3]);
     }
-    if (serv && servlen > 0)
-        snprintf(serv, (size_t)servlen, "%d", __builtin_bswap16(sin->sin_port));
+    if (serv && servlen > 0) snprintf(serv, (size_t)servlen, "%d", __builtin_bswap16(sin->sin_port));
     return 0;
 }
 
@@ -202,6 +232,8 @@ struct hostent* gethostbyname(const char* name) {
     return nullptr;
 }
 
-struct servent* getservbyname(const char*, const char*) { return nullptr; }
+struct servent* getservbyname(const char*, const char*) {
+    return nullptr;
+}
 
 } // extern "C"

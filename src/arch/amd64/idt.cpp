@@ -16,11 +16,15 @@ static idt_descriptor g_idt[256];
 static idt_pointer g_idt_ptr;
 static bool g_apic_mode = false;
 
-void idt_set_apic_mode(bool enabled) noexcept { g_apic_mode = enabled; }
+void idt_set_apic_mode(bool enabled) noexcept {
+    g_apic_mode = enabled;
+}
 
 static void do_eoi(uint8_t irq) noexcept {
-    if (g_apic_mode) lapic::send_eoi();
-    else             pic::send_eoi(irq);
+    if (g_apic_mode)
+        lapic::send_eoi();
+    else
+        pic::send_eoi(irq);
 }
 
 // ─── IRQ handlers ──────────────────────────────────────────────────────────
@@ -40,7 +44,9 @@ extern "C" void irq1_handler() noexcept {
     kernel::scheduler::scheduler::schedule();
 }
 
-extern "C" void irq4_handler() noexcept { do_eoi(4); }
+extern "C" void irq4_handler() noexcept {
+    do_eoi(4);
+}
 
 // ─── Exception stubs (defined in switch.S) ─────────────────────────────────
 
@@ -64,20 +70,32 @@ extern "C" void isr_stub_17();
 extern "C" void isr_stub_18();
 extern "C" void isr_stub_19();
 
-static const char* const exc_names[] = {
-    "#DE Divide", "#DB Debug", "NMI", "#BP Breakpoint", "#OF Overflow",
-    "#BR Bound", "#UD Invalid Opcode", "#NM No FPU", "#DF Double Fault",
-    "Coproc Seg", "#TS Invalid TSS", "#NP Seg Not Present", "#SS Stack Fault",
-    "#GP General Protection", "#PF Page Fault", "(reserved)", "#MF x87 FPE",
-    "#AC Alignment", "#MC Machine Check", "#XM SIMD FPE"
-};
+static const char* const exc_names[] = {"#DE Divide",
+                                        "#DB Debug",
+                                        "NMI",
+                                        "#BP Breakpoint",
+                                        "#OF Overflow",
+                                        "#BR Bound",
+                                        "#UD Invalid Opcode",
+                                        "#NM No FPU",
+                                        "#DF Double Fault",
+                                        "Coproc Seg",
+                                        "#TS Invalid TSS",
+                                        "#NP Seg Not Present",
+                                        "#SS Stack Fault",
+                                        "#GP General Protection",
+                                        "#PF Page Fault",
+                                        "(reserved)",
+                                        "#MF x87 FPE",
+                                        "#AC Alignment",
+                                        "#MC Machine Check",
+                                        "#XM SIMD FPE"};
 
 extern "C" void isr_handler(uint64_t vector, uint64_t error_code) noexcept {
     if (vector == 14) {
         uint64_t cr2;
         asm volatile("mov %%cr2, %0" : "=r"(cr2));
-        if (kernel::memory::vmm::handle_page_fault(cr2, error_code))
-            return;
+        if (kernel::memory::vmm::handle_page_fault(cr2, error_code)) return;
         kernel::print("#PF at {} err={}\n", reinterpret_cast<void*>(cr2), error_code);
     } else if (vector < 20) {
         kernel::print("EXCEPTION {}: {} err={}\n", vector, exc_names[vector], error_code);
@@ -89,7 +107,8 @@ extern "C" void isr_handler(uint64_t vector, uint64_t error_code) noexcept {
     // Don't halt for NMI (vector 2) — it might be spurious
     if (vector == 2) return;
 
-    while (true) asm volatile("hlt");
+    while (true)
+        asm volatile("hlt");
 }
 
 // ─── Default handler for unregistered vectors ──────────────────────────────
@@ -130,16 +149,16 @@ void idt_init() noexcept {
         set_descriptor(i, reinterpret_cast<void*>(idt_default_handler), 0x8E);
 
     // CPU exceptions (0-19) → proper stubs that capture vector + error code
-    set_descriptor(0,  reinterpret_cast<void*>(isr_stub_0),  0x8E);
-    set_descriptor(1,  reinterpret_cast<void*>(isr_stub_1),  0x8E);
-    set_descriptor(2,  reinterpret_cast<void*>(isr_stub_2),  0x8E);
-    set_descriptor(3,  reinterpret_cast<void*>(isr_stub_3),  0x8E);
-    set_descriptor(4,  reinterpret_cast<void*>(isr_stub_4),  0x8E);
-    set_descriptor(5,  reinterpret_cast<void*>(isr_stub_5),  0x8E);
-    set_descriptor(6,  reinterpret_cast<void*>(isr_stub_6),  0x8E);
-    set_descriptor(7,  reinterpret_cast<void*>(isr_stub_7),  0x8E);
-    set_descriptor(8,  reinterpret_cast<void*>(isr_stub_8),  0x8E);
-    set_descriptor(9,  reinterpret_cast<void*>(isr_stub_9),  0x8E);
+    set_descriptor(0, reinterpret_cast<void*>(isr_stub_0), 0x8E);
+    set_descriptor(1, reinterpret_cast<void*>(isr_stub_1), 0x8E);
+    set_descriptor(2, reinterpret_cast<void*>(isr_stub_2), 0x8E);
+    set_descriptor(3, reinterpret_cast<void*>(isr_stub_3), 0x8E);
+    set_descriptor(4, reinterpret_cast<void*>(isr_stub_4), 0x8E);
+    set_descriptor(5, reinterpret_cast<void*>(isr_stub_5), 0x8E);
+    set_descriptor(6, reinterpret_cast<void*>(isr_stub_6), 0x8E);
+    set_descriptor(7, reinterpret_cast<void*>(isr_stub_7), 0x8E);
+    set_descriptor(8, reinterpret_cast<void*>(isr_stub_8), 0x8E);
+    set_descriptor(9, reinterpret_cast<void*>(isr_stub_9), 0x8E);
     set_descriptor(10, reinterpret_cast<void*>(isr_stub_10), 0x8E);
     set_descriptor(11, reinterpret_cast<void*>(isr_stub_11), 0x8E);
     set_descriptor(12, reinterpret_cast<void*>(isr_stub_12), 0x8E);
@@ -151,8 +170,8 @@ void idt_init() noexcept {
     set_descriptor(19, reinterpret_cast<void*>(isr_stub_19), 0x8E);
 
     // Hardware IRQs (PIC vectors 0x20-0x2F)
-    set_descriptor(0x20, reinterpret_cast<void*>(irq0_entry), 0x8E); // Timer
-    set_descriptor(0x21, reinterpret_cast<void*>(irq1_entry), 0x8E); // Keyboard
+    set_descriptor(0x20, reinterpret_cast<void*>(irq0_entry), 0x8E);   // Timer
+    set_descriptor(0x21, reinterpret_cast<void*>(irq1_entry), 0x8E);   // Keyboard
     set_descriptor(0x24, reinterpret_cast<void*>(irq4_handler), 0x8E); // COM1
 
     g_idt_ptr.size = sizeof(g_idt) - 1;

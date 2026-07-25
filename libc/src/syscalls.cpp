@@ -43,19 +43,19 @@ int munmap(void* addr, size_t length) {
     return (int)__syscall(SYS_MUNMAP, (long)addr, (long)length);
 }
 
-int mprotect(void *addr, size_t len, int prot) {
+int mprotect(void* addr, size_t len, int prot) {
     return (int)__syscall(SYS_MPROTECT, (long)addr, (long)len, (long)prot);
 }
 
-int msync(void *addr, size_t length, int flags) {
+int msync(void* addr, size_t length, int flags) {
     return (int)__syscall(SYS_MSYNC, (long)addr, (long)length, (long)flags);
 }
 
-int madvise(void *addr, size_t length, int advice) {
+int madvise(void* addr, size_t length, int advice) {
     return (int)__syscall(SYS_MADVISE, (long)addr, (long)length, (long)advice);
 }
 
-int mincore(void *addr, size_t length, unsigned char *vec) {
+int mincore(void* addr, size_t length, unsigned char* vec) {
     (void)addr;
     // For now, assume all pages are in core (1).
     // length is in bytes. We'd normally fill vec based on pages.

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Host-compiled test for kernel::spinlock
 
-#include "test_harness.hpp"
 #include "../src/include/kernel/sync/spinlock.hpp"
+#include "test_harness.hpp"
 #include <thread>
 #include <vector>
 
@@ -42,7 +42,8 @@ TEST(spinlock_fairness) {
         lock.unlock();
     });
 
-    for (int i = 0; i < 100000; i++) kernel::cpu_relax();
+    for (int i = 0; i < 100000; i++)
+        kernel::cpu_relax();
 
     std::thread t2([&]() {
         lock.lock();
@@ -50,7 +51,8 @@ TEST(spinlock_fairness) {
         lock.unlock();
     });
 
-    for (int i = 0; i < 100000; i++) kernel::cpu_relax();
+    for (int i = 0; i < 100000; i++)
+        kernel::cpu_relax();
 
     lock.unlock(); // Release — t1 then t2
 
@@ -78,7 +80,8 @@ TEST(spinlock_concurrent_counter) {
         });
     }
 
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
     ASSERT_EQ(counter, N_THREADS * ITERS);
 }
 

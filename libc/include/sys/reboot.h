@@ -18,4 +18,3 @@ int reboot(int howto);
 #endif
 
 #endif // _SYS_REBOOT_H
-

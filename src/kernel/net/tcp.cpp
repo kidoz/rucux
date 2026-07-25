@@ -15,13 +15,11 @@ static uint16_t g_next_ephemeral = 49152;
 
 static uint32_t g_tcp_isn = 1000; // Simple ISN (should be time-based)
 
-static tcp_pcb* find_pcb(uint32_t local_ip, uint16_t local_port,
-                          uint32_t remote_ip, uint16_t remote_port) noexcept {
+static tcp_pcb* find_pcb(uint32_t local_ip, uint16_t local_port, uint32_t remote_ip, uint16_t remote_port) noexcept {
     // Exact match first
     for (auto* p = g_pcb_list; p; p = p->next) {
         if (p->local_port == local_port && p->remote_port == remote_port &&
-            (p->local_ip == local_ip || p->local_ip == 0) &&
-            p->remote_ip == remote_ip)
+            (p->local_ip == local_ip || p->local_ip == 0) && p->remote_ip == remote_ip)
             return p;
     }
     // LISTEN match (any remote)
@@ -35,8 +33,7 @@ static tcp_pcb* find_pcb(uint32_t local_ip, uint16_t local_port,
 
 // ─── TCP segment output ────────────────────────────────────────────────────
 
-static void tcp_send_segment(tcp_pcb* pcb, uint8_t flags,
-                              const void* data, size_t data_len) noexcept {
+static void tcp_send_segment(tcp_pcb* pcb, uint8_t flags, const void* data, size_t data_len) noexcept {
     auto* buf = netbuf::alloc();
     if (!buf) return;
 
@@ -48,7 +45,7 @@ static void tcp_send_segment(tcp_pcb* pcb, uint8_t flags,
 
     // TCP header
     auto* tcp = reinterpret_cast<tcp_header*>(buf->push(TCP_HEADER_LEN));
-    tcp->src_port = pcb->local_port;   // Already in network byte order
+    tcp->src_port = pcb->local_port; // Already in network byte order
     tcp->dst_port = pcb->remote_port;
     tcp->seq_num = htonl(pcb->snd_nxt);
     tcp->ack_num = (flags & TCP_ACK) ? htonl(pcb->rcv_nxt) : 0;
@@ -59,8 +56,7 @@ static void tcp_send_segment(tcp_pcb* pcb, uint8_t flags,
     tcp->urgent_ptr = 0;
 
     // Checksum (includes pseudo-header)
-    tcp->checksum = checksum_pseudo(pcb->local_ip, pcb->remote_ip,
-                                     IPPROTO_TCP, tcp, TCP_HEADER_LEN + data_len);
+    tcp->checksum = checksum_pseudo(pcb->local_ip, pcb->remote_ip, IPPROTO_TCP, tcp, TCP_HEADER_LEN + data_len);
 
     // Advance SND.NXT
     if (flags & TCP_SYN) pcb->snd_nxt++;
@@ -70,9 +66,8 @@ static void tcp_send_segment(tcp_pcb* pcb, uint8_t flags,
     ipv4_output(buf, pcb->local_ip, pcb->remote_ip, IPPROTO_TCP);
 }
 
-static void tcp_send_rst(uint32_t local_ip, uint16_t local_port,
-                          uint32_t remote_ip, uint16_t remote_port,
-                          uint32_t seq, uint32_t ack) noexcept {
+static void tcp_send_rst(uint32_t local_ip, uint16_t local_port, uint32_t remote_ip, uint16_t remote_port, uint32_t seq,
+                         uint32_t ack) noexcept {
     auto* buf = netbuf::alloc();
     if (!buf) return;
 
@@ -95,7 +90,10 @@ static void tcp_send_rst(uint32_t local_ip, uint16_t local_port,
 
 void tcp_input(netif* iface, netbuf* buf) noexcept {
     (void)iface;
-    if (buf->len() < TCP_HEADER_LEN) { netbuf::free(buf); return; }
+    if (buf->len() < TCP_HEADER_LEN) {
+        netbuf::free(buf);
+        return;
+    }
 
     auto* tcp = reinterpret_cast<tcp_header*>(buf->data());
     size_t hdr_len = (tcp->data_offset >> 4) * 4;
@@ -113,9 +111,8 @@ void tcp_input(netif* iface, netbuf* buf) noexcept {
     if (!pcb) {
         // No matching PCB — send RST
         if (!(flags & TCP_RST)) {
-            tcp_send_rst(buf->dst_ip, tcp->dst_port,
-                         buf->src_ip, tcp->src_port,
-                         0, seq + (data_len ? static_cast<uint32_t>(data_len) : 1));
+            tcp_send_rst(buf->dst_ip, tcp->dst_port, buf->src_ip, tcp->src_port, 0,
+                         seq + (data_len ? static_cast<uint32_t>(data_len) : 1));
         }
         netbuf::free(buf);
         return;
@@ -212,8 +209,8 @@ void tcp_input(netif* iface, netbuf* buf) noexcept {
         // Handle incoming data
         if (data_len > 0 && seq == pcb->rcv_nxt) {
             // Copy to receive buffer
-            size_t space = pcb->rcv_buf_size -
-                ((pcb->rcv_buf_head - pcb->rcv_buf_tail + pcb->rcv_buf_size) % pcb->rcv_buf_size);
+            size_t space =
+                pcb->rcv_buf_size - ((pcb->rcv_buf_head - pcb->rcv_buf_tail + pcb->rcv_buf_size) % pcb->rcv_buf_size);
             size_t to_copy = data_len < space ? data_len : space;
 
             for (size_t i = 0; i < to_copy; ++i) {
@@ -314,7 +311,10 @@ void tcp_free(tcp_pcb* pcb) noexcept {
     irq_lock_guard guard(g_tcp_lock);
     tcp_pcb** pp = &g_pcb_list;
     while (*pp) {
-        if (*pp == pcb) { *pp = pcb->next; break; }
+        if (*pp == pcb) {
+            *pp = pcb->next;
+            break;
+        }
         pp = &(*pp)->next;
     }
 
@@ -359,8 +359,7 @@ int tcp_connect(tcp_pcb* pcb, uint32_t addr, uint16_t port) noexcept {
     pcb->remote_port = port;
 
     // Assign ephemeral port if not bound
-    if (pcb->local_port == 0)
-        pcb->local_port = htons(g_next_ephemeral++);
+    if (pcb->local_port == 0) pcb->local_port = htons(g_next_ephemeral++);
 
     // Get source IP from the outgoing interface
     if (pcb->local_ip == 0) {
@@ -406,8 +405,7 @@ long tcp_recv(tcp_pcb* pcb, void* data, size_t len) noexcept {
 
     // Block until data available or connection closed
     while (pcb->rcv_buf_head == pcb->rcv_buf_tail) {
-        if (pcb->state == tcp_state::CLOSE_WAIT || pcb->state == tcp_state::CLOSED)
-            return 0; // EOF
+        if (pcb->state == tcp_state::CLOSE_WAIT || pcb->state == tcp_state::CLOSED) return 0; // EOF
 
         pcb->wait_recv = scheduler::scheduler::current_thread();
         scheduler::scheduler::block(scheduler::thread_state::BLOCKED);
@@ -441,12 +439,10 @@ int tcp_close(tcp_pcb* pcb) noexcept {
 
 int tcp_poll_events(tcp_pcb* pcb) noexcept {
     int events = 0;
-    if (pcb->rcv_buf_head != pcb->rcv_buf_tail ||
-        pcb->state == tcp_state::CLOSE_WAIT ||
+    if (pcb->rcv_buf_head != pcb->rcv_buf_tail || pcb->state == tcp_state::CLOSE_WAIT ||
         pcb->state == tcp_state::CLOSED)
-        events |= 1; // POLLIN
-    if (pcb->state == tcp_state::ESTABLISHED)
-        events |= 4; // POLLOUT
+        events |= 1;                                       // POLLIN
+    if (pcb->state == tcp_state::ESTABLISHED) events |= 4; // POLLOUT
     return events;
 }
 

@@ -59,8 +59,8 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
     }
 
     // Create VMA to track this mapping
-    g_vma.insert(virt_start, virt_start + aligned_len, static_cast<uint32_t>(prot),
-                 static_cast<uint32_t>(flags), fd, offset);
+    g_vma.insert(virt_start, virt_start + aligned_len, static_cast<uint32_t>(prot), static_cast<uint32_t>(flags), fd,
+                 offset);
 
     page_flags pflags = page_flags::PRESENT | page_flags::USER;
     if (prot & PROT_WRITE) pflags = pflags | page_flags::WRITABLE;
@@ -72,8 +72,7 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
             void* phys = pmm::alloc_page();
             if (!phys) return MAP_FAILED;
             lib::memset(phys, 0, pmm::PAGE_SIZE);
-            vmm::map(virt_start + (i * pmm::PAGE_SIZE),
-                     reinterpret_cast<uintptr_t>(phys), pflags);
+            vmm::map(virt_start + (i * pmm::PAGE_SIZE), reinterpret_cast<uintptr_t>(phys), pflags);
         }
     } else if (fd >= 0 && static_cast<size_t>(fd) < t->fd_count) {
         // File-backed mapping
@@ -93,8 +92,7 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
                     void* phys = pmm::alloc_page();
                     if (!phys) return MAP_FAILED;
                     lib::memset(phys, 0, pmm::PAGE_SIZE);
-                    vmm::map(virt_start + (i * pmm::PAGE_SIZE),
-                             reinterpret_cast<uintptr_t>(phys), pflags);
+                    vmm::map(virt_start + (i * pmm::PAGE_SIZE), reinterpret_cast<uintptr_t>(phys), pflags);
                 }
                 node->ops->read(node, offset, length, reinterpret_cast<void*>(virt_start));
             }
@@ -128,17 +126,23 @@ int mmap_manager::sys_munmap(void* addr, size_t length) noexcept {
 }
 
 int mmap_manager::sys_mprotect(void* addr, size_t len, int prot) noexcept {
-    (void)addr; (void)len; (void)prot;
+    (void)addr;
+    (void)len;
+    (void)prot;
     return 0; // Stub — would update PTE flags via VMA lookup
 }
 
 int mmap_manager::sys_msync(void* addr, size_t length, int flags) noexcept {
-    (void)addr; (void)length; (void)flags;
+    (void)addr;
+    (void)length;
+    (void)flags;
     return 0; // Stub — would flush dirty pages via VMA's fd
 }
 
 int mmap_manager::sys_madvise(void* addr, size_t length, int advice) noexcept {
-    (void)addr; (void)length; (void)advice;
+    (void)addr;
+    (void)length;
+    (void)advice;
     return 0;
 }
 

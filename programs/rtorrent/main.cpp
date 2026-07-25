@@ -25,16 +25,16 @@ int main(int argc, char** argv) {
 
     message ack = {};
     syscall(SYS_IPC_RECV, (long)&ack, 0, 0);
-    
+
     printf("\n");
     printf("Starting rTorrent 0.9.8...\n");
     printf("Loaded from EXT4 filesystem successfully.\n");
     printf("rTorrent is running.\n");
-    
+
     // Just yield forever to simulate a running process
     while (true) {
         syscall(SYS_YIELD);
     }
-    
+
     return 0;
 }

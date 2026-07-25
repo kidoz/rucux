@@ -15,18 +15,18 @@ struct mac_addr {
 };
 
 struct ipv4_config {
-    uint32_t addr;     // Host IP (network byte order)
-    uint32_t netmask;  // e.g., 255.255.255.0
-    uint32_t gateway;  // Default gateway
+    uint32_t addr;    // Host IP (network byte order)
+    uint32_t netmask; // e.g., 255.255.255.0
+    uint32_t gateway; // Default gateway
 };
 
 class netif {
 public:
     // Driver must set these before registering
-    const char* name;      // e.g., "eth0", "lo"
+    const char* name; // e.g., "eth0", "lo"
     mac_addr mac;
     ipv4_config ip;
-    uint32_t mtu;          // Maximum transmission unit (e.g., 1500)
+    uint32_t mtu; // Maximum transmission unit (e.g., 1500)
 
     // Driver callback: transmit a packet. Takes ownership of buf.
     void (*transmit)(netif* iface, netbuf* buf) noexcept;

@@ -13,11 +13,11 @@ namespace kernel::memory {
 
 // A slab is a contiguous block of pages divided into equal-sized objects.
 struct slab {
-    list_node link;         // Link in partial/full/free slab list
-    void* free_list;        // Freelist of objects within this slab
-    uint16_t in_use;        // Number of allocated objects
-    uint16_t total;         // Total objects in this slab
-    void* base;             // Start of object array
+    list_node link;  // Link in partial/full/free slab list
+    void* free_list; // Freelist of objects within this slab
+    uint16_t in_use; // Number of allocated objects
+    uint16_t total;  // Total objects in this slab
+    void* base;      // Start of object array
 };
 
 // Per-CPU magazine: small stack of recently freed objects.
@@ -53,14 +53,14 @@ private:
     void* alloc_from_slab() noexcept;
 
     const char* name_;
-    size_t obj_size_;       // Actual object size (after alignment)
-    size_t slab_order_;     // Buddy order for slab pages
-    size_t objs_per_slab_;  // Objects per slab
+    size_t obj_size_;      // Actual object size (after alignment)
+    size_t slab_order_;    // Buddy order for slab pages
+    size_t objs_per_slab_; // Objects per slab
 
-    list_node partial_;     // Slabs with some free objects
-    list_node full_;        // Slabs with no free objects
-    list_node free_;        // Slabs with all objects free (reclaimable)
-    irq_spinlock lock_;     // Protects slab lists
+    list_node partial_; // Slabs with some free objects
+    list_node full_;    // Slabs with no free objects
+    list_node free_;    // Slabs with all objects free (reclaimable)
+    irq_spinlock lock_; // Protects slab lists
 
     magazine magazines_[cpu::MAX_CPUS]; // Per-CPU magazine
 };

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
-#include <kernel/vfs/vfs.hpp>
 #include <kernel/time.hpp>
-#include <lib/string.hpp>
+#include <kernel/vfs/vfs.hpp>
 #include <knew.hpp>
+#include <lib/string.hpp>
 
 namespace kernel::vfs {
 
@@ -58,8 +58,7 @@ int vfs_manager::alloc_fd(vfs_node* node) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     if (!t) return -1;
 
-    if (!t->fd_table)
-        t->ensure_fd_capacity(scheduler::thread::INITIAL_FDS);
+    if (!t->fd_table) t->ensure_fd_capacity(scheduler::thread::INITIAL_FDS);
 
     for (size_t i = 0; i < t->fd_count; ++i) {
         if (t->fd_table[i].node == nullptr) {
@@ -101,8 +100,7 @@ int vfs_manager::sys_open(const char* path, int flags) noexcept {
     vfs_node* node = resolve_path(path);
     if (!node) return -1;
 
-    if (node->ops && node->ops->open)
-        node->ops->open(node);
+    if (node->ops && node->ops->open) node->ops->open(node);
 
     int fd = alloc_fd(node);
     if (fd >= 0) {
@@ -190,7 +188,10 @@ int vfs_manager::sys_getdents(int fd, void* dirp, size_t count) noexcept {
     // Copy name
     const char* name = child->name;
     int i = 0;
-    while (name[i] && i < 255) { de->d_name[i] = name[i]; i++; }
+    while (name[i] && i < 255) {
+        de->d_name[i] = name[i];
+        i++;
+    }
     de->d_name[i] = '\0';
 
     fdesc->offset++;
@@ -204,10 +205,14 @@ int vfs_manager::sys_lseek(int fd, long offset, int whence) noexcept {
 
     vfs_node* node = static_cast<vfs_node*>(fdesc->node);
     long new_offset = 0;
-    if (whence == 0)      new_offset = offset;
-    else if (whence == 1) new_offset = static_cast<long>(fdesc->offset) + offset;
-    else if (whence == 2) new_offset = static_cast<long>(node->length) + offset;
-    else return -1;
+    if (whence == 0)
+        new_offset = offset;
+    else if (whence == 1)
+        new_offset = static_cast<long>(fdesc->offset) + offset;
+    else if (whence == 2)
+        new_offset = static_cast<long>(node->length) + offset;
+    else
+        return -1;
 
     if (new_offset < 0) return -1;
     fdesc->offset = static_cast<size_t>(new_offset);
@@ -236,8 +241,7 @@ int vfs_manager::sys_ftruncate(int fd, long length) noexcept {
 
     vfs_node* node = static_cast<vfs_node*>(fdesc->node);
     if (length < 0) return -1;
-    if (static_cast<size_t>(length) < node->length)
-        node->length = static_cast<size_t>(length);
+    if (static_cast<size_t>(length) < node->length) node->length = static_cast<size_t>(length);
     return 0;
 }
 
@@ -253,13 +257,16 @@ int vfs_manager::sys_fcntl(int fd, int cmd, long arg) noexcept {
     auto* fdesc = get_fd(t, fd);
     if (!fdesc || !fdesc->node) return -1;
 
-    if (cmd == 3) return fdesc->flags;       // F_GETFL
-    if (cmd == 4) { fdesc->flags = static_cast<int>(arg); return 0; } // F_SETFL
+    if (cmd == 3) return fdesc->flags; // F_GETFL
+    if (cmd == 4) {
+        fdesc->flags = static_cast<int>(arg);
+        return 0;
+    } // F_SETFL
     return -1;
 }
 
 // POSIX poll event flags
-#define POLLIN  0x001
+#define POLLIN 0x001
 #define POLLOUT 0x004
 #define POLLERR 0x008
 #define POLLHUP 0x010
@@ -292,7 +299,8 @@ static void fd_set_bit(int fd, fd_set_kernel* set) {
 
 static void fd_zero(fd_set_kernel* set) {
     if (!set) return;
-    for (auto& w : set->fds_bits) w = 0;
+    for (auto& w : set->fds_bits)
+        w = 0;
 }
 
 int vfs_manager::sys_select(int nfds, void* readfds, void* writefds, void* exceptfds, void* timeout) noexcept {
@@ -334,9 +342,18 @@ int vfs_manager::sys_select(int nfds, void* readfds, void* writefds, void* excep
             else
                 events = POLLIN | POLLOUT; // Default: always ready for regular files
 
-            if (fd_isset(fd, &r_in) && (events & POLLIN))  { fd_set_bit(fd, rfds); ready++; }
-            if (fd_isset(fd, &w_in) && (events & POLLOUT)) { fd_set_bit(fd, wfds); ready++; }
-            if (fd_isset(fd, &e_in) && (events & (POLLERR | POLLHUP | POLLNVAL))) { fd_set_bit(fd, efds); ready++; }
+            if (fd_isset(fd, &r_in) && (events & POLLIN)) {
+                fd_set_bit(fd, rfds);
+                ready++;
+            }
+            if (fd_isset(fd, &w_in) && (events & POLLOUT)) {
+                fd_set_bit(fd, wfds);
+                ready++;
+            }
+            if (fd_isset(fd, &e_in) && (events & (POLLERR | POLLHUP | POLLNVAL))) {
+                fd_set_bit(fd, efds);
+                ready++;
+            }
         }
 
         if (ready > 0) return ready;
@@ -354,7 +371,7 @@ int vfs_manager::sys_poll(void* fds_ptr, unsigned int nfds, int timeout) noexcep
     if (!t) return -1;
 
     auto* pfds = static_cast<pollfd*>(fds_ptr);
-    
+
     uint64_t deadline = 0;
     bool has_timeout = (timeout >= 0);
     if (has_timeout) {
@@ -404,7 +421,7 @@ int vfs_manager::sys_poll(void* fds_ptr, unsigned int nfds, int timeout) noexcep
 #define EPOLL_CTL_DEL 2
 #define EPOLL_CTL_MOD 3
 
-#define EPOLLIN  0x001
+#define EPOLLIN 0x001
 #define EPOLLOUT 0x004
 #define EPOLLERR 0x008
 
@@ -428,7 +445,7 @@ int vfs_manager::sys_epoll_create(int size) noexcept {
     auto* node = new vfs_node();
     lib::memset(node, 0, sizeof(*node));
     node->type = file_type::EPOLL;
-    
+
     // allocate data
     auto* data = new epoll_node_data();
     data->head = nullptr;
@@ -460,7 +477,7 @@ int vfs_manager::sys_epoll_create(int size) noexcept {
 int vfs_manager::sys_epoll_ctl(int epfd, int op, int fd, void* event_ptr) noexcept {
     auto* epnode = get_fd_node(epfd);
     if (!epnode || epnode->type != file_type::EPOLL) return -1;
-    
+
     auto* d = reinterpret_cast<epoll_node_data*>(epnode->ptr);
     auto* ev = static_cast<epoll_event*>(event_ptr);
 

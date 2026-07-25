@@ -6,7 +6,7 @@ namespace arch::armv7::usb {
 
 // Amlogic S905 Always-On (AO) GPIO registers (Approximate base 0xC8100000)
 // For Odroid C2, we need GPIOAO_4 (Hub Reset) and GPIOAO_5 (OTG Power)
-constexpr uintptr_t AO_GPIO_O      = 0xC8100014;
+constexpr uintptr_t AO_GPIO_O = 0xC8100014;
 constexpr uintptr_t AO_GPIO_O_EN_N = 0xC8100018;
 
 // Amlogic USB PHY Base Addresses
@@ -62,7 +62,7 @@ void init() noexcept {
     // Phase 2: Amlogic USB PHY Initialization
     // Standard Amlogic PHY bringup usually involves writing to the config register (Offset 0x00)
     // to clear the power-down bits. For this mock bringup, we just ensure power is on.
-    
+
     // USB0 PHY
     uint32_t phy0_cfg = read_reg(USB0_PHY_BASE);
     // Typical magic to enable Amlogic PHY (Clear bit 16 for Port Power)

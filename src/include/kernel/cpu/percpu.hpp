@@ -31,21 +31,21 @@ struct run_queue {
 };
 
 struct per_cpu {
-    per_cpu* self;                          // GS:0 self-pointer for fast access
-    uint32_t cpu_id;                        // Logical CPU ID (0 = BSP)
-    uint32_t apic_id;                       // Hardware APIC/MPIDR ID
+    per_cpu* self;    // GS:0 self-pointer for fast access
+    uint32_t cpu_id;  // Logical CPU ID (0 = BSP)
+    uint32_t apic_id; // Hardware APIC/MPIDR ID
 
-    scheduler::thread* current_thread;      // Currently running thread on this CPU
-    scheduler::thread* idle_thread;         // This CPU's idle thread
-    uintptr_t kernel_stack;                 // Current kernel stack top — read by syscall_entry at %gs:32 (amd64)
-    uintptr_t temp_user_rsp;                // Scratch slot for syscall_entry user rsp save — accessed at %gs:40 (amd64)
+    scheduler::thread* current_thread; // Currently running thread on this CPU
+    scheduler::thread* idle_thread;    // This CPU's idle thread
+    uintptr_t kernel_stack;            // Current kernel stack top — read by syscall_entry at %gs:32 (amd64)
+    uintptr_t temp_user_rsp;           // Scratch slot for syscall_entry user rsp save — accessed at %gs:40 (amd64)
 
-    bool online;                            // CPU is initialized and running
-    uint64_t ticks;                         // Per-CPU tick count
+    bool online;    // CPU is initialized and running
+    uint64_t ticks; // Per-CPU tick count
 
     // Per-CPU run queues — one per priority level
     run_queue queues[scheduler::NUM_PRIOS];
-    uint32_t total_runnable;                // Sum of all queue counts
+    uint32_t total_runnable; // Sum of all queue counts
 
     // Protects this CPU's run queues
     irq_spinlock sched_lock;
@@ -61,11 +61,11 @@ extern atomic<uint32_t> g_cpu_count;
 inline per_cpu* this_cpu() noexcept {
 #if defined(__x86_64__)
     per_cpu* p;
-    asm volatile("mov %%gs:0, %0" : "=r"(p) :: "memory");
+    asm volatile("mov %%gs:0, %0" : "=r"(p)::"memory");
     return p;
 #elif defined(__arm__)
     per_cpu* p;
-    asm volatile("mrc p15, 0, %0, c13, c0, 4" : "=r"(p) :: "memory");
+    asm volatile("mrc p15, 0, %0, c13, c0, 4" : "=r"(p)::"memory");
     return p;
 #else
     return &g_percpu[0];

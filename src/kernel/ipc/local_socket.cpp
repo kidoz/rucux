@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/ipc/local_socket.hpp>
 
-#include <kernel/vfs/vfs.hpp>
 #include <kernel/print.hpp>
+#include <kernel/vfs/vfs.hpp>
 #include <lib/string.hpp>
 #include <uapi/kernel/unix_ipc.h>
 
@@ -167,8 +167,7 @@ static int local_poll(kernel::vfs::vfs_node* node) noexcept {
     }
     if (!socket->write_shutdown && socket->peer_index >= 0) {
         auto& peer = g_local_sockets[socket->peer_index];
-        if (peer.in_use && !peer.read_shutdown &&
-            peer.rx_size < LOCAL_SOCKET_BUFFER_SIZE) {
+        if (peer.in_use && !peer.read_shutdown && peer.rx_size < LOCAL_SOCKET_BUFFER_SIZE) {
             events |= POLLOUT_K;
         }
     }
@@ -224,17 +223,14 @@ static bool valid_address(const rucux_unix_ipc_address& address) noexcept {
     return address.path_length <= RUCUX_UNIX_IPC_PATH_MAX;
 }
 
-static bool address_equal(const rucux_unix_ipc_address& lhs,
-                          const rucux_unix_ipc_address& rhs) noexcept {
-    if (lhs.family != rhs.family || lhs.namespace_kind != rhs.namespace_kind ||
-        lhs.path_length != rhs.path_length) {
+static bool address_equal(const rucux_unix_ipc_address& lhs, const rucux_unix_ipc_address& rhs) noexcept {
+    if (lhs.family != rhs.family || lhs.namespace_kind != rhs.namespace_kind || lhs.path_length != rhs.path_length) {
         return false;
     }
     return lib::memcmp(lhs.path, rhs.path, lhs.path_length) == 0;
 }
 
-static void copy_address(rucux_unix_ipc_address& dst,
-                         const rucux_unix_ipc_address& src) noexcept {
+static void copy_address(rucux_unix_ipc_address& dst, const rucux_unix_ipc_address& src) noexcept {
     lib::memset(&dst, 0, sizeof(dst));
     dst.family = src.family;
     dst.namespace_kind = src.namespace_kind;
@@ -244,8 +240,7 @@ static void copy_address(rucux_unix_ipc_address& dst,
     }
 }
 
-static bool translate_address_in(const void* addr, uint32_t addrlen,
-                                 rucux_unix_ipc_address& out) noexcept {
+static bool translate_address_in(const void* addr, uint32_t addrlen, rucux_unix_ipc_address& out) noexcept {
     if (!addr || addrlen < sizeof(uint16_t)) {
         return false;
     }
@@ -287,8 +282,7 @@ static bool translate_address_in(const void* addr, uint32_t addrlen,
     return true;
 }
 
-static int translate_address_out(const rucux_unix_ipc_address* address, void* addr,
-                                 uint32_t* addrlen) noexcept {
+static int translate_address_out(const rucux_unix_ipc_address* address, void* addr, uint32_t* addrlen) noexcept {
     if (!addrlen) {
         return -1;
     }
@@ -390,8 +384,7 @@ static bool address_in_use(const rucux_unix_ipc_address& address) noexcept {
     return false;
 }
 
-static LocalSocket* find_listener(const rucux_unix_ipc_address& address,
-                                  uint32_t type) noexcept {
+static LocalSocket* find_listener(const rucux_unix_ipc_address& address, uint32_t type) noexcept {
     for (uint32_t i = 0; i < LOCAL_SOCKET_POOL_SIZE; ++i) {
         auto& socket = g_local_sockets[i];
         if (!socket.in_use || !socket.listening || !socket.has_address || socket.type != type) {
@@ -624,8 +617,7 @@ int local_socket_manager::sys_setsockopt(int sockfd, int, int, const void*, uint
     return handles_fd(sockfd) ? 0 : -1;
 }
 
-int local_socket_manager::sys_getsockopt(int sockfd, int, int, void* optval,
-                                         uint32_t* optlen) noexcept {
+int local_socket_manager::sys_getsockopt(int sockfd, int, int, void* optval, uint32_t* optlen) noexcept {
     if (!handles_fd(sockfd)) {
         return -1;
     }
@@ -668,8 +660,8 @@ bool local_socket_manager::handles_fd(int sockfd) noexcept {
     return socket_from_fd(sockfd) != nullptr;
 }
 
-long local_socket_manager::sys_unix_ipc(uint32_t op, uintptr_t arg0, uintptr_t arg1,
-                                        uintptr_t arg2, uintptr_t, uintptr_t) noexcept {
+long local_socket_manager::sys_unix_ipc(uint32_t op, uintptr_t arg0, uintptr_t arg1, uintptr_t arg2, uintptr_t,
+                                        uintptr_t) noexcept {
     switch (op) {
     case RUCUX_UNIX_IPC_OP_SOCKET: {
         auto* request = reinterpret_cast<const rucux_unix_ipc_socket_request*>(arg0);
@@ -681,8 +673,7 @@ long local_socket_manager::sys_unix_ipc(uint32_t op, uintptr_t arg0, uintptr_t a
     case RUCUX_UNIX_IPC_OP_BIND: {
         auto* socket = socket_from_fd(static_cast<int>(arg0));
         auto* address = reinterpret_cast<const rucux_unix_ipc_address*>(arg1);
-        if (!socket || !address || socket->has_address || !valid_address(*address) ||
-            address_in_use(*address)) {
+        if (!socket || !address || socket->has_address || !valid_address(*address) || address_in_use(*address)) {
             return -1;
         }
         copy_address(socket->address, *address);
@@ -698,8 +689,8 @@ long local_socket_manager::sys_unix_ipc(uint32_t op, uintptr_t arg0, uintptr_t a
     case RUCUX_UNIX_IPC_OP_CONNECT: {
         auto* socket = socket_from_fd(static_cast<int>(arg0));
         auto* address = reinterpret_cast<const rucux_unix_ipc_address*>(arg1);
-        if (!socket || !address || socket->type != RUCUX_UNIX_IPC_SOCK_STREAM ||
-            socket->peer_index >= 0 || !valid_address(*address)) {
+        if (!socket || !address || socket->type != RUCUX_UNIX_IPC_SOCK_STREAM || socket->peer_index >= 0 ||
+            !valid_address(*address)) {
             return -1;
         }
         auto* listener = find_listener(*address, socket->type);
@@ -723,19 +714,16 @@ long local_socket_manager::sys_unix_ipc(uint32_t op, uintptr_t arg0, uintptr_t a
         return 0;
     }
     case RUCUX_UNIX_IPC_OP_SOCKETPAIR:
-        return handle_socketpair(
-            reinterpret_cast<const rucux_unix_ipc_socket_request*>(arg0),
-            reinterpret_cast<rucux_unix_ipc_pair_response*>(arg1));
+        return handle_socketpair(reinterpret_cast<const rucux_unix_ipc_socket_request*>(arg0),
+                                 reinterpret_cast<rucux_unix_ipc_pair_response*>(arg1));
     case RUCUX_UNIX_IPC_OP_SHUTDOWN: {
         auto* request = reinterpret_cast<const rucux_unix_ipc_shutdown_request*>(arg1);
         return request ? sys_shutdown(static_cast<int>(arg0), static_cast<int>(request->how)) : -1;
     }
     case RUCUX_UNIX_IPC_OP_SENDMSG:
-        return sys_send(static_cast<int>(arg0), reinterpret_cast<const void*>(arg1),
-                        static_cast<size_t>(arg2), 0);
+        return sys_send(static_cast<int>(arg0), reinterpret_cast<const void*>(arg1), static_cast<size_t>(arg2), 0);
     case RUCUX_UNIX_IPC_OP_RECVMSG:
-        return sys_recv(static_cast<int>(arg0), reinterpret_cast<void*>(arg1),
-                        static_cast<size_t>(arg2), 0);
+        return sys_recv(static_cast<int>(arg0), reinterpret_cast<void*>(arg1), static_cast<size_t>(arg2), 0);
     default:
         return -1;
     }

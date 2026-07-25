@@ -48,10 +48,9 @@ struct list_node {
 // Get the containing struct from a list_node member pointer.
 // Usage: auto* obj = container_of(node_ptr, &MyStruct::list_member);
 template <typename T, typename M>
-inline T* container_of(M* ptr, M T::*member) noexcept {
-    return reinterpret_cast<T*>(
-        reinterpret_cast<uintptr_t>(ptr) -
-        reinterpret_cast<uintptr_t>(&(static_cast<T*>(nullptr)->*member)));
+inline T* container_of(M* ptr, M T::* member) noexcept {
+    return reinterpret_cast<T*>(reinterpret_cast<uintptr_t>(ptr) -
+                                reinterpret_cast<uintptr_t>(&(static_cast<T*>(nullptr)->*member)));
 }
 
 } // namespace kernel

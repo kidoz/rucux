@@ -8,9 +8,12 @@ void rb_tree::rotate_left(rb_node* x) noexcept {
     x->right = y->left;
     if (y->left) y->left->parent = x;
     y->parent = x->parent;
-    if (!x->parent)       root_ = y;
-    else if (x == x->parent->left) x->parent->left = y;
-    else                  x->parent->right = y;
+    if (!x->parent)
+        root_ = y;
+    else if (x == x->parent->left)
+        x->parent->left = y;
+    else
+        x->parent->right = y;
     y->left = x;
     x->parent = y;
 }
@@ -20,9 +23,12 @@ void rb_tree::rotate_right(rb_node* x) noexcept {
     x->left = y->right;
     if (y->right) y->right->parent = x;
     y->parent = x->parent;
-    if (!x->parent)       root_ = y;
-    else if (x == x->parent->right) x->parent->right = y;
-    else                  x->parent->left = y;
+    if (!x->parent)
+        root_ = y;
+    else if (x == x->parent->right)
+        x->parent->right = y;
+    else
+        x->parent->left = y;
     y->right = x;
     x->parent = y;
 }
@@ -77,22 +83,29 @@ void rb_tree::insert(rb_node* z, cmp_fn cmp) noexcept {
         x = (cmp(z, x) < 0) ? x->left : x->right;
     }
     z->parent = y;
-    if (!y)            root_ = z;
-    else if (cmp(z, y) < 0) y->left = z;
-    else               y->right = z;
+    if (!y)
+        root_ = z;
+    else if (cmp(z, y) < 0)
+        y->left = z;
+    else
+        y->right = z;
 
     insert_fixup(z);
 }
 
 void rb_tree::transplant(rb_node* u, rb_node* v) noexcept {
-    if (!u->parent)         root_ = v;
-    else if (u == u->parent->left) u->parent->left = v;
-    else                    u->parent->right = v;
+    if (!u->parent)
+        root_ = v;
+    else if (u == u->parent->left)
+        u->parent->left = v;
+    else
+        u->parent->right = v;
     if (v) v->parent = u->parent;
 }
 
 static rb_node* tree_minimum(rb_node* x) noexcept {
-    while (x->left) x = x->left;
+    while (x->left)
+        x = x->left;
     return x;
 }
 
@@ -106,8 +119,7 @@ void rb_tree::remove_fixup(rb_node* x, rb_node* x_parent) noexcept {
                 rotate_left(x_parent);
                 w = x_parent->right;
             }
-            if ((!w->left || w->left->color == rb_color::BLACK) &&
-                (!w->right || w->right->color == rb_color::BLACK)) {
+            if ((!w->left || w->left->color == rb_color::BLACK) && (!w->right || w->right->color == rb_color::BLACK)) {
                 w->color = rb_color::RED;
                 x = x_parent;
                 x_parent = x->parent;
@@ -132,8 +144,7 @@ void rb_tree::remove_fixup(rb_node* x, rb_node* x_parent) noexcept {
                 rotate_right(x_parent);
                 w = x_parent->left;
             }
-            if ((!w->right || w->right->color == rb_color::BLACK) &&
-                (!w->left || w->left->color == rb_color::BLACK)) {
+            if ((!w->right || w->right->color == rb_color::BLACK) && (!w->left || w->left->color == rb_color::BLACK)) {
                 w->color = rb_color::RED;
                 x = x_parent;
                 x_parent = x->parent;
@@ -187,8 +198,7 @@ void rb_tree::remove(rb_node* z) noexcept {
         y->color = z->color;
     }
 
-    if (y_original == rb_color::BLACK)
-        remove_fixup(x, x_parent);
+    if (y_original == rb_color::BLACK) remove_fixup(x, x_parent);
 }
 
 rb_node* rb_tree::find(const rb_node* key, cmp_fn cmp) const noexcept {
@@ -219,7 +229,8 @@ rb_node* rb_tree::first() const noexcept {
 rb_node* rb_tree::last() const noexcept {
     if (!root_) return nullptr;
     rb_node* x = root_;
-    while (x->right) x = x->right;
+    while (x->right)
+        x = x->right;
     return x;
 }
 

@@ -36,12 +36,8 @@ extern "C" int main() {
         return 1;
     }
 
-    auto* pixels = static_cast<uint8_t*>(mmap(nullptr,
-                                              static_cast<size_t>(buffer.desc.size_bytes),
-                                              PROT_READ | PROT_WRITE,
-                                              MAP_SHARED,
-                                              buffer.fd,
-                                              0));
+    auto* pixels = static_cast<uint8_t*>(
+        mmap(nullptr, static_cast<size_t>(buffer.desc.size_bytes), PROT_READ | PROT_WRITE, MAP_SHARED, buffer.fd, 0));
     if (pixels == MAP_FAILED) {
         printf("gui_smoke: failed to mmap display buffer\n");
         return 1;

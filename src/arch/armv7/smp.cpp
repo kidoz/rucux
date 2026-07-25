@@ -41,7 +41,8 @@ extern "C" void ap_entry_arm(uint32_t cpu_id) {
     uint32_t* stack = reinterpret_cast<uint32_t*>(idle->stack_base + idle->stack_size);
     // idle_task address will be the first "pc" popped
     *(--stack) = reinterpret_cast<uint32_t>(&kernel::scheduler::idle_task); // pc
-    for (int i = 0; i < 8; ++i) *(--stack) = 0;        // r4-r11
+    for (int i = 0; i < 8; ++i)
+        *(--stack) = 0; // r4-r11
     idle->stack_pointer = reinterpret_cast<uintptr_t>(stack);
     idle->state = kernel::scheduler::thread_state::READY;
 

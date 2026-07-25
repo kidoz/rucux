@@ -7,11 +7,11 @@
 #include <kernel/print.hpp>
 #include <kernel/process/signal.hpp>
 #include <kernel/scheduler/scheduler.hpp>
-#include <kernel/trace.hpp>
-#include <kernel/vfs/vfs.hpp>
 #include <kernel/sync/futex.hpp>
 #include <kernel/sync/rcu.hpp>
 #include <kernel/sync/spinlock.hpp>
+#include <kernel/trace.hpp>
+#include <kernel/vfs/vfs.hpp>
 #include <knew.hpp>
 
 #ifdef __x86_64__
@@ -59,8 +59,10 @@ static void destroy_thread(thread* t) noexcept {
 
 static void reap_thread_locked(thread* victim, thread* prev) noexcept {
     if (!victim) return;
-    if (prev) prev->all_next = victim->all_next;
-    else g_all_threads = victim->all_next;
+    if (prev)
+        prev->all_next = victim->all_next;
+    else
+        g_all_threads = victim->all_next;
     destroy_thread(victim);
 }
 
@@ -82,7 +84,8 @@ bool thread::ensure_fd_capacity(size_t n) noexcept {
     if (fd_table && fd_count >= n) return true;
 
     size_t new_count = fd_count ? fd_count : INITIAL_FDS;
-    while (new_count < n) new_count *= 2;
+    while (new_count < n)
+        new_count *= 2;
     if (new_count > MAX_FDS) new_count = MAX_FDS;
 
     auto* new_table = new file_descriptor[new_count];
@@ -206,13 +209,18 @@ void scheduler::init() noexcept {
 #if defined(__x86_64__)
     uint64_t* stack = reinterpret_cast<uint64_t*>(idle->stack_base + idle->stack_size);
     *(--stack) = reinterpret_cast<uint64_t>(idle_task);
-    *(--stack) = 0; *(--stack) = 0; *(--stack) = 0;
-    *(--stack) = 0; *(--stack) = 0; *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
     idle->stack_pointer = reinterpret_cast<uintptr_t>(stack);
 #elif defined(__arm__)
     uint32_t* stack = reinterpret_cast<uint32_t*>(idle->stack_base + idle->stack_size);
     *(--stack) = reinterpret_cast<uint32_t>(idle_task);
-    for (int i = 0; i < 8; ++i) *(--stack) = 0;
+    for (int i = 0; i < 8; ++i)
+        *(--stack) = 0;
     idle->stack_pointer = reinterpret_cast<uintptr_t>(stack);
 #endif
     idle->state = thread_state::READY;
@@ -238,8 +246,12 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
 
     uint64_t* stack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
     *(--stack) = reinterpret_cast<uint64_t>(entry);
-    *(--stack) = 0; *(--stack) = 0; *(--stack) = 0;
-    *(--stack) = 0; *(--stack) = 0; *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
+    *(--stack) = 0;
 
     t->stack_pointer = reinterpret_cast<uintptr_t>(stack);
     t->async_head = 0;
@@ -250,7 +262,8 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->recv_buffer = nullptr;
     t->ipc_caller = nullptr;
     t->ipc_waiting = false;
-    for (int s = 0; s < thread::MAX_SIGNALS; ++s) t->sig_handlers[s] = nullptr;
+    for (int s = 0; s < thread::MAX_SIGNALS; ++s)
+        t->sig_handlers[s] = nullptr;
     t->sig_mask = 0;
     t->sig_pending = 0;
     t->exit_code = 0;
@@ -307,7 +320,8 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
     t->futex_wait_addr = 0;
     t->ipc_caller = nullptr;
     t->ipc_waiting = false;
-    for (int s = 0; s < thread::MAX_SIGNALS; ++s) t->sig_handlers[s] = nullptr;
+    for (int s = 0; s < thread::MAX_SIGNALS; ++s)
+        t->sig_handlers[s] = nullptr;
     t->sig_mask = 0;
     t->sig_pending = 0;
     t->exit_code = 0;
@@ -332,7 +346,8 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
 #elif defined(__arm__)
     uint32_t* kstack = reinterpret_cast<uint32_t*>(t->stack_base + t->stack_size);
     *(--kstack) = reinterpret_cast<uint32_t>(clone_trampoline);
-    for (int i = 0; i < 8; ++i) *(--kstack) = 0;
+    for (int i = 0; i < 8; ++i)
+        *(--kstack) = 0;
     t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
 #endif
 
@@ -400,13 +415,18 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
 #if defined(__x86_64__)
     uint64_t* kstack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
     *(--kstack) = reinterpret_cast<uint64_t>(clone_trampoline);
-    *(--kstack) = 0; *(--kstack) = 0; *(--kstack) = 0;
-    *(--kstack) = 0; *(--kstack) = 0; *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
+    *(--kstack) = 0;
     t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
 #elif defined(__arm__)
     uint32_t* kstack = reinterpret_cast<uint32_t*>(t->stack_base + t->stack_size);
     *(--kstack) = reinterpret_cast<uint32_t>(clone_trampoline);
-    for (int i = 0; i < 8; ++i) *(--kstack) = 0;
+    for (int i = 0; i < 8; ++i)
+        *(--kstack) = 0;
     t->stack_pointer = reinterpret_cast<uintptr_t>(kstack);
 #endif
 
@@ -455,8 +475,10 @@ void scheduler::cleanup_terminated() noexcept {
                 continue;
             }
             thread* to_delete = cur;
-            if (prev) prev->all_next = cur->all_next;
-            else      g_all_threads = cur->all_next;
+            if (prev)
+                prev->all_next = cur->all_next;
+            else
+                g_all_threads = cur->all_next;
             cur = cur->all_next;
             destroy_thread(to_delete);
         } else {
@@ -476,24 +498,23 @@ void scheduler::schedule() noexcept {
     thread* new_thread = nullptr;
     bool old_thread_requeued = false;
 
-choose_next:
-    {
-        uintptr_t rq_flags = pcpu->sched_lock.lock();
+choose_next: {
+    uintptr_t rq_flags = pcpu->sched_lock.lock();
 
-        // Re-enqueue the old thread if it was running
-        if (old_thread && old_thread->state == thread_state::RUNNING &&
-            old_thread != pcpu->idle_thread && !old_thread_requeued) {
-            old_thread->state = thread_state::READY;
-            old_thread->last_cpu = pcpu->cpu_id;
-            enqueue_on_cpu(pcpu, old_thread);
-            old_thread_requeued = true;
-        }
-
-        // Pick highest-priority runnable thread
-        new_thread = dequeue_from_cpu(pcpu);
-
-        pcpu->sched_lock.unlock(rq_flags);
+    // Re-enqueue the old thread if it was running
+    if (old_thread && old_thread->state == thread_state::RUNNING && old_thread != pcpu->idle_thread &&
+        !old_thread_requeued) {
+        old_thread->state = thread_state::READY;
+        old_thread->last_cpu = pcpu->cpu_id;
+        enqueue_on_cpu(pcpu, old_thread);
+        old_thread_requeued = true;
     }
+
+    // Pick highest-priority runnable thread
+    new_thread = dequeue_from_cpu(pcpu);
+
+    pcpu->sched_lock.unlock(rq_flags);
+}
 
     // If nothing on local queue, try work stealing
     if (!new_thread) {
@@ -502,8 +523,7 @@ choose_next:
 
     // If still nothing, check if current thread can continue
     if (!new_thread) {
-        if (old_thread &&
-            (old_thread->state == thread_state::RUNNING || old_thread->state == thread_state::READY)) {
+        if (old_thread && (old_thread->state == thread_state::RUNNING || old_thread->state == thread_state::READY)) {
             kernel::irq_restore(flags);
             return;
         }
@@ -535,13 +555,11 @@ choose_next:
 #endif
 #if defined(__arm__)
         if (old_thread && old_thread->pml4_phys) {
-            arch::armv7::save_user_return_context(&old_thread->user_saved_sp,
-                                                  &old_thread->user_saved_lr,
+            arch::armv7::save_user_return_context(&old_thread->user_saved_sp, &old_thread->user_saved_lr,
                                                   &old_thread->user_saved_spsr);
         }
         if (new_thread->pml4_phys && new_thread->user_saved_spsr != 0) {
-            arch::armv7::restore_user_return_context(new_thread->user_saved_sp,
-                                                     new_thread->user_saved_lr,
+            arch::armv7::restore_user_return_context(new_thread->user_saved_sp, new_thread->user_saved_lr,
                                                      new_thread->user_saved_spsr);
         }
 #endif

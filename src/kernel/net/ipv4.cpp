@@ -7,7 +7,7 @@
 namespace kernel::net {
 void tcp_input(netif* iface, netbuf* buf) noexcept;
 void udp_input(netif* iface, netbuf* buf) noexcept;
-}
+} // namespace kernel::net
 
 namespace kernel::net {
 
@@ -35,10 +35,8 @@ void ipv4_input(netif* iface, netbuf* buf) noexcept {
     }
 
     // Check destination: must be for us, broadcast, or loopback
-    if (ip->dst_addr != iface->ip.addr &&
-        ip->dst_addr != 0xFFFFFFFF &&
-        (ip->dst_addr | iface->ip.netmask) != 0xFFFFFFFF &&
-        iface != netif_loopback()) {
+    if (ip->dst_addr != iface->ip.addr && ip->dst_addr != 0xFFFFFFFF &&
+        (ip->dst_addr | iface->ip.netmask) != 0xFFFFFFFF && iface != netif_loopback()) {
         netbuf::free(buf);
         return;
     }
@@ -52,9 +50,15 @@ void ipv4_input(netif* iface, netbuf* buf) noexcept {
     buf->pull(hdr_len);
 
     switch (ip->protocol) {
-    case IPPROTO_TCP: tcp_input(iface, buf); break;
-    case IPPROTO_UDP: udp_input(iface, buf); break;
-    default:          netbuf::free(buf); break;
+    case IPPROTO_TCP:
+        tcp_input(iface, buf);
+        break;
+    case IPPROTO_UDP:
+        udp_input(iface, buf);
+        break;
+    default:
+        netbuf::free(buf);
+        break;
     }
 }
 

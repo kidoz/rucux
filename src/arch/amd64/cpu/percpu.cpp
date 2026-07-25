@@ -12,7 +12,7 @@ static constexpr uint32_t MSR_KERNEL_GS_BASE = 0xC0000102;
 static inline void wrmsr(uint32_t msr, uint64_t value) noexcept {
     uint32_t lo = value & 0xFFFFFFFF;
     uint32_t hi = (value >> 32) & 0xFFFFFFFF;
-    asm volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi) : "memory");
+    asm volatile("wrmsr" ::"c"(msr), "a"(lo), "d"(hi) : "memory");
 }
 
 void arch_set_percpu_base(per_cpu* p) noexcept {
@@ -32,12 +32,19 @@ atomic<uint32_t> g_cpu_count{0};
 
 // ─── Run queue methods (need full thread definition) ───────────────────────
 
-void run_queue::init() noexcept { head = tail = nullptr; count = 0; }
+void run_queue::init() noexcept {
+    head = tail = nullptr;
+    count = 0;
+}
 
 void run_queue::enqueue(scheduler::thread* t) noexcept {
     t->next = nullptr;
-    if (!head) { head = tail = t; }
-    else { tail->next = t; tail = t; }
+    if (!head) {
+        head = tail = t;
+    } else {
+        tail->next = t;
+        tail = t;
+    }
     count++;
 }
 

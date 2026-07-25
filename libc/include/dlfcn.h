@@ -7,13 +7,13 @@ extern "C" {
 #endif
 
 typedef struct {
-    const char *dli_fname;
-    void       *dli_fbase;
-    const char *dli_sname;
-    void       *dli_saddr;
+    const char* dli_fname;
+    void* dli_fbase;
+    const char* dli_sname;
+    void* dli_saddr;
 } Dl_info;
 
-static inline int dladdr(const void *addr, Dl_info *info) {
+static inline int dladdr(const void* addr, Dl_info* info) {
     (void)addr;
     (void)info;
     return 0;

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <uapi/kernel/initd.h>
 #include <uapi/kernel/syscalls.h>
 #include <uapi/kernel/top.h>
+#include <unistd.h>
 
 extern "C" {
 struct message {
@@ -32,13 +32,20 @@ static void copy_service_name(message& msg, const char* name) {
 
 static const char* service_state_to_str(uint64_t state) {
     switch (state) {
-    case INITD_SERVICE_STARTING: return "STARTING";
-    case INITD_SERVICE_RUNNING: return "RUNNING";
-    case INITD_SERVICE_STOPPING: return "STOPPING";
-    case INITD_SERVICE_STOPPED: return "STOPPED";
-    case INITD_SERVICE_FAILED: return "FAILED";
-    case INITD_SERVICE_WAITING: return "WAITING";
-    default: return "UNKNOWN";
+    case INITD_SERVICE_STARTING:
+        return "STARTING";
+    case INITD_SERVICE_RUNNING:
+        return "RUNNING";
+    case INITD_SERVICE_STOPPING:
+        return "STOPPING";
+    case INITD_SERVICE_STOPPED:
+        return "STOPPED";
+    case INITD_SERVICE_FAILED:
+        return "FAILED";
+    case INITD_SERVICE_WAITING:
+        return "WAITING";
+    default:
+        return "UNKNOWN";
     }
 }
 
@@ -77,11 +84,20 @@ static int control_service(uint32_t type, const char* name) {
 
     const char* err = "failed";
     switch (result) {
-    case INITD_CTL_ENOENT: err = "unknown service"; break;
-    case INITD_CTL_EBUSY: err = "already active"; break;
-    case INITD_CTL_EFAIL: err = "operation failed"; break;
-    case INITD_CTL_EPERM: err = "operation denied"; break;
-    default: break;
+    case INITD_CTL_ENOENT:
+        err = "unknown service";
+        break;
+    case INITD_CTL_EBUSY:
+        err = "already active";
+        break;
+    case INITD_CTL_EFAIL:
+        err = "operation failed";
+        break;
+    case INITD_CTL_EPERM:
+        err = "operation denied";
+        break;
+    default:
+        break;
     }
 
     printf("service: %s: %s\n", name, err);
@@ -113,7 +129,7 @@ int main(int argc, char** argv) {
         if (n <= 0) continue;
 
         buf[n] = '\0';
-        
+
         // trim newline
         for (int i = 0; i < n; i++) {
             if (buf[i] == '\n' || buf[i] == '\r') {
@@ -134,9 +150,10 @@ int main(int argc, char** argv) {
             printf("  service <start|stop|status> <name>\n");
         } else if (strncmp(buf, "ls", 2) == 0) {
             const char* path = buf + 2;
-            while (*path == ' ') path++;
+            while (*path == ' ')
+                path++;
             if (*path == '\0') path = "/fat32";
-            
+
             int fd = syscall(SYS_OPEN, (long)path, 0);
             if (fd < 0) {
                 printf("ls: cannot open %s\n", path);
@@ -150,8 +167,9 @@ int main(int argc, char** argv) {
             }
         } else if (strncmp(buf, "cat", 3) == 0) {
             const char* path = buf + 3;
-            while (*path == ' ') path++;
-            
+            while (*path == ' ')
+                path++;
+
             if (*path == '\0') {
                 printf("cat: missing file operand\n");
                 continue;
@@ -170,7 +188,8 @@ int main(int argc, char** argv) {
             }
         } else if (strncmp(buf, "echo", 4) == 0) {
             const char* msg = buf + 4;
-            while (*msg == ' ') msg++;
+            while (*msg == ' ')
+                msg++;
             printf("%s\n", msg);
         } else if (strncmp(buf, "top", 3) == 0) {
             struct top_info info;
@@ -182,30 +201,41 @@ int main(int argc, char** argv) {
                 printf("--------------------------------\n");
                 for (uint32_t i = 0; i < info.num_processes; ++i) {
                     const char* state_str = "UNKNOWN";
-                    switch(info.processes[i].state) {
-                        case 0: state_str = "READY"; break;
-                        case 1: state_str = "RUNNING"; break;
-                        case 2: state_str = "BLOCKED"; break;
-                        case 3: state_str = "TERMINAT"; break;
+                    switch (info.processes[i].state) {
+                    case 0:
+                        state_str = "READY";
+                        break;
+                    case 1:
+                        state_str = "RUNNING";
+                        break;
+                    case 2:
+                        state_str = "BLOCKED";
+                        break;
+                    case 3:
+                        state_str = "TERMINAT";
+                        break;
                     }
-                    printf(" %4d | %-8s | %4d | %3d\n", 
-                        info.processes[i].tid, state_str, info.processes[i].priority, info.processes[i].cpu);
+                    printf(" %4d | %-8s | %4d | %3d\n", info.processes[i].tid, state_str, info.processes[i].priority,
+                           info.processes[i].cpu);
                 }
                 printf("\nTotal threads: %d\n", info.num_processes);
             }
         } else if (strncmp(buf, "service", 7) == 0) {
             char* args = buf + 7;
-            while (*args == ' ') args++;
+            while (*args == ' ')
+                args++;
 
             char* action = args;
-            while (*args && *args != ' ') args++;
+            while (*args && *args != ' ')
+                args++;
             if (*args == '\0') {
                 printf("usage: service <start|stop|status> <name>\n");
                 continue;
             }
 
             *args++ = '\0';
-            while (*args == ' ') args++;
+            while (*args == ' ')
+                args++;
             if (*args == '\0') {
                 printf("usage: service <start|stop|status> <name>\n");
                 continue;

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 
 static pthread_mutex_t my_mutex = PTHREAD_MUTEX_INITIALIZER;

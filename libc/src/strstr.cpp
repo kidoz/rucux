@@ -20,9 +20,9 @@ char* strstr(const char* haystack, const char* needle) {
 
 char* strpbrk(const char* s, const char* accept) {
     while (*s) {
-        const char *a = accept;
+        const char* a = accept;
         while (*a) {
-            if (*a++ == *s) return (char *)s;
+            if (*a++ == *s) return (char*)s;
         }
         ++s;
     }
@@ -32,13 +32,13 @@ char* strpbrk(const char* s, const char* accept) {
 char* strtok_r(char* str, const char* delim, char** saveptr) {
     if (!str && !saveptr) return nullptr;
     if (!str) str = *saveptr;
-    
+
     str += strspn(str, delim);
     if (!*str) {
         *saveptr = str;
         return nullptr;
     }
-    
+
     char* token = str;
     str = strpbrk(token, delim);
     if (str) {
@@ -55,5 +55,4 @@ static char* g_strtok_saveptr = nullptr;
 char* strtok(char* str, const char* delim) {
     return strtok_r(str, delim, &g_strtok_saveptr);
 }
-
 }

@@ -42,4 +42,3 @@ void power_off() noexcept {
 }
 
 } // namespace arch::amd64::power
-

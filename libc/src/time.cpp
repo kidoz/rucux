@@ -64,7 +64,10 @@ time_t mktime(struct tm* tm) {
 }
 
 size_t strftime(char* s, size_t max, const char* format, const struct tm* tm) {
-    (void)s; (void)max; (void)format; (void)tm;
+    (void)s;
+    (void)max;
+    (void)format;
+    (void)tm;
     return 0; // stub
 }
 
@@ -84,5 +87,4 @@ int gettimeofday(struct timeval* tv, void* tz) {
 int clock_gettime(int clk_id, struct timespec* tp) {
     return (int)__syscall(SYS_CLOCK_GETTIME, clk_id, (long)tp);
 }
-
 }

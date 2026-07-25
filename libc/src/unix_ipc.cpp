@@ -4,8 +4,7 @@
 
 #include "syscall_impl.h"
 
-static long unix_ipc_call(long op, long arg0 = 0, long arg1 = 0, long arg2 = 0, long arg3 = 0,
-                          long arg4 = 0) {
+static long unix_ipc_call(long op, long arg0 = 0, long arg1 = 0, long arg2 = 0, long arg3 = 0, long arg4 = 0) {
     return __syscall(SYS_UNIX_IPC, op, arg0, arg1, arg2, arg3, arg4);
 }
 

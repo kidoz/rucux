@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include <arch/armv7/power.hpp>
 
-#include <generated_arm_platform.hpp>
 #include <arch/armv7/psci.hpp>
+#include <generated_arm_platform.hpp>
 
 namespace arch::armv7::power {
 namespace {
@@ -21,10 +21,7 @@ constexpr uint32_t SEMIHOST_ADP_STOPPED_APPLICATION_EXIT = 0x20026U;
 
     // On ARMv7/A32 QEMU semihosting uses the standard SVC trap, not the
     // ARMv8-era HLT encoding that faults as undefined on Cortex-A15.
-    asm volatile("svc #0x123456"
-                 :
-                 : "r"(r0), "r"(r1)
-                 : "memory");
+    asm volatile("svc #0x123456" : : "r"(r0), "r"(r1) : "memory");
 
     while (true) {
         asm volatile("wfi");

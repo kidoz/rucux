@@ -7,8 +7,8 @@
 #include <sys/trace.h>
 #include <sys/trace_producer.h>
 #include <uapi/kernel/initd.h>
-#include <uapi/kernel/trace_producer.h>
 #include <uapi/kernel/syscalls.h>
+#include <uapi/kernel/trace_producer.h>
 #include <uapi/kernel/traced.h>
 #include <uapi/kernel/traced_export.h>
 #include <unistd.h>
@@ -66,64 +66,102 @@ uint32_t high_u32(uint64_t value) {
 
 static const char* event_name(uint16_t event) {
     switch (event) {
-    case TRACE_EVENT_BOOT_STAGE: return "BOOT";
-    case TRACE_EVENT_THREAD_ENQUEUE: return "ENQUEUE";
-    case TRACE_EVENT_SCHED_SWITCH: return "SWITCH";
-    case TRACE_EVENT_THREAD_BLOCK: return "BLOCK";
-    case TRACE_EVENT_THREAD_EXIT: return "EXIT";
-    case TRACE_EVENT_IRQ_TIMER: return "IRQ_TIMER";
-    case TRACE_EVENT_IRQ_WAKE: return "IRQ_WAKE";
-    case TRACE_EVENT_SYSCALL_ENTER: return "SYSCALL_IN";
-    case TRACE_EVENT_SYSCALL_EXIT: return "SYSCALL_OUT";
-    case TRACE_EVENT_PAGE_FAULT: return "PAGE_FAULT";
-    case TRACE_EVENT_TRACE_CTL: return "TRACE_CTL";
-    case TRACE_EVENT_IPC_SEND_SYNC: return "IPC_SEND_SYNC";
-    case TRACE_EVENT_IPC_SEND_ASYNC: return "IPC_SEND_ASYNC";
-    case TRACE_EVENT_IPC_RECV_SYNC: return "IPC_RECV_SYNC";
-    case TRACE_EVENT_IPC_CALL: return "IPC_CALL";
-    case TRACE_EVENT_IPC_REPLY: return "IPC_REPLY";
-    case TRACE_EVENT_IPC_WAIT: return "IPC_WAIT";
-    case TRACE_EVENT_VFS_OPEN: return "VFS_OPEN";
-    case TRACE_EVENT_VFS_READ: return "VFS_READ";
-    case TRACE_EVENT_VFS_WRITE: return "VFS_WRITE";
-    case TRACE_EVENT_VFS_CLOSE: return "VFS_CLOSE";
-    case TRACE_EVENT_CRASH: return "CRASH";
-    default: return "UNKNOWN";
+    case TRACE_EVENT_BOOT_STAGE:
+        return "BOOT";
+    case TRACE_EVENT_THREAD_ENQUEUE:
+        return "ENQUEUE";
+    case TRACE_EVENT_SCHED_SWITCH:
+        return "SWITCH";
+    case TRACE_EVENT_THREAD_BLOCK:
+        return "BLOCK";
+    case TRACE_EVENT_THREAD_EXIT:
+        return "EXIT";
+    case TRACE_EVENT_IRQ_TIMER:
+        return "IRQ_TIMER";
+    case TRACE_EVENT_IRQ_WAKE:
+        return "IRQ_WAKE";
+    case TRACE_EVENT_SYSCALL_ENTER:
+        return "SYSCALL_IN";
+    case TRACE_EVENT_SYSCALL_EXIT:
+        return "SYSCALL_OUT";
+    case TRACE_EVENT_PAGE_FAULT:
+        return "PAGE_FAULT";
+    case TRACE_EVENT_TRACE_CTL:
+        return "TRACE_CTL";
+    case TRACE_EVENT_IPC_SEND_SYNC:
+        return "IPC_SEND_SYNC";
+    case TRACE_EVENT_IPC_SEND_ASYNC:
+        return "IPC_SEND_ASYNC";
+    case TRACE_EVENT_IPC_RECV_SYNC:
+        return "IPC_RECV_SYNC";
+    case TRACE_EVENT_IPC_CALL:
+        return "IPC_CALL";
+    case TRACE_EVENT_IPC_REPLY:
+        return "IPC_REPLY";
+    case TRACE_EVENT_IPC_WAIT:
+        return "IPC_WAIT";
+    case TRACE_EVENT_VFS_OPEN:
+        return "VFS_OPEN";
+    case TRACE_EVENT_VFS_READ:
+        return "VFS_READ";
+    case TRACE_EVENT_VFS_WRITE:
+        return "VFS_WRITE";
+    case TRACE_EVENT_VFS_CLOSE:
+        return "VFS_CLOSE";
+    case TRACE_EVENT_CRASH:
+        return "CRASH";
+    default:
+        return "UNKNOWN";
     }
 }
 
 static const char* clock_name(uint32_t clock_id) {
     switch (clock_id) {
-    case TRACE_CLOCK_TSC_RAW: return "tsc_raw";
-    case TRACE_CLOCK_CNTVCT_RAW: return "cntvct_raw";
-    default: return "none";
+    case TRACE_CLOCK_TSC_RAW:
+        return "tsc_raw";
+    case TRACE_CLOCK_CNTVCT_RAW:
+        return "cntvct_raw";
+    default:
+        return "none";
     }
 }
 
 static const char* category_name(uint32_t category) {
     switch (category) {
-    case TRACED_PRODUCER_CATEGORY_SERVICE: return "service";
-    case TRACED_PRODUCER_CATEGORY_DRIVER: return "driver";
-    case TRACED_PRODUCER_CATEGORY_APP: return "app";
-    default: return "generic";
+    case TRACED_PRODUCER_CATEGORY_SERVICE:
+        return "service";
+    case TRACED_PRODUCER_CATEGORY_DRIVER:
+        return "driver";
+    case TRACED_PRODUCER_CATEGORY_APP:
+        return "app";
+    default:
+        return "generic";
     }
 }
 
 static const char* export_clock_name(uint32_t clock_id) {
     switch (clock_id) {
-    case TRACED_EXPORT_CLOCK_KERNEL_RAW: return "kernel-raw";
-    case TRACED_EXPORT_CLOCK_MONOTONIC_NS: return "monotonic-ns";
-    default: return "unknown";
+    case TRACED_EXPORT_CLOCK_KERNEL_RAW:
+        return "kernel-raw";
+    case TRACED_EXPORT_CLOCK_MONOTONIC_NS:
+        return "monotonic-ns";
+    default:
+        return "unknown";
     }
 }
 
 static const char* producer_event_name(uint16_t event) {
     switch (event) {
-    case TRACE_PRODUCER_EVENT_CONSOLE_RX: return "CONSOLE_RX";
-    case TRACE_PRODUCER_EVENT_CONSOLE_TX: return "CONSOLE_TX";
-    case TRACE_PRODUCER_EVENT_NET_REQUEST: return "NET_REQ";
-    case TRACE_PRODUCER_EVENT_NET_RESPONSE: return "NET_RESP";
-    default: return "UPROD_UNKNOWN";
+    case TRACE_PRODUCER_EVENT_CONSOLE_RX:
+        return "CONSOLE_RX";
+    case TRACE_PRODUCER_EVENT_CONSOLE_TX:
+        return "CONSOLE_TX";
+    case TRACE_PRODUCER_EVENT_NET_REQUEST:
+        return "NET_REQ";
+    case TRACE_PRODUCER_EVENT_NET_RESPONSE:
+        return "NET_RESP";
+    default:
+        return "UPROD_UNKNOWN";
     }
 }
 
@@ -209,7 +247,8 @@ bool traced_get_session(uint32_t traced_tid, traced_session_info* session_info) 
     return true;
 }
 
-bool traced_register_producer(uint32_t traced_tid, const char* name, uint32_t category, traced_producer_info* producer_info) {
+bool traced_register_producer(uint32_t traced_tid, const char* name, uint32_t category,
+                              traced_producer_info* producer_info) {
     if (!name || !producer_info) return false;
 
     message req = {};
@@ -323,26 +362,17 @@ bool acquire_stats(trace_stats* stats, bool* used_traced) {
 
 void print_status(const trace_stats& stats, bool via_traced, const traced_session_info* session_info) {
     printf("trace status\n");
-    printf("  control=%s snapshot=%s\n",
-           via_traced ? "traced" : "kernel-direct",
+    printf("  control=%s snapshot=%s\n", via_traced ? "traced" : "kernel-direct",
            via_traced ? "traced-file" : "kernel-direct");
     if (session_info) {
         printf("  session=%s generation=%u producers=%u last_snapshot=%llu\n",
-               session_info->active ? "active" : "stopped",
-               session_info->generation,
-               session_info->producers,
+               session_info->active ? "active" : "stopped", session_info->generation, session_info->producers,
                (unsigned long long)session_info->last_snapshot_bytes);
     }
-    printf("  clock=%s freq=%llu enabled=%u cpus=%u capacity/cpu=%u\n",
-           clock_name(stats.clock_id),
-           (unsigned long long)stats.clock_freq_hz,
-           stats.enabled,
-           stats.cpu_count,
-           stats.record_capacity_per_cpu);
-    printf("  written=%llu available=%llu overwritten=%llu\n",
-           (unsigned long long)stats.records_written,
-           (unsigned long long)stats.records_available,
-           (unsigned long long)stats.records_overwritten);
+    printf("  clock=%s freq=%llu enabled=%u cpus=%u capacity/cpu=%u\n", clock_name(stats.clock_id),
+           (unsigned long long)stats.clock_freq_hz, stats.enabled, stats.cpu_count, stats.record_capacity_per_cpu);
+    printf("  written=%llu available=%llu overwritten=%llu\n", (unsigned long long)stats.records_written,
+           (unsigned long long)stats.records_available, (unsigned long long)stats.records_overwritten);
 }
 
 int dump_snapshot(bool raw_output) {
@@ -394,20 +424,13 @@ int dump_snapshot(bool raw_output) {
     auto* records = reinterpret_cast<trace_record*>(header + 1);
 
     printf("trace snapshot\n");
-    printf("  control=%s snapshot=%s\n",
-           via_traced ? "traced" : "kernel-direct",
+    printf("  control=%s snapshot=%s\n", via_traced ? "traced" : "kernel-direct",
            via_traced ? "traced-file" : "kernel-direct");
-    printf("  clock=%s freq=%llu enabled=%u cpus=%u\n",
-           clock_name(stats.clock_id),
-           (unsigned long long)stats.clock_freq_hz,
-           stats.enabled,
-           stats.cpu_count);
+    printf("  clock=%s freq=%llu enabled=%u cpus=%u\n", clock_name(stats.clock_id),
+           (unsigned long long)stats.clock_freq_hz, stats.enabled, stats.cpu_count);
     printf("  written=%llu available=%llu overwritten=%llu dumped=%u bytes=%d\n",
-           (unsigned long long)header->records_written,
-           (unsigned long long)stats.records_available,
-           (unsigned long long)header->records_overwritten,
-           header->record_count,
-           (int)bytes);
+           (unsigned long long)header->records_written, (unsigned long long)stats.records_available,
+           (unsigned long long)header->records_overwritten, header->record_count, (int)bytes);
 
     uint32_t start = 0;
     if (header->record_count > 64) start = header->record_count - 64;
@@ -418,14 +441,9 @@ int dump_snapshot(bool raw_output) {
 
     for (uint32_t i = start; i < header->record_count; ++i) {
         const trace_record& rec = records[i];
-        printf(" %4llu | %3u | %3u | %-10s | 0x%016llx | 0x%016llx | 0x%016llx\n",
-               (unsigned long long)rec.seq_no,
-               rec.cpu_id,
-               rec.thread_id,
-               event_name(rec.event),
-               (unsigned long long)rec.arg0,
-               (unsigned long long)rec.arg1,
-               (unsigned long long)rec.timestamp);
+        printf(" %4llu | %3u | %3u | %-10s | 0x%016llx | 0x%016llx | 0x%016llx\n", (unsigned long long)rec.seq_no,
+               rec.cpu_id, rec.thread_id, event_name(rec.event), (unsigned long long)rec.arg0,
+               (unsigned long long)rec.arg1, (unsigned long long)rec.timestamp);
     }
 
     return 0;
@@ -437,10 +455,9 @@ int dump_export(bool raw_output) {
         return dump_snapshot(raw_output);
     }
 
-    size_t export_size = sizeof(traced_export_header) +
-                         sizeof(traced_export_section_header) + (2 * 1024 * 1024) +
-                         TRACE_PRODUCER_SLOT_COUNT *
-                             (sizeof(traced_export_section_header) + TRACE_PRODUCER_BUFFER_BYTES);
+    size_t export_size =
+        sizeof(traced_export_header) + sizeof(traced_export_section_header) + (2 * 1024 * 1024) +
+        TRACE_PRODUCER_SLOT_COUNT * (sizeof(traced_export_section_header) + TRACE_PRODUCER_BUFFER_BYTES);
     if (export_size < (512 * 1024)) export_size = 512 * 1024;
 
     void* buffer = mmap(nullptr, export_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -466,9 +483,7 @@ int dump_export(bool raw_output) {
     }
 
     printf("trace export\n");
-    printf("  sections=%u bytes=%llu\n",
-           export_header->section_count,
-           (unsigned long long)export_header->total_size);
+    printf("  sections=%u bytes=%llu\n", export_header->section_count, (unsigned long long)export_header->total_size);
 
     uint8_t* cursor = static_cast<uint8_t*>(buffer) + export_header->header_size;
     uint8_t* end = static_cast<uint8_t*>(buffer) + bytes;
@@ -497,11 +512,8 @@ int dump_export(bool raw_output) {
 
             auto* records = reinterpret_cast<trace_record*>(header + 1);
             printf("\n kernel section\n");
-            printf("  clock=%s exported-clock=%s freq=%llu cpus=%u records=%u\n",
-                   clock_name(header->clock_id),
-                   export_clock_name(section->clock_id),
-                   (unsigned long long)header->clock_freq_hz,
-                   header->cpu_count,
+            printf("  clock=%s exported-clock=%s freq=%llu cpus=%u records=%u\n", clock_name(header->clock_id),
+                   export_clock_name(section->clock_id), (unsigned long long)header->clock_freq_hz, header->cpu_count,
                    header->record_count);
 
             uint32_t start = 0;
@@ -512,33 +524,21 @@ int dump_export(bool raw_output) {
             for (uint32_t i = start; i < header->record_count; ++i) {
                 const trace_record& rec = records[i];
                 printf(" %4llu | %3u | %3u | %-10s | 0x%016llx | 0x%016llx | 0x%016llx\n",
-                       (unsigned long long)rec.seq_no,
-                       rec.cpu_id,
-                       rec.thread_id,
-                       event_name(rec.event),
-                       (unsigned long long)rec.arg0,
-                       (unsigned long long)rec.arg1,
-                       (unsigned long long)rec.timestamp);
+                       (unsigned long long)rec.seq_no, rec.cpu_id, rec.thread_id, event_name(rec.event),
+                       (unsigned long long)rec.arg0, (unsigned long long)rec.arg1, (unsigned long long)rec.timestamp);
             }
         } else if (section->type == TRACED_EXPORT_SECTION_PRODUCER_RECORDS) {
             auto* records = reinterpret_cast<trace_producer_record*>(payload);
             printf("\n producer section\n");
-            printf("  id=%u name=%s category=%s tid=%u clock=%s records=%u\n",
-                   section->producer_id,
-                   section->name,
-                   category_name(section->category),
-                   section->tid,
-                   export_clock_name(section->clock_id),
+            printf("  id=%u name=%s category=%s tid=%u clock=%s records=%u\n", section->producer_id, section->name,
+                   category_name(section->category), section->tid, export_clock_name(section->clock_id),
                    section->record_count);
             printf("  seq | event         | arg0               | arg1               | ts(ns)\n");
             printf("----------------------------------------------------------------------------\n");
             for (uint32_t i = 0; i < section->record_count; ++i) {
                 const trace_producer_record& rec = records[i];
-                printf(" %4llu | %-13s | 0x%016llx | 0x%016llx | %llu\n",
-                       (unsigned long long)rec.seq_no,
-                       producer_event_name(rec.event),
-                       (unsigned long long)rec.arg0,
-                       (unsigned long long)rec.arg1,
+                printf(" %4llu | %-13s | 0x%016llx | 0x%016llx | %llu\n", (unsigned long long)rec.seq_no,
+                       producer_event_name(rec.event), (unsigned long long)rec.arg0, (unsigned long long)rec.arg1,
                        (unsigned long long)rec.timestamp_ns);
             }
         }
@@ -557,9 +557,7 @@ int print_producers(uint32_t traced_tid) {
     }
 
     printf("trace producers\n");
-    printf("  session=%s generation=%u count=%u\n",
-           session_info.active ? "active" : "stopped",
-           session_info.generation,
+    printf("  session=%s generation=%u count=%u\n", session_info.active ? "active" : "stopped", session_info.generation,
            session_info.producers);
 
     for (uint32_t index = 0; index < session_info.producers; ++index) {
@@ -569,14 +567,9 @@ int print_producers(uint32_t traced_tid) {
             continue;
         }
 
-        printf("  [%u] id=%u name=%s category=%s tid=%u session=%s generation=%u\n",
-               index,
-               producer_info.id,
-               producer_info.name,
-               category_name(producer_info.category),
-               producer_info.tid,
-               session_info.active ? "active" : "stopped",
-               session_info.generation);
+        printf("  [%u] id=%u name=%s category=%s tid=%u session=%s generation=%u\n", index, producer_info.id,
+               producer_info.name, category_name(producer_info.category), producer_info.tid,
+               session_info.active ? "active" : "stopped", session_info.generation);
     }
 
     return 0;
@@ -637,7 +630,8 @@ int dump_producer(uint32_t producer_id) {
             loaded = available_records;
         }
     } else {
-        uint32_t tail_records = static_cast<uint32_t>((TRACE_PRODUCER_BUFFER_BYTES - header.write_offset) / record_size);
+        uint32_t tail_records =
+            static_cast<uint32_t>((TRACE_PRODUCER_BUFFER_BYTES - header.write_offset) / record_size);
         if (tail_records > available_records) tail_records = available_records;
         if (tail_records != 0) {
             if (lseek(fd, (long)header.write_offset, SEEK_SET) < 0) {
@@ -672,22 +666,15 @@ int dump_producer(uint32_t producer_id) {
     close(fd);
 
     printf("producer %u\n", producer_id);
-    printf("  category=%s generation=%u wrapped=%u records=%u dropped=%u\n",
-           category_name(header.category),
-           header.session_generation,
-           header.wrapped,
-           loaded,
-           header.dropped_records);
+    printf("  category=%s generation=%u wrapped=%u records=%u dropped=%u\n", category_name(header.category),
+           header.session_generation, header.wrapped, loaded, header.dropped_records);
     printf("  seq | event         | arg0               | arg1               | ts(ns)\n");
     printf("----------------------------------------------------------------------------\n");
 
     for (uint32_t i = 0; i < loaded; ++i) {
         const trace_producer_record& rec = records[i];
-        printf(" %4llu | %-13s | 0x%016llx | 0x%016llx | %llu\n",
-               (unsigned long long)rec.seq_no,
-               producer_event_name(rec.event),
-               (unsigned long long)rec.arg0,
-               (unsigned long long)rec.arg1,
+        printf(" %4llu | %-13s | 0x%016llx | 0x%016llx | %llu\n", (unsigned long long)rec.seq_no,
+               producer_event_name(rec.event), (unsigned long long)rec.arg0, (unsigned long long)rec.arg1,
                (unsigned long long)rec.timestamp_ns);
     }
 
@@ -695,7 +682,8 @@ int dump_producer(uint32_t producer_id) {
 }
 
 void print_usage() {
-    printf("usage: trace [status|start|stop|enable|disable|reset|dump|producers|producer-dump <id>|register <name> [category]] [--raw]\n");
+    printf("usage: trace [status|start|stop|enable|disable|reset|dump|producers|producer-dump <id>|register <name> "
+           "[category]] [--raw]\n");
 }
 
 uint32_t parse_category(const char* arg) {
@@ -790,11 +778,8 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        printf("trace: producer %s registered id=%u category=%s generation=%u session=%s\n",
-               arg1,
-               producer_info.id,
-               category_name(producer_info.category),
-               producer_info.generation,
+        printf("trace: producer %s registered id=%u category=%s generation=%u session=%s\n", arg1, producer_info.id,
+               category_name(producer_info.category), producer_info.generation,
                producer_info.session_active ? "active" : "stopped");
         return 0;
     }
@@ -817,10 +802,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("trace: %s ok (generation=%u session=%s producers=%u)\n",
-           command,
-           session_info.generation,
-           session_info.active ? "active" : "stopped",
-           session_info.producers);
+    printf("trace: %s ok (generation=%u session=%s producers=%u)\n", command, session_info.generation,
+           session_info.active ? "active" : "stopped", session_info.producers);
     return 0;
 }

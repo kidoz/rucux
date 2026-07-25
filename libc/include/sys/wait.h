@@ -18,8 +18,8 @@ extern "C" {
 #define WIFSTOPPED(status) (((status) & 0xff) == 0x7f)
 #define WSTOPSIG(status) WEXITSTATUS(status)
 
-pid_t wait(int *wstatus);
-pid_t waitpid(pid_t pid, int *wstatus, int options);
+pid_t wait(int* wstatus);
+pid_t waitpid(pid_t pid, int* wstatus, int options);
 
 #ifdef __cplusplus
 }

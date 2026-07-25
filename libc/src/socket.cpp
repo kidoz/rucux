@@ -25,8 +25,13 @@ int socket(int domain, int type, int protocol) {
 }
 
 int socketpair(int domain, int type, int protocol, int sv[2]) {
-    (void)domain; (void)type; (void)protocol;
-    if (sv) { sv[0] = -1; sv[1] = -1; }
+    (void)domain;
+    (void)type;
+    (void)protocol;
+    if (sv) {
+        sv[0] = -1;
+        sv[1] = -1;
+    }
     return -1; // stub
 }
 
@@ -56,11 +61,13 @@ ssize_t recv(int sockfd, void* buf, size_t len, int flags) {
 
 ssize_t sendto(int sockfd, const void* buf, size_t len, int flags, const struct sockaddr* dest_addr,
                socklen_t addrlen) {
-    return (ssize_t)__syscall(SYS_SENDTO, (long)sockfd, (long)buf, (long)len, (long)flags, (long)dest_addr, (long)addrlen);
+    return (ssize_t)__syscall(SYS_SENDTO, (long)sockfd, (long)buf, (long)len, (long)flags, (long)dest_addr,
+                              (long)addrlen);
 }
 
 ssize_t recvfrom(int sockfd, void* buf, size_t len, int flags, struct sockaddr* src_addr, socklen_t* addrlen) {
-    return (ssize_t)__syscall(SYS_RECVFROM, (long)sockfd, (long)buf, (long)len, (long)flags, (long)src_addr, (long)addrlen);
+    return (ssize_t)__syscall(SYS_RECVFROM, (long)sockfd, (long)buf, (long)len, (long)flags, (long)src_addr,
+                              (long)addrlen);
 }
 
 int shutdown(int sockfd, int how) {
@@ -77,11 +84,11 @@ int getsockopt(int sockfd, int level, int optname, void* optval, socklen_t* optl
     return (int)__syscall(SYS_GETSOCKOPT, (long)sockfd, (long)level, (long)optname, (long)optval, (long)optlen);
 }
 
-int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+int getsockname(int sockfd, struct sockaddr* addr, socklen_t* addrlen) {
     return (int)__syscall(SYS_GETSOCKNAME, (long)sockfd, (long)addr, (long)addrlen);
 }
 
-int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+int getpeername(int sockfd, struct sockaddr* addr, socklen_t* addrlen) {
     return (int)__syscall(SYS_GETPEERNAME, (long)sockfd, (long)addr, (long)addrlen);
 }
 

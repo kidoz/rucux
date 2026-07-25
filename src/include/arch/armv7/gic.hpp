@@ -10,24 +10,24 @@ namespace arch::armv7 {
 
 // GIC Distributor register offsets
 namespace gicd_reg {
-    constexpr uint32_t CTLR        = 0x000; // Control
-    constexpr uint32_t TYPER       = 0x004; // Interrupt Controller Type
-    constexpr uint32_t ISENABLER   = 0x100; // Set-Enable (banked per 32 IRQs)
-    constexpr uint32_t ICENABLER   = 0x180; // Clear-Enable
-    constexpr uint32_t ISPENDR     = 0x200; // Set-Pending
-    constexpr uint32_t ICPENDR     = 0x280; // Clear-Pending
-    constexpr uint32_t IPRIORITYR  = 0x400; // Priority (1 byte per IRQ)
-    constexpr uint32_t ITARGETSR   = 0x800; // Processor Targets (1 byte per IRQ)
-    constexpr uint32_t ICFGR       = 0xC00; // Configuration (2 bits per IRQ)
-    constexpr uint32_t SGIR        = 0xF00; // Software Generated Interrupt
+constexpr uint32_t CTLR = 0x000;       // Control
+constexpr uint32_t TYPER = 0x004;      // Interrupt Controller Type
+constexpr uint32_t ISENABLER = 0x100;  // Set-Enable (banked per 32 IRQs)
+constexpr uint32_t ICENABLER = 0x180;  // Clear-Enable
+constexpr uint32_t ISPENDR = 0x200;    // Set-Pending
+constexpr uint32_t ICPENDR = 0x280;    // Clear-Pending
+constexpr uint32_t IPRIORITYR = 0x400; // Priority (1 byte per IRQ)
+constexpr uint32_t ITARGETSR = 0x800;  // Processor Targets (1 byte per IRQ)
+constexpr uint32_t ICFGR = 0xC00;      // Configuration (2 bits per IRQ)
+constexpr uint32_t SGIR = 0xF00;       // Software Generated Interrupt
 } // namespace gicd_reg
 
 // GIC CPU Interface register offsets
 namespace gicc_reg {
-    constexpr uint32_t CTLR        = 0x000; // Control
-    constexpr uint32_t PMR         = 0x004; // Priority Mask
-    constexpr uint32_t IAR         = 0x00C; // Interrupt Acknowledge
-    constexpr uint32_t EOIR        = 0x010; // End of Interrupt
+constexpr uint32_t CTLR = 0x000; // Control
+constexpr uint32_t PMR = 0x004;  // Priority Mask
+constexpr uint32_t IAR = 0x00C;  // Interrupt Acknowledge
+constexpr uint32_t EOIR = 0x010; // End of Interrupt
 } // namespace gicc_reg
 
 class gic_distributor {

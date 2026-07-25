@@ -7,9 +7,9 @@
 namespace kernel::net {
 
 static constexpr uint16_t ETH_TYPE_IPV4 = 0x0800;
-static constexpr uint16_t ETH_TYPE_ARP  = 0x0806;
-static constexpr size_t   ETH_HEADER_LEN = 14;
-static constexpr size_t   ETH_ADDR_LEN = 6;
+static constexpr uint16_t ETH_TYPE_ARP = 0x0806;
+static constexpr size_t ETH_HEADER_LEN = 14;
+static constexpr size_t ETH_ADDR_LEN = 6;
 
 struct eth_header {
     uint8_t dst[6];

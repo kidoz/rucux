@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include <kernel/scheduler/wait_queue.hpp>
 #include <kernel/cpu/percpu.hpp>
+#include <kernel/scheduler/wait_queue.hpp>
 
 namespace kernel::scheduler {
 
@@ -69,7 +69,7 @@ void wait_queue::wake_one() noexcept {
 
     if (to_wake) {
         to_wake->wait_next = nullptr;
-        // The thread might be in the sleep queue, but unblock will set it READY 
+        // The thread might be in the sleep queue, but unblock will set it READY
         // and add it to the runqueue. check_sleepers handles it properly.
         scheduler::unblock(to_wake);
     }

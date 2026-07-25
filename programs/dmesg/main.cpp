@@ -55,8 +55,8 @@ int main(int argc, char** argv) {
         explicit_path = true;
     }
 
-    if (selector.kind != journal_view::boot_selector_kind::NONE &&
-        !explicit_path && strcmp(requested, VOLATILE_JOURNAL_PATH) == 0) {
+    if (selector.kind != journal_view::boot_selector_kind::NONE && !explicit_path &&
+        strcmp(requested, VOLATILE_JOURNAL_PATH) == 0) {
         requested = PERSISTENT_JOURNAL_PATH;
     }
 

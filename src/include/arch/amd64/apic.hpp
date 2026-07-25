@@ -7,28 +7,28 @@ namespace arch::amd64 {
 
 // Local APIC register offsets (memory-mapped)
 namespace lapic_reg {
-    constexpr uint32_t ID         = 0x020;
-    constexpr uint32_t VERSION    = 0x030;
-    constexpr uint32_t TPR        = 0x080; // Task Priority
-    constexpr uint32_t EOI        = 0x0B0; // End of Interrupt
-    constexpr uint32_t SVR        = 0x0F0; // Spurious Interrupt Vector
-    constexpr uint32_t ICR_LOW    = 0x300; // Interrupt Command (low 32)
-    constexpr uint32_t ICR_HIGH   = 0x310; // Interrupt Command (high 32)
-    constexpr uint32_t LVT_TIMER  = 0x320;
-    constexpr uint32_t LVT_LINT0  = 0x350;
-    constexpr uint32_t LVT_LINT1  = 0x360;
-    constexpr uint32_t TIMER_INIT = 0x380; // Timer Initial Count
-    constexpr uint32_t TIMER_CURR = 0x390; // Timer Current Count
-    constexpr uint32_t TIMER_DIV  = 0x3E0; // Timer Divide Config
+constexpr uint32_t ID = 0x020;
+constexpr uint32_t VERSION = 0x030;
+constexpr uint32_t TPR = 0x080;      // Task Priority
+constexpr uint32_t EOI = 0x0B0;      // End of Interrupt
+constexpr uint32_t SVR = 0x0F0;      // Spurious Interrupt Vector
+constexpr uint32_t ICR_LOW = 0x300;  // Interrupt Command (low 32)
+constexpr uint32_t ICR_HIGH = 0x310; // Interrupt Command (high 32)
+constexpr uint32_t LVT_TIMER = 0x320;
+constexpr uint32_t LVT_LINT0 = 0x350;
+constexpr uint32_t LVT_LINT1 = 0x360;
+constexpr uint32_t TIMER_INIT = 0x380; // Timer Initial Count
+constexpr uint32_t TIMER_CURR = 0x390; // Timer Current Count
+constexpr uint32_t TIMER_DIV = 0x3E0;  // Timer Divide Config
 } // namespace lapic_reg
 
 // LAPIC Timer modes
 constexpr uint32_t LAPIC_TIMER_PERIODIC = (1 << 17);
-constexpr uint32_t LAPIC_TIMER_MASKED   = (1 << 16);
+constexpr uint32_t LAPIC_TIMER_MASKED = (1 << 16);
 
 // ICR delivery modes
-constexpr uint32_t ICR_INIT  = 0x00000500;
-constexpr uint32_t ICR_SIPI  = 0x00000600;
+constexpr uint32_t ICR_INIT = 0x00000500;
+constexpr uint32_t ICR_SIPI = 0x00000600;
 constexpr uint32_t ICR_LEVEL = 0x00008000;
 constexpr uint32_t ICR_ASSERT = 0x00004000;
 constexpr uint32_t ICR_DEASSERT = 0x00000000;

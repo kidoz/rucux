@@ -37,9 +37,8 @@ extern "C" void ap_main() {
     kernel::cpu::ap_init(my_cpu_id, my_apic_id);
 
     // Enable LAPIC on this AP
-    lapic::init(kernel::cpu::this_cpu()->self
-                    ? static_cast<uintptr_t>(0) // base already set by BSP copy
-                    : 0);
+    lapic::init(kernel::cpu::this_cpu()->self ? static_cast<uintptr_t>(0) // base already set by BSP copy
+                                              : 0);
     // Re-init LAPIC with the same base as BSP
     // (The LAPIC base address is the same for all CPUs — it's memory-mapped)
     auto* pcpu = kernel::cpu::this_cpu();
@@ -67,8 +66,7 @@ extern "C" void ap_main() {
 // Offsets into the trampoline data section (must match smp_trampoline.S layout)
 // These are relative to ap_trampoline_start
 static uintptr_t trampoline_size() {
-    return reinterpret_cast<uintptr_t>(ap_trampoline_end) -
-           reinterpret_cast<uintptr_t>(ap_trampoline_start);
+    return reinterpret_cast<uintptr_t>(ap_trampoline_end) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
 }
 
 void smp_boot_aps(const acpi::madt_info& info, uintptr_t pml4_phys) noexcept {
@@ -79,31 +77,24 @@ void smp_boot_aps(const acpi::madt_info& info, uintptr_t pml4_phys) noexcept {
 
     // Copy trampoline to low memory
     size_t tramp_size = trampoline_size();
-    lib::memcpy(reinterpret_cast<void*>(TRAMPOLINE_PHYS),
-                ap_trampoline_start, tramp_size);
+    lib::memcpy(reinterpret_cast<void*>(TRAMPOLINE_PHYS), ap_trampoline_start, tramp_size);
 
     // Patch trampoline data fields.
     // Compute offsets of data fields relative to trampoline start.
 
-    uintptr_t pml4_off = reinterpret_cast<uintptr_t>(ap_pml4) -
-                          reinterpret_cast<uintptr_t>(ap_trampoline_start);
-    uintptr_t stack_off = reinterpret_cast<uintptr_t>(ap_stack) -
-                           reinterpret_cast<uintptr_t>(ap_trampoline_start);
-    uintptr_t entry_off = reinterpret_cast<uintptr_t>(ap_entry) -
-                           reinterpret_cast<uintptr_t>(ap_trampoline_start);
+    uintptr_t pml4_off = reinterpret_cast<uintptr_t>(ap_pml4) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
+    uintptr_t stack_off = reinterpret_cast<uintptr_t>(ap_stack) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
+    uintptr_t entry_off = reinterpret_cast<uintptr_t>(ap_entry) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
 
     // Write PML4 physical address for the AP to use
-    *reinterpret_cast<uint32_t*>(TRAMPOLINE_PHYS + pml4_off) =
-        static_cast<uint32_t>(pml4_phys);
+    *reinterpret_cast<uint32_t*>(TRAMPOLINE_PHYS + pml4_off) = static_cast<uint32_t>(pml4_phys);
     // Write AP kernel stack (allocated per-AP below)
     // Write C++ entry point
-    *reinterpret_cast<uint64_t*>(TRAMPOLINE_PHYS + entry_off) =
-        reinterpret_cast<uint64_t>(ap_main);
+    *reinterpret_cast<uint64_t*>(TRAMPOLINE_PHYS + entry_off) = reinterpret_cast<uint64_t>(ap_main);
 
     uint8_t bsp_apic_id = lapic::id();
 
-    kernel::print("SMP: Booting {} APs (BSP APIC ID={})\n",
-                  info.cpu_count - 1, bsp_apic_id);
+    kernel::print("SMP: Booting {} APs (BSP APIC ID={})\n", info.cpu_count - 1, bsp_apic_id);
 
     for (uint32_t i = 0; i < info.cpu_count; ++i) {
         if (!info.cpus[i].enabled) continue;
@@ -114,8 +105,7 @@ void smp_boot_aps(const acpi::madt_info& info, uintptr_t pml4_phys) noexcept {
 
         // Allocate a kernel stack for this AP (8KB)
         auto* ap_kstack = new uint8_t[8192];
-        *reinterpret_cast<uint64_t*>(TRAMPOLINE_PHYS + stack_off) =
-            reinterpret_cast<uint64_t>(ap_kstack + 8192);
+        *reinterpret_cast<uint64_t*>(TRAMPOLINE_PHYS + stack_off) = reinterpret_cast<uint64_t>(ap_kstack + 8192);
 
         // Send INIT
         lapic::send_init(target);

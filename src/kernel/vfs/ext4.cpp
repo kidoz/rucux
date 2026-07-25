@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include <kernel/vfs/ext4.hpp>
 #include <kernel/print.hpp>
+#include <kernel/vfs/ext4.hpp>
 
 namespace kernel::vfs::ext4 {
 

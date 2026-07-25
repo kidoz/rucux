@@ -23,7 +23,7 @@ struct vfs_ops {
 };
 
 struct vfs_node {
-    const char* name;  // Dynamically allocated name string
+    const char* name;   // Dynamically allocated name string
     uint32_t name_hash; // FNV-1a hash for fast comparison
     uint32_t inode;
     size_t length;

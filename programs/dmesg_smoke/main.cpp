@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
+#include "../dmesg/journal_view.hpp"
 #include <fcntl.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "../dmesg/journal_view.hpp"
 
 namespace {
 
@@ -60,14 +60,12 @@ bool verify_current_boot_view(bool persistent_available) {
         0,
     };
 
-    if (journal_view::extract_boot_section(PERSISTENT_JOURNAL_PATH, selector,
-                                           &section, &section_size, &boot_id) != 0) {
+    if (journal_view::extract_boot_section(PERSISTENT_JOURNAL_PATH, selector, &section, &section_size, &boot_id) != 0) {
         return false;
     }
 
-    bool ok = boot_id != 0 &&
-              strstr(section, "@rucux-journal boot=") != nullptr &&
-              contains_expected_boot_banner(section);
+    bool ok =
+        boot_id != 0 && strstr(section, "@rucux-journal boot=") != nullptr && contains_expected_boot_banner(section);
 
     free(section);
     return ok;

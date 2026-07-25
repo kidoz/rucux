@@ -22,11 +22,9 @@ static bool sig_match(const char* a, const char* b, size_t len) noexcept {
 static sdt_header* find_table(uintptr_t rsdp_phys, const char* sig) noexcept {
     auto* rsdp = reinterpret_cast<rsdp_descriptor*>(rsdp_phys);
 
-    if (!sig_match(rsdp->signature, "RSD PTR ", 8))
-        return nullptr;
+    if (!sig_match(rsdp->signature, "RSD PTR ", 8)) return nullptr;
 
-    if (!validate_checksum(rsdp, sizeof(rsdp_descriptor)))
-        return nullptr;
+    if (!validate_checksum(rsdp, sizeof(rsdp_descriptor))) return nullptr;
 
     // Try XSDT first (ACPI 2.0+), fall back to RSDT
     if (rsdp->revision >= 2) {
@@ -37,23 +35,20 @@ static sdt_header* find_table(uintptr_t rsdp_phys, const char* sig) noexcept {
             auto* ptrs = reinterpret_cast<uint64_t*>(reinterpret_cast<uintptr_t>(xsdt) + sizeof(sdt_header));
             for (size_t i = 0; i < entries; ++i) {
                 auto* hdr = reinterpret_cast<sdt_header*>(ptrs[i]);
-                if (sig_match(hdr->signature, sig, 4))
-                    return hdr;
+                if (sig_match(hdr->signature, sig, 4)) return hdr;
             }
         }
     }
 
     // RSDT (32-bit pointers)
     auto* rsdt = reinterpret_cast<sdt_header*>(static_cast<uintptr_t>(rsdp->rsdt_address));
-    if (!sig_match(rsdt->signature, "RSDT", 4) || !validate_checksum(rsdt, rsdt->length))
-        return nullptr;
+    if (!sig_match(rsdt->signature, "RSDT", 4) || !validate_checksum(rsdt, rsdt->length)) return nullptr;
 
     size_t entries = (rsdt->length - sizeof(sdt_header)) / 4;
     auto* ptrs = reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(rsdt) + sizeof(sdt_header));
     for (size_t i = 0; i < entries; ++i) {
         auto* hdr = reinterpret_cast<sdt_header*>(static_cast<uintptr_t>(ptrs[i]));
-        if (sig_match(hdr->signature, sig, 4))
-            return hdr;
+        if (sig_match(hdr->signature, sig, 4)) return hdr;
     }
 
     return nullptr;
@@ -112,8 +107,7 @@ bool parse_madt(uintptr_t rsdp_phys, madt_info& info) noexcept {
         entry_addr += entry->length;
     }
 
-    kernel::print("ACPI: MADT parsed — {} CPUs, LAPIC=0x{x}, IOAPIC=0x{x}\n",
-                  info.cpu_count,
+    kernel::print("ACPI: MADT parsed — {} CPUs, LAPIC=0x{x}, IOAPIC=0x{x}\n", info.cpu_count,
                   reinterpret_cast<void*>(static_cast<uintptr_t>(info.lapic_address)),
                   reinterpret_cast<void*>(static_cast<uintptr_t>(info.io_apic_address)));
 

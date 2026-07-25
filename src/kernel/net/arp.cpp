@@ -54,13 +54,12 @@ void arp_add_static(uint32_t ip, const uint8_t mac[6]) noexcept {
 
 // ─── ARP send ──────────────────────────────────────────────────────────────
 
-static void arp_send(netif* iface, uint16_t op, uint32_t target_ip,
-                     const uint8_t target_mac[6]) noexcept {
+static void arp_send(netif* iface, uint16_t op, uint32_t target_ip, const uint8_t target_mac[6]) noexcept {
     auto* buf = netbuf::alloc();
     if (!buf) return;
 
     auto* arp = reinterpret_cast<arp_header*>(buf->put(sizeof(arp_header)));
-    arp->hw_type = htons(1);      // Ethernet
+    arp->hw_type = htons(1);         // Ethernet
     arp->proto_type = htons(0x0800); // IPv4
     arp->hw_len = 6;
     arp->proto_len = 4;

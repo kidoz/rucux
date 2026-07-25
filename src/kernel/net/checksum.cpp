@@ -19,8 +19,7 @@ uint16_t checksum(const void* data, size_t len) noexcept {
     return static_cast<uint16_t>(~sum);
 }
 
-uint16_t checksum_pseudo(uint32_t src, uint32_t dst, uint8_t proto,
-                          const void* data, size_t len) noexcept {
+uint16_t checksum_pseudo(uint32_t src, uint32_t dst, uint8_t proto, const void* data, size_t len) noexcept {
     uint32_t sum = 0;
 
     // Pseudo-header

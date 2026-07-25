@@ -78,8 +78,7 @@ void buddy_allocator::init(uintptr_t base, size_t total_pages) noexcept {
         while (order > 0) {
             size_t block_pages = 1UL << order;
             uintptr_t alignment = block_pages * PAGE_SIZE;
-            if (block_pages <= remaining && (addr % alignment) == 0)
-                break;
+            if (block_pages <= remaining && (addr % alignment) == 0) break;
             order--;
         }
 
@@ -96,8 +95,8 @@ void buddy_allocator::init(uintptr_t base, size_t total_pages) noexcept {
         remaining -= block_pages;
     }
 
-    kernel::print("Buddy: {} pages managed ({} MB), bitmap {} pages\n",
-                  free_pages_, (free_pages_ * PAGE_SIZE) / (1024 * 1024), bitmap_pages);
+    kernel::print("Buddy: {} pages managed ({} MB), bitmap {} pages\n", free_pages_,
+                  (free_pages_ * PAGE_SIZE) / (1024 * 1024), bitmap_pages);
 }
 
 uintptr_t buddy_allocator::alloc(uint32_t order) noexcept {
@@ -110,8 +109,7 @@ uintptr_t buddy_allocator::alloc(uint32_t order) noexcept {
     while (current <= MAX_ORDER && !free_lists_[current])
         current++;
 
-    if (current > MAX_ORDER)
-        return 0; // Out of memory
+    if (current > MAX_ORDER) return 0; // Out of memory
 
     // Remove block from free list
     free_block* block = free_lists_[current];
@@ -147,8 +145,7 @@ void buddy_allocator::free(uintptr_t addr, uint32_t order) noexcept {
         toggle_bit(addr, order);
 
         // If the bit is now 1, the buddy is still allocated → can't coalesce
-        if (is_free(addr, order))
-            break;
+        if (is_free(addr, order)) break;
 
         // Buddy is free → remove it from its free list and coalesce
         uintptr_t buddy_addr = buddy_of(addr, order);
@@ -164,8 +161,7 @@ void buddy_allocator::free(uintptr_t addr, uint32_t order) noexcept {
         }
 
         // Merge: use the lower address as the new block
-        if (buddy_addr < addr)
-            addr = buddy_addr;
+        if (buddy_addr < addr) addr = buddy_addr;
         order++;
     }
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <kernel/sync/spinlock.hpp>
 #include <lib/stddef.hpp>
 #include <stdint.h>
-#include <kernel/sync/spinlock.hpp>
 
 namespace kernel::memory {
 

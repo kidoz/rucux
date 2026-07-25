@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <fcntl.h>
-#include <stdint.h>
 #include <sched.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,10 +119,8 @@ bool flush_journal(int fd) {
 
 bool append_rotation_notice(int fd, uint64_t boot_id) {
     char notice[BOOT_MARKER_BUFFER_SIZE];
-    int written = snprintf(notice, sizeof(notice), "%s%llu%s reason=capacity\n",
-                           RUCUX_JOURNAL_MARKER_PREFIX,
-                           static_cast<unsigned long long>(boot_id),
-                           RUCUX_JOURNAL_EVENT_ROTATE);
+    int written = snprintf(notice, sizeof(notice), "%s%llu%s reason=capacity\n", RUCUX_JOURNAL_MARKER_PREFIX,
+                           static_cast<unsigned long long>(boot_id), RUCUX_JOURNAL_EVENT_ROTATE);
     if (written <= 0) {
         return false;
     }
@@ -138,10 +136,8 @@ bool format_boot_marker(char* buffer, size_t capacity, uint64_t boot_id, uint64_
         return false;
     }
 
-    int written = snprintf(buffer, capacity, "%s%llu%s first_sequence=%llu\n",
-                           RUCUX_JOURNAL_MARKER_PREFIX,
-                           static_cast<unsigned long long>(boot_id),
-                           RUCUX_JOURNAL_EVENT_START,
+    int written = snprintf(buffer, capacity, "%s%llu%s first_sequence=%llu\n", RUCUX_JOURNAL_MARKER_PREFIX,
+                           static_cast<unsigned long long>(boot_id), RUCUX_JOURNAL_EVENT_START,
                            static_cast<unsigned long long>(first_sequence));
     if (written <= 0) {
         return false;
@@ -221,11 +217,7 @@ uint64_t detect_next_boot_id(int fd) {
     return last_boot_id + 1;
 }
 
-bool append_persistent_journal(int fd,
-                               const char* buffer,
-                               size_t size,
-                               uint64_t boot_id,
-                               const char* boot_marker,
+bool append_persistent_journal(int fd, const char* buffer, size_t size, uint64_t boot_id, const char* boot_marker,
                                size_t boot_marker_size) {
     if (append_journal(fd, buffer, size)) {
         return true;
@@ -258,12 +250,8 @@ bool fetch_log_stats(rucux_log_stats* stats) {
     return rc == 0;
 }
 
-bool read_log_incremental(uint64_t start_sequence,
-                          char* buffer,
-                          size_t capacity,
-                          uint64_t* next_sequence_out,
-                          uint64_t* dropped_records_out,
-                          size_t* bytes_out) {
+bool read_log_incremental(uint64_t start_sequence, char* buffer, size_t capacity, uint64_t* next_sequence_out,
+                          uint64_t* dropped_records_out, size_t* bytes_out) {
     if (!buffer || capacity == 0 || !next_sequence_out || !dropped_records_out || !bytes_out) {
         return false;
     }
@@ -357,8 +345,8 @@ int main() {
                     continue;
                 }
                 if (persistent_fd >= 0 && boot_marker_size != 0 &&
-                    !append_persistent_journal(persistent_fd, boot_marker, boot_marker_size,
-                                               boot_id, boot_marker, boot_marker_size)) {
+                    !append_persistent_journal(persistent_fd, boot_marker, boot_marker_size, boot_id, boot_marker,
+                                               boot_marker_size)) {
                     close(persistent_fd);
                     persistent_fd = -1;
                 } else if (persistent_fd >= 0 && !flush_journal(persistent_fd)) {
@@ -375,8 +363,8 @@ int main() {
             // kernel-side replay bug is fixed.
             if (!announced) {
                 if (persistent_fd >= 0) {
-                    printf("logd: online, mirroring boot markers into %s and %s\n",
-                           VOLATILE_JOURNAL_PATH, PERSISTENT_JOURNAL_PATH);
+                    printf("logd: online, mirroring boot markers into %s and %s\n", VOLATILE_JOURNAL_PATH,
+                           PERSISTENT_JOURNAL_PATH);
                 } else {
                     printf("logd: online, mirroring boot markers into %s\n", VOLATILE_JOURNAL_PATH);
                 }
@@ -392,8 +380,8 @@ int main() {
                 size_t bytes = 0;
                 bool wrote_volatile = false;
                 bool wrote_persistent = false;
-                if (!read_log_incremental(next_sequence, buffer, sizeof(buffer),
-                                          &advanced_sequence, &dropped_records, &bytes)) {
+                if (!read_log_incremental(next_sequence, buffer, sizeof(buffer), &advanced_sequence, &dropped_records,
+                                          &bytes)) {
                     break;
                 }
 
@@ -405,8 +393,8 @@ int main() {
                     }
                     wrote_volatile = wrote_volatile || notice_bytes != 0;
                     if (persistent_fd >= 0 && notice_bytes != 0) {
-                        if (!append_persistent_journal(persistent_fd, notice_buffer, notice_bytes,
-                                                       boot_id, boot_marker, boot_marker_size)) {
+                        if (!append_persistent_journal(persistent_fd, notice_buffer, notice_bytes, boot_id, boot_marker,
+                                                       boot_marker_size)) {
                             close(persistent_fd);
                             persistent_fd = -1;
                         } else {
@@ -420,8 +408,8 @@ int main() {
                 }
                 wrote_volatile = wrote_volatile || bytes != 0;
                 if (persistent_fd >= 0 && bytes != 0) {
-                    if (!append_persistent_journal(persistent_fd, buffer, bytes,
-                                                   boot_id, boot_marker, boot_marker_size)) {
+                    if (!append_persistent_journal(persistent_fd, buffer, bytes, boot_id, boot_marker,
+                                                   boot_marker_size)) {
                         close(persistent_fd);
                         persistent_fd = -1;
                     } else {
@@ -445,8 +433,8 @@ int main() {
 
             if (!announced) {
                 if (persistent_fd >= 0) {
-                    printf("logd: online, mirroring incremental records into %s and %s\n",
-                           VOLATILE_JOURNAL_PATH, PERSISTENT_JOURNAL_PATH);
+                    printf("logd: online, mirroring incremental records into %s and %s\n", VOLATILE_JOURNAL_PATH,
+                           PERSISTENT_JOURNAL_PATH);
                 } else {
                     printf("logd: online, mirroring incremental records into %s\n", VOLATILE_JOURNAL_PATH);
                 }

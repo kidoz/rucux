@@ -18,23 +18,23 @@ using lib::uint8_t;
 using lib::uintmax_t;
 using lib::uintptr_t;
 
-using lib::int_least8_t;
-using lib::uint_least8_t;
 using lib::int_least16_t;
-using lib::uint_least16_t;
 using lib::int_least32_t;
-using lib::uint_least32_t;
 using lib::int_least64_t;
+using lib::int_least8_t;
+using lib::uint_least16_t;
+using lib::uint_least32_t;
 using lib::uint_least64_t;
+using lib::uint_least8_t;
 
-using lib::int_fast8_t;
-using lib::uint_fast8_t;
 using lib::int_fast16_t;
-using lib::uint_fast16_t;
 using lib::int_fast32_t;
-using lib::uint_fast32_t;
 using lib::int_fast64_t;
+using lib::int_fast8_t;
+using lib::uint_fast16_t;
+using lib::uint_fast32_t;
 using lib::uint_fast64_t;
+using lib::uint_fast8_t;
 
 #else
 
@@ -86,12 +86,12 @@ typedef unsigned long long uintmax_t;
 #define INT8_C(c) c
 #define INT16_C(c) c
 #define INT32_C(c) c
-#define INT64_C(c) c ## LL
+#define INT64_C(c) c##LL
 #define UINT8_C(c) c
 #define UINT16_C(c) c
-#define UINT32_C(c) c ## U
-#define UINT64_C(c) c ## ULL
-#define INTMAX_C(c) c ## LL
-#define UINTMAX_C(c) c ## ULL
+#define UINT32_C(c) c##U
+#define UINT64_C(c) c##ULL
+#define INTMAX_C(c) c##LL
+#define UINTMAX_C(c) c##ULL
 
 #endif // _LIBC_STDINT_H

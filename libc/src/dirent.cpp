@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
+#include "syscall_impl.h"
 #include <dirent.h>
 #include <fcntl.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <uapi/kernel/syscalls.h>
-#include "syscall_impl.h"
+#include <unistd.h>
 
 extern "C" {
 
@@ -18,7 +18,10 @@ DIR* opendir(const char* name) {
     if (fd < 0) return nullptr;
 
     _DIR* dir = (_DIR*)malloc(sizeof(_DIR));
-    if (!dir) { close(fd); return nullptr; }
+    if (!dir) {
+        close(fd);
+        return nullptr;
+    }
     dir->fd = fd;
     return (DIR*)dir;
 }
