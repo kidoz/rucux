@@ -72,6 +72,7 @@ if arch == 'x86_64'
         'src/kernel/vfs/ata.cpp',
         'src/kernel/vfs/fat32.cpp',
         'src/kernel/process/elf.cpp',
+        'src/kernel/process/spawn.cpp',
         'src/kernel/process/signal.cpp',
         'src/kernel/process/credentials.cpp',
         'src/kernel/ipc/ipc.cpp',
