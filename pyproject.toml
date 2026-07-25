@@ -1,0 +1,33 @@
+[project]
+name = "rucux-tools"
+version = "0.1.0"
+description = "Python build, packaging, and image-assembly tools for the rucux microkernel"
+readme = "tools/README.md"
+requires-python = ">=3.14"
+license = { text = "MIT" }
+
+# The repository's own tools under `tools/` and `scripts/` are stdlib-only by
+# design: meson invokes them during configure, so they must run against a bare
+# interpreter with no environment prepared. Keep this list empty unless a tool
+# genuinely cannot be written against the standard library.
+dependencies = []
+
+[dependency-groups]
+# Validation tooling for the agent documentation standard (YAML + JSON Schema).
+standards = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.21",
+]
+
+# The build system itself, so `uv run meson` resolves to a pinned version
+# instead of whatever happens to be on PATH.
+build = [
+    "meson>=1.4",
+    "ninja>=1.11",
+]
+
+[tool.uv]
+# This repository is a C++ project with Python helpers, not an installable
+# Python distribution. Without this, `uv sync` would try to build `rucux-tools`
+# as a package and fail — there is no module to install.
+package = false

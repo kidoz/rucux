@@ -102,6 +102,14 @@ run-headless timeout="15": build
 test:
     cd tests && make run
 
+# Install Python tool dependencies into .venv (from uv.lock)
+py-sync:
+    uv sync --all-groups
+
+# Run a project Python tool, e.g. `just py tools/product_info.py get dev-qemu-amd64 name`
+py *ARGS:
+    uv run python {{ARGS}}
+
 # Clean build artifacts
 clean:
     rm -rf builddir builddir-test uefi.img uefi_serial.log vars.fd
