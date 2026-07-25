@@ -1,0 +1,7 @@
+name: uefi-disk
+kind: fat32-efi-disk
+size_mib: 48
+efi_bootloader: bootloader/BOOTX64.EFI
+efi_boot_path: /EFI/BOOT/BOOTX64.EFI
+kernel_target: /kernel.elf
+output: uefi.img

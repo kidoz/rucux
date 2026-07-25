@@ -1,0 +1,6 @@
+name: bringup-odroid-c2-armv7
+version: 0.1.0-bringup
+channel: bringup
+product: bringup-odroid-c2-armv7
+images:
+  - sdcard-bringup

@@ -1,0 +1,7 @@
+name: dev-qemu-amd64
+version: 0.1.0-dev
+channel: dev
+product: dev-qemu-amd64
+images:
+  - uefi-disk
+  - qemu-dev

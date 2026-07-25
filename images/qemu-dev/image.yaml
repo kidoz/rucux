@@ -1,0 +1,6 @@
+name: qemu-dev
+kind: qemu-runtime
+base_image: uefi-disk
+memory_mib: 256
+nic: e1000
+serial: stdio
