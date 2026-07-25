@@ -152,6 +152,27 @@ elif arch == 'arm'
         'lib/string.cpp',
         'lib/new.cpp'
     ]
+elif arch == 'aarch64'
+    # ARMv8-A / AArch64. Native execution state for the Odroid C2 (Amlogic S905).
+    # -mgeneral-regs-only keeps FP/SIMD out of kernel code: CPACR_EL1 is left at
+    # its reset value, so any generated SIMD would trap.
+    common_cpp_args += [
+        '-mgeneral-regs-only',
+        '-mstrict-align'
+    ]
+    src_files = [
+        'src/arch/aarch64/start.S',
+        'src/arch/aarch64/exception_vectors.S',
+        'src/arch/aarch64/boot.cpp',
+        'src/arch/aarch64/exception.cpp',
+        'src/arch/aarch64/uart.cpp',
+        'src/arch/aarch64/console.cpp',
+        'src/arch/aarch64/gic.cpp',
+        'src/arch/aarch64/timer.cpp',
+        'src/kernel/console.cpp',
+        'src/kernel/fdt.cpp',
+        'lib/string.cpp'
+    ]
 else
     error('Unsupported architecture: ' + arch)
 endif
@@ -210,21 +231,49 @@ if arch == 'x86_64'
     endforeach
 
     kernel_linker_script = meson.current_source_dir() + '/src/arch/amd64/linker.ld'
+elif arch == 'aarch64'
+    kernel_linker_script = meson.current_source_dir() + '/src/arch/aarch64/linker.ld'
 else
     kernel_linker_script = meson.current_source_dir() + '/src/arch/armv7/linker.ld'
 endif
 
-entry_point = arch == 'arm' ? '_start' : 'kernel_main'
+entry_point = (arch == 'arm' or arch == 'aarch64') ? '_start' : 'kernel_main'
 kernel_link_args = ['-nostdlib', '-static', '-T', kernel_linker_script, '-e', entry_point]
-if arch == 'arm'
-    # ARMv7 needs libgcc for __aeabi_* runtime helpers (64-bit divmod, etc.).
+if arch == 'arm' or arch == 'aarch64'
+    # ARM needs libgcc for compiler runtime helpers (64-bit divmod and friends).
     # -nostdlib excludes default link sets, so re-attach libgcc explicitly.
     kernel_link_args += ['-lgcc']
-    
+
+    # Both ARM ports link at an address declared by the board manifest, so the
+    # same kernel sources serve QEMU and real hardware.
     product_name = get_option('product')
     load_addr_cmd = run_command('python3', meson.current_source_dir() + '/tools/product_info.py', 'get', product_name, 'board.platform.memory.kernel_load_address', check: false)
     if load_addr_cmd.returncode() == 0
         kernel_link_args += ['-Wl,--defsym=KERNEL_LOAD_ADDRESS=' + load_addr_cmd.stdout().strip()]
+    endif
+endif
+
+if arch == 'aarch64'
+    # Board-derived hardware defaults, used when firmware hands over no device
+    # tree — which is the normal case for U-Boot `bootelf` on the Odroid C2.
+    # Guessing a UART base instead would fault before the kernel can report it.
+    board_defines = [
+        ['board.platform.uart.base', 'RUCUX_UART_BASE'],
+        ['board.platform.gic.dist_base', 'RUCUX_GIC_DIST_BASE'],
+        ['board.platform.gic.cpu_base', 'RUCUX_GIC_CPU_BASE']
+    ]
+    foreach spec : board_defines
+        probe = run_command('python3', meson.current_source_dir() + '/tools/product_info.py', 'get', product_name, spec[0], check: false)
+        if probe.returncode() == 0
+            kernel_args += ['-D' + spec[1] + '=' + probe.stdout().strip()]
+        endif
+    endforeach
+
+    uart_type_cmd = run_command('python3', meson.current_source_dir() + '/tools/product_info.py', 'get', product_name, 'board.platform.uart.type', check: false)
+    if uart_type_cmd.returncode() == 0 and uart_type_cmd.stdout().strip() == 'pl011'
+        kernel_args += ['-DRUCUX_UART_PL011=1']
+    else
+        kernel_args += ['-DRUCUX_UART_PL011=0']
     endif
 endif
 

@@ -1,0 +1,6 @@
+name: bringup-odroid-c2-aarch64
+board: odroid-c2-aarch64
+services: []
+programs: []
+images:
+  - sdcard-bringup

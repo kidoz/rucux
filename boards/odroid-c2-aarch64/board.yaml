@@ -1,0 +1,36 @@
+# Odroid C2 in its native AArch64 execution state.
+#
+# Distinct from boards/odroid-c2-armv7, which targets the same silicon in
+# AArch32 — a mode the stock S905 firmware chain does not enter. See
+# .agents/runbooks/ODROID_C2_BRINGUP_ROADMAP.md.
+name: odroid-c2-aarch64
+arch: aarch64
+boot:
+  firmware: u-boot
+  bootloader: u-boot-handoff
+runtime:
+  hardware: odroid-c2
+artifacts:
+  kernel: builddir-aarch64/kernel.elf
+platform:
+  cpu_count: 4
+  uart:
+    # Amlogic AO UART: WFIFO at +0x00, STATUS at +0x0C, TX_FULL is bit 21.
+    base: 0xC81004C0
+    type: meson-ao
+  gic:
+    dist_base: 0xC4301000
+    cpu_base: 0xC4302000
+  timer:
+    irq: 27
+  psci:
+    conduit: smc
+  power:
+    shutdown_method: psci
+  memory:
+    # S905 DRAM is based at 0. kernel_load_address must clear U-Boot's own
+    # footprint; 0x01080000 follows the conventional arm64 text offset from a
+    # 16 MiB base. VERIFY against U-Boot's relocation on the actual board.
+    ram_base: 0x00000000
+    ram_size: 0x80000000
+    kernel_load_address: 0x01080000

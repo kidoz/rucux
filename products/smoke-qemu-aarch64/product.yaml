@@ -1,0 +1,5 @@
+name: smoke-qemu-aarch64
+board: qemu-aarch64-virt
+services: []
+programs: []
+images: []

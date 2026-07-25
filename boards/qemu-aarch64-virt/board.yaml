@@ -1,0 +1,27 @@
+name: qemu-aarch64-virt
+arch: aarch64
+boot:
+  firmware: none
+  bootloader: qemu-direct
+runtime:
+  hardware: qemu-virt
+artifacts:
+  kernel: builddir-aarch64/kernel.elf
+platform:
+  cpu_count: 1
+  uart:
+    base: 0x09000000
+    type: pl011
+  gic:
+    dist_base: 0x08000000
+    cpu_base: 0x08010000
+  timer:
+    irq: 27
+  psci:
+    conduit: hvc
+  power:
+    shutdown_method: psci
+  memory:
+    ram_base: 0x40000000
+    ram_size: 0x20000000
+    kernel_load_address: 0x40080000
