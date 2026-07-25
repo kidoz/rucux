@@ -71,15 +71,11 @@ uint64_t flags_to_desc(page_flags flags) noexcept {
     uint64_t bits = DESC_AF | SH_INNER | ATTR_NORMAL;
 
     if (raw & static_cast<uint64_t>(page_flags::USER)) {
-        // FIXME: user pages are mapped writable regardless of the requested
-        // permission, so a read-only segment such as .text is writable from
-        // EL0. AP[2:1] cannot express "EL1 read-write, EL0 read-only" — that
-        // combination is what x86 gets from clearing CR0.WP, and AArch64 has no
-        // equivalent. elf::load() writes segment contents through the *user*
-        // virtual address, so mapping .text read-only faults the loader itself.
-        // The fix is to copy through the kernel's identity mapping of the
-        // physical page and then map the segment with its real permissions.
-        bits |= AP_RW_ALL;
+        // AP[2:1] cannot encode "EL1 read-write, EL0 read-only", so a page that
+        // is read-only to userspace is also read-only to the kernel. elf::load
+        // therefore fills each frame through the kernel's mapping of the
+        // physical page before mapping it here.
+        bits |= (raw & static_cast<uint64_t>(page_flags::WRITABLE)) ? AP_RW_ALL : AP_RO_ALL;
     } else {
         bits |= (raw & static_cast<uint64_t>(page_flags::WRITABLE)) ? AP_RW_EL1 : AP_RO_EL1;
         bits |= DESC_UXN; // kernel pages are never executable by EL0

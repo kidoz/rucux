@@ -48,10 +48,18 @@ uintptr_t elf::load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept {
         const auto& phdr = phdrs[i];
 
         if (phdr.p_type == PT_LOAD) {
-            // Allocate memory for this segment
-            size_t pages_needed = (phdr.p_memsz + pmm::PAGE_SIZE - 1) / pmm::PAGE_SIZE;
+            // Each page is filled through the kernel's own mapping of the
+            // physical frame, before it is mapped into the user address space.
+            //
+            // Writing through the user virtual address instead would require
+            // every segment to be kernel-writable, which forces read-only
+            // segments such as .text to be mapped writable. x86 papers over
+            // that by clearing CR0.WP; AArch64 has no equivalent, because
+            // AP[2:1] cannot encode "EL1 read-write, EL0 read-only".
+            const uintptr_t page_base = phdr.p_vaddr & ~(pmm::PAGE_SIZE - 1);
+            const size_t lead_in = static_cast<size_t>(phdr.p_vaddr - page_base);
+            const size_t pages_needed = (lead_in + phdr.p_memsz + pmm::PAGE_SIZE - 1) / pmm::PAGE_SIZE;
 
-            // Map the segment
             for (size_t p = 0; p < pages_needed; ++p) {
                 void* page = pmm::alloc_page();
                 if (!page) {
@@ -60,33 +68,29 @@ uintptr_t elf::load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept {
                     return 0;
                 }
 
-                uintptr_t virt_addr = phdr.p_vaddr + (p * pmm::PAGE_SIZE);
+                auto* frame = static_cast<uint8_t*>(page);
+                lib::memset(frame, 0, pmm::PAGE_SIZE);
 
-                // Set page flags based on segment flags (R=4, W=2, X=1)
+                // Offset of this page within the segment's memory image, where
+                // byte 0 of the image is phdr.p_vaddr.
+                const size_t page_start = (p == 0) ? 0 : (p * pmm::PAGE_SIZE - lead_in);
+                const size_t frame_off = (p == 0) ? lead_in : 0;
+
+                if (page_start < phdr.p_filesz) {
+                    size_t avail = phdr.p_filesz - page_start;
+                    size_t room = pmm::PAGE_SIZE - frame_off;
+                    size_t chunk = (avail < room) ? avail : room;
+                    lib::memcpy(frame + frame_off, data + phdr.p_offset + page_start, chunk);
+                }
+                // Bytes beyond p_filesz stay zero — that is the segment's BSS.
+
+                // Segment flags: R=4, W=2, X=1. NX is still not applied; see
+                // the W^X note in the roadmap.
                 page_flags flags = page_flags::PRESENT | page_flags::USER;
                 if (phdr.p_flags & 2) flags = flags | page_flags::WRITABLE;
-                // Currently ignoring NX bit implementation for simplicity in early load
 
-                vmm::map(virt_addr, reinterpret_cast<uintptr_t>(page), flags);
+                vmm::map(page_base + (p * pmm::PAGE_SIZE), reinterpret_cast<uintptr_t>(page), flags);
             }
-
-            uint8_t* dest = reinterpret_cast<uint8_t*>(phdr.p_vaddr);
-
-            // Temporarily disable Write Protect to write to RO user pages
-            vmm::disable_write_protect();
-
-            // Copy data
-            if (phdr.p_filesz > 0) {
-                lib::memcpy(dest, data + phdr.p_offset, phdr.p_filesz);
-            }
-
-            // Zero out remaining BSS
-            if (phdr.p_memsz > phdr.p_filesz) {
-                lib::memset(dest + phdr.p_filesz, 0, phdr.p_memsz - phdr.p_filesz);
-            }
-
-            // Restore Write Protect
-            vmm::enable_write_protect();
         }
     }
 

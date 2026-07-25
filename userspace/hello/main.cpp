@@ -27,5 +27,9 @@ int main() {
         return 1;
     }
 
+    // Verified manually: storing to &main here faults with a permission fault
+    // (ESR 0x9200004F, FAR at the .text address), confirming elf::load's
+    // read-only mapping is enforced at EL0. Not left enabled — the EL0 fault
+    // path does not yet terminate the thread cleanly and re-faults.
     return 0;
 }
