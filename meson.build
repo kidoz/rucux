@@ -118,6 +118,7 @@ elif arch == 'arm'
         'src/arch/armv7/watchdog.cpp',
         'src/arch/armv7/exception_vectors.S',
         'src/arch/armv7/scheduler/switch.S',
+        'src/arch/armv7/start.S',
         'src/kernel/memory/pmm.cpp',
         'src/kernel/memory/buddy.cpp',
         'src/kernel/memory/slab.cpp',
@@ -138,6 +139,7 @@ elif arch == 'arm'
         'src/kernel/ipc/ipc.cpp',
         'src/kernel/trace.cpp',
         'src/kernel/time.cpp',
+        'src/kernel/fdt.cpp',
         'src/kernel/net/socket.cpp',
         'src/kernel/net/netbuf.cpp',
         'src/kernel/net/netif.cpp',
@@ -212,11 +214,18 @@ else
     kernel_linker_script = meson.current_source_dir() + '/src/arch/armv7/linker.ld'
 endif
 
-kernel_link_args = ['-nostdlib', '-static', '-T', kernel_linker_script, '-e', 'kernel_main']
+entry_point = arch == 'arm' ? '_start' : 'kernel_main'
+kernel_link_args = ['-nostdlib', '-static', '-T', kernel_linker_script, '-e', entry_point]
 if arch == 'arm'
     # ARMv7 needs libgcc for __aeabi_* runtime helpers (64-bit divmod, etc.).
     # -nostdlib excludes default link sets, so re-attach libgcc explicitly.
     kernel_link_args += ['-lgcc']
+    
+    product_name = get_option('product')
+    load_addr_cmd = run_command('python3', meson.current_source_dir() + '/tools/product_info.py', 'get', product_name, 'board.platform.memory.kernel_load_address', check: false)
+    if load_addr_cmd.returncode() == 0
+        kernel_link_args += ['-Wl,--defsym=KERNEL_LOAD_ADDRESS=' + load_addr_cmd.stdout().strip()]
+    endif
 endif
 
 # The Kernel Executable

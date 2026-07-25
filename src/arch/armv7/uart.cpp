@@ -3,20 +3,47 @@
 
 namespace arch::armv7 {
 
-// UART MMIO base for Odroid C2
-static volatile uint32_t* const UART_WFIFO = reinterpret_cast<uint32_t*>(0xC81004C0);
-static volatile uint32_t* const UART_STATUS = reinterpret_cast<uint32_t*>(0xC81004CC);
+static volatile uint32_t* g_uart_wfifo = nullptr;
+static volatile uint32_t* g_uart_status = nullptr;
+static bool g_is_pl011 = false;
 
 void uart::init() noexcept {
-    // Basic init code for S905 UART would go here.
+    // If not initialized dynamically, default to Odroid C2
+    if (!g_uart_wfifo) {
+        g_uart_wfifo = reinterpret_cast<uint32_t*>(0xC81004C0);
+        g_uart_status = reinterpret_cast<uint32_t*>(0xC81004CC);
+        g_is_pl011 = false;
+    }
+}
+
+void uart::init_dynamic(uintptr_t base, bool is_pl011) noexcept {
+    g_is_pl011 = is_pl011;
+    if (is_pl011) {
+        // PL011 UART: DR is at offset 0x00, FR is at 0x18
+        g_uart_wfifo = reinterpret_cast<uint32_t*>(base + 0x00);
+        g_uart_status = reinterpret_cast<uint32_t*>(base + 0x18);
+    } else {
+        // Amlogic UART: WFIFO at 0x00, STATUS at 0x0C
+        g_uart_wfifo = reinterpret_cast<uint32_t*>(base + 0x00);
+        g_uart_status = reinterpret_cast<uint32_t*>(base + 0x0C);
+    }
 }
 
 void uart::putc(char c) noexcept {
-    // Wait for TX FIFO not full (bit 21 is TX_FULL)
-    while ((*UART_STATUS & (1 << 21))) {
-        // Spin
+    if (!g_uart_wfifo) return;
+    
+    if (g_is_pl011) {
+        // PL011 TXFF (Transmit FIFO full) is bit 5 (0x20) of FR
+        while ((*g_uart_status & 0x20)) {
+            // Spin
+        }
+    } else {
+        // Amlogic TX_FULL is bit 21
+        while ((*g_uart_status & (1 << 21))) {
+            // Spin
+        }
     }
-    *UART_WFIFO = static_cast<uint32_t>(c);
+    *g_uart_wfifo = static_cast<uint32_t>(c);
 }
 
 void uart::write(const char* s) noexcept {

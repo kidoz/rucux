@@ -5,7 +5,19 @@
 .type _start, %function
 
 _start:
+    .rept 8
+    mov r0, r0
+    .endr
+    b _start_real
+    .word 0x016f2818
+    .word _start
+    .word kernel_end
+    .word 0
+
+_start_real:
     mov r4, r0
+    mov r5, r1
+    mov r6, r2
 
     ldr r1, =__bss_start
     ldr r2, =__bss_end
@@ -20,6 +32,8 @@ _start:
 2:
     ldr sp, =boot_stack_top
     mov r0, r4
+    mov r1, r5
+    mov r2, r6
     bl kernel_main
 
 3:

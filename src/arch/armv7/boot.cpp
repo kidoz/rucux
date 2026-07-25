@@ -21,6 +21,7 @@
 #include <kernel/net/socket.hpp>
 #include <lib/type_traits.hpp>
 #include <stdint.h>
+#include <kernel/fdt.hpp>
 
 // Verification of type_traits
 static_assert(lib::is_same_v<lib::int32_t, int>);
@@ -30,49 +31,67 @@ static_assert(lib::is_same_v<lib::remove_cv_t<const volatile int>, int>);
 
 extern "C" {
 
-// Default GIC addresses for Odroid C2 / Amlogic S905 (Cortex-A53)
-// These would normally come from the device tree.
 static constexpr uintptr_t GIC_DIST_BASE = 0xC4301000;
 static constexpr uintptr_t GIC_CPU_BASE  = 0xC4302000;
-
-// Number of CPUs (Odroid C2 has 4 Cortex-A53 cores)
 static constexpr uint32_t NUM_CPUS = 4;
 
-void kernel_main(rucux_boot_info* info) {
-    arch::armv7::uart::init();
-    arch::armv7::console::init_early();
+void kernel_main(uint32_t r0, uint32_t r1, uint32_t r2) {
+    (void)r1;
+    
     arch::armv7::exceptions_init();
 
-    kernel::print("rucux (armv7) Initialized!\n");
-    kernel::print("Magic: {}, Info: {}\n",
-                  reinterpret_cast<void*>(info ? info->magic : 0),
-                  reinterpret_cast<void*>(info));
-
-    // Initialize PMM from boot info memory map
-    if (info && info->magic == RUCUX_BOOT_MAGIC) {
-        kernel::memory::pmm::memory_map_entry entries[64];
-        size_t count = 0;
-        size_t mmap_entries = info->mmap_size / info->mmap_descriptor_size;
-
-        for (size_t i = 0; i < mmap_entries && count < 64; ++i) {
-            rucux_mmap_entry* mmap = reinterpret_cast<rucux_mmap_entry*>(
-                reinterpret_cast<uint8_t*>(info->mmap) + (i * info->mmap_descriptor_size));
-            entries[count].base = mmap->physical_start;
-            entries[count].length = mmap->number_of_pages * 4096;
-            entries[count].type = mmap->type;
-            count++;
+    bool has_fdt = false;
+    uint32_t mem_base = 0;
+    uint32_t mem_size = 0;
+    
+    if (r2 != 0 && kernel::fdt::init(reinterpret_cast<void*>(r2))) {
+        has_fdt = true;
+        uintptr_t uart_base = 0;
+        bool is_pl011 = false;
+        if (kernel::fdt::get_uart(&uart_base, &is_pl011)) {
+            arch::armv7::uart::init_dynamic(uart_base, is_pl011);
+        } else {
+            arch::armv7::uart::init();
         }
-        kernel::memory::pmm::init(entries, count);
-        kernel::print("PMM: {} MB free\n",
-                      (kernel::memory::pmm::get_free_pages() * 4096) / (1024 * 1024));
     } else {
-        kernel::print("WARNING: No valid boot info found! Using hardcoded Odroid C2 memory map.\n");
-        // Odroid C2 has 2GB of RAM starting at 0x00000000.
-        // We start our usable pool at 0x11000000 to safely skip ROM, ATF, U-Boot, and the kernel itself.
+        arch::armv7::uart::init();
+    }
+    
+    arch::armv7::console::init_early();
+
+    kernel::print("Early Boot: r0={}, r1={}, r2={}\n",
+                  reinterpret_cast<void*>(r0),
+                  reinterpret_cast<void*>(r1),
+                  reinterpret_cast<void*>(r2));
+
+    kernel::print("rucux (armv7) Initialized!\n");
+
+    if (has_fdt) {
+        kernel::print("FDT parsed at {}\n", reinterpret_cast<void*>(r2));
+        
+        uint64_t m_base, m_size;
+        if (kernel::fdt::get_memory(&m_base, &m_size)) {
+            mem_base = static_cast<uint32_t>(m_base);
+            mem_size = static_cast<uint32_t>(m_size);
+            kernel::print("FDT Memory: base={}, size={}\n", 
+                reinterpret_cast<void*>(static_cast<uintptr_t>(mem_base)), 
+                reinterpret_cast<void*>(static_cast<uintptr_t>(mem_size)));
+            kernel::memory::pmm::memory_map_entry entries[1];
+            // Skip first 16MB for kernel code/data and FDT
+            entries[0].base = mem_base + 0x1000000;
+            entries[0].length = (mem_size > 0x1000000) ? (mem_size - 0x1000000) : 0;
+            entries[0].type = 1;
+            kernel::memory::pmm::init(entries, 1);
+            kernel::print("PMM from FDT: {} MB free\n", (kernel::memory::pmm::get_free_pages() * 4096) / (1024 * 1024));
+        } else {
+            kernel::print("WARNING: No memory node in FDT! Cannot init PMM.\n");
+        }
+    } else {
+        kernel::print("WARNING: No valid boot info or FDT found! Using hardcoded Odroid C2 memory map.\n");
         kernel::memory::pmm::memory_map_entry entries[1];
         entries[0].base = 0x11000000;
         entries[0].length = 0x6E000000; // ~1760 MB (up to 0x7F000000)
-        entries[0].type = 7; // EfiConventionalMemory
+        entries[0].type = 1; 
         kernel::memory::pmm::init(entries, 1);
         kernel::print("PMM fallback: {} MB free\n",
                       (kernel::memory::pmm::get_free_pages() * 4096) / (1024 * 1024));
@@ -80,46 +99,54 @@ void kernel_main(rucux_boot_info* info) {
 
     kernel::memory::vmm::init();
 
-    // Initialize per-CPU for BSP
     kernel::cpu::bsp_init();
 
-    // Initialize GIC
-    arch::armv7::gic_init(GIC_DIST_BASE, GIC_CPU_BASE);
+    uintptr_t gic_dist = GIC_DIST_BASE;
+    uintptr_t gic_cpu = GIC_CPU_BASE;
+    if (has_fdt) {
+        if (!kernel::fdt::get_gic(&gic_dist, &gic_cpu)) {
+            kernel::print("WARNING: FDT get_gic failed, using hardcoded!\n");
+        }
+    }
+    kernel::print("GIC: dist={}, cpu={}\n", 
+                  reinterpret_cast<void*>(gic_dist), 
+                  reinterpret_cast<void*>(gic_cpu));
+    arch::armv7::gic_init(gic_dist, gic_cpu);
 
-    // Enable virtual timer IRQ (PPI 27)
     arch::armv7::gic_distributor::enable_irq(27);
     arch::armv7::gic_distributor::set_priority(27, 0);
 
-    // Initialize per-CPU timer (~1000 Hz)
     arch::armv7::generic_timer::init_periodic(1000);
 
-    // Initialize scheduler
     kernel::scheduler::scheduler::init();
     
-    // Initialize network stack and Odroid C2 Ethernet driver
     kernel::net::net_init();
     kernel::net::socket_manager::init();
-    arch::armv7::dwmac::init();
+    
+    auto devices = kernel::fdt::get_device_info();
 
-    // Initialize Mali-450 GPU
-    arch::armv7::mali450::init();
+    if (!has_fdt || devices.has_dwmac) {
+        arch::armv7::dwmac::init();
+    }
+    if (!has_fdt || devices.has_mali450) {
+        arch::armv7::mali450::init();
+    }
+    if (!has_fdt || devices.has_usb) {
+        arch::armv7::usb::init();
+    }
+    if (!has_fdt || devices.has_hw_rng) {
+        arch::armv7::hw_rng::init();
+    }
+    if (!has_fdt || devices.has_watchdog) {
+        arch::armv7::watchdog::init(5000);
+    }
 
-    // Initialize USB & Hub
-    arch::armv7::usb::init();
-
-    // Initialize Hardware RNG
-    arch::armv7::hw_rng::init();
-
-    // Initialize Watchdog Timer (set to 5 seconds)
-    arch::armv7::watchdog::init(5000);
-
-    // Boot secondary cores via PSCI
-    arch::armv7::smp_boot_aps(NUM_CPUS);
+    uint32_t num_cpus = has_fdt ? 1 : NUM_CPUS;
+    arch::armv7::smp_boot_aps(num_cpus);
 
     kernel::print("rucux (armv7) boot complete, {} CPUs online\n",
                   kernel::cpu::g_cpu_count.load(kernel::relaxed));
 
-    // Enable interrupts and enter scheduler
     asm volatile("cpsie i");
     kernel::scheduler::scheduler::schedule();
 

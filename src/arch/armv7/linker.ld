@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: MIT */
-ENTRY(kernel_main)
+ENTRY(_start)
 
 SECTIONS {
-    . = 0x8000;
+    . = DEFINED(KERNEL_LOAD_ADDRESS) ? KERNEL_LOAD_ADDRESS : 0x8000;
 
     .text : ALIGN(4K) {
+        KEEP(*(.text.boot))
         KEEP(*(.vectors))
         *(.text*)
     }
@@ -18,8 +19,10 @@ SECTIONS {
     }
 
     .bss : ALIGN(4K) {
+        __bss_start = .;
         *(COMMON)
         *(.bss*)
+        __bss_end = .;
     }
 
     . = ALIGN(4K);
