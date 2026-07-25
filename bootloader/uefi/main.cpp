@@ -179,6 +179,30 @@ extern "C" EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* 
     gBS->AllocatePool(EfiLoaderData, sizeof(rucux_boot_info), (void**)&bootInfo);
 
     if (!EFI_ERROR(Status) && gop) {
+        // Select the best available graphics mode. Prefer an exact 1920x1080,
+        // otherwise fall back to the mode with the largest pixel area.
+        UINT32 bestMode = gop->Mode->Mode;
+        UINT32 bestArea = gop->Mode->Info->HorizontalResolution * gop->Mode->Info->VerticalResolution;
+        for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
+            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* info = nullptr;
+            UINTN infoSize = 0;
+            if (EFI_ERROR(gop->QueryMode(gop, i, &infoSize, &info)) || !info) {
+                continue;
+            }
+            UINT32 area = info->HorizontalResolution * info->VerticalResolution;
+            if (info->HorizontalResolution == 1920 && info->VerticalResolution == 1080) {
+                bestMode = i;
+                break;
+            }
+            if (area > bestArea) {
+                bestArea = area;
+                bestMode = i;
+            }
+        }
+        if (bestMode != gop->Mode->Mode) {
+            gop->SetMode(gop, bestMode);
+        }
+
         bootInfo->fb_address = gop->Mode->FrameBufferBase;
         bootInfo->fb_width = gop->Mode->Info->HorizontalResolution;
         bootInfo->fb_height = gop->Mode->Info->VerticalResolution;

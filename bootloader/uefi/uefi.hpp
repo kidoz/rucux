@@ -275,9 +275,17 @@ struct EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE {
     UINTN FrameBufferSize;
 };
 
+struct EFI_GRAPHICS_OUTPUT_PROTOCOL;
+
+typedef EFI_STATUS(EFIAPI* EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE)(EFI_GRAPHICS_OUTPUT_PROTOCOL* This,
+                                                                   UINT32 ModeNumber, UINTN* SizeOfInfo,
+                                                                   EFI_GRAPHICS_OUTPUT_MODE_INFORMATION** Info);
+typedef EFI_STATUS(EFIAPI* EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE)(EFI_GRAPHICS_OUTPUT_PROTOCOL* This,
+                                                                  UINT32 ModeNumber);
+
 struct EFI_GRAPHICS_OUTPUT_PROTOCOL {
-    void* QueryMode;
-    void* SetMode;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE QueryMode;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE SetMode;
     void* Blt;
     EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE* Mode;
 };
