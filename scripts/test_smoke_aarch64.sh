@@ -15,7 +15,16 @@ LOG_PATH="${RUCUX_AARCH64_SMOKE_LOG:-qemu_aarch64_smoke.log}"
 required_markers=(
     "rucux (aarch64) Initialized!"
     "Running at EL1"
+    "Per-CPU: BSP (cpu_id=0) initialized, TPIDR_EL1 set"
+    "AArch64 VMM: MMU enabled"
+    "MMU: identity translation verified"
     "rucux (aarch64) boot complete, 1 CPUs online"
+)
+
+# A translation mismatch still boots, so assert its absence explicitly rather
+# than relying on the positive markers alone.
+forbidden_markers=(
+    "TRANSLATION MISMATCH"
 )
 
 setup_builddir() {
@@ -46,6 +55,12 @@ elapsed=$SECONDS
 for marker in "${required_markers[@]}"; do
     if ! grep -Fq "${marker}" "${LOG_PATH}"; then
         fail "missing marker: ${marker}"
+    fi
+done
+
+for marker in "${forbidden_markers[@]}"; do
+    if grep -Fq "${marker}" "${LOG_PATH}"; then
+        fail "unexpected marker: ${marker}"
     fi
 done
 

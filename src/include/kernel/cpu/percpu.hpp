@@ -17,6 +17,7 @@ inline constexpr uint32_t MAX_CPUS = 64;
 // Per-CPU data structure. One instance per logical CPU.
 // On amd64: accessed via GS segment base.
 // On ARMv7: accessed via TPIDRPRW (CP15 c13,0,c0,4).
+// On AArch64: accessed via TPIDR_EL1.
 // Per-CPU run queue: one FIFO queue per priority level.
 // Methods defined out-of-line (scheduler.cpp) because they access thread::next.
 struct run_queue {
@@ -66,6 +67,10 @@ inline per_cpu* this_cpu() noexcept {
 #elif defined(__arm__)
     per_cpu* p;
     asm volatile("mrc p15, 0, %0, c13, c0, 4" : "=r"(p)::"memory");
+    return p;
+#elif defined(__aarch64__)
+    per_cpu* p;
+    asm volatile("mrs %0, tpidr_el1" : "=r"(p)::"memory");
     return p;
 #else
     return &g_percpu[0];

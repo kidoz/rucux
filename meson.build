@@ -169,9 +169,17 @@ elif arch == 'aarch64'
         'src/arch/aarch64/console.cpp',
         'src/arch/aarch64/gic.cpp',
         'src/arch/aarch64/timer.cpp',
+        'src/arch/aarch64/vmm.cpp',
+        'src/arch/aarch64/cpu/percpu.cpp',
         'src/kernel/console.cpp',
         'src/kernel/fdt.cpp',
-        'lib/string.cpp'
+        'src/kernel/memory/pmm.cpp',
+        'src/kernel/memory/buddy.cpp',
+        'src/kernel/memory/slab.cpp',
+        'src/kernel/memory/heap.cpp',
+        'src/kernel/ds/rbtree.cpp',
+        'lib/string.cpp',
+        'lib/new.cpp'
     ]
 else
     error('Unsupported architecture: ' + arch)
@@ -260,7 +268,9 @@ if arch == 'aarch64'
     board_defines = [
         ['board.platform.uart.base', 'RUCUX_UART_BASE'],
         ['board.platform.gic.dist_base', 'RUCUX_GIC_DIST_BASE'],
-        ['board.platform.gic.cpu_base', 'RUCUX_GIC_CPU_BASE']
+        ['board.platform.gic.cpu_base', 'RUCUX_GIC_CPU_BASE'],
+        ['board.platform.memory.ram_base', 'RUCUX_RAM_BASE'],
+        ['board.platform.memory.ram_size', 'RUCUX_RAM_SIZE']
     ]
     foreach spec : board_defines
         probe = run_command('python3', meson.current_source_dir() + '/tools/product_info.py', 'get', product_name, spec[0], check: false)
