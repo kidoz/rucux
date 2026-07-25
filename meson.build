@@ -176,6 +176,10 @@ elif arch == 'aarch64'
         'src/arch/aarch64/cpu/percpu.cpp',
         'src/arch/aarch64/scheduler/switch.S',
         'src/arch/aarch64/syscall.cpp',
+        'src/arch/aarch64/psci.cpp',
+        'src/arch/aarch64/smp.cpp',
+        'src/arch/aarch64/smp.S',
+        'src/arch/aarch64/power.cpp',
         'src/kernel/ipc/ipc.cpp',
         'src/kernel/process/elf.cpp',
         'src/kernel/process/spawn.cpp',
@@ -302,7 +306,8 @@ if arch == 'aarch64'
         ['board.platform.gic.dist_base', 'RUCUX_GIC_DIST_BASE'],
         ['board.platform.gic.cpu_base', 'RUCUX_GIC_CPU_BASE'],
         ['board.platform.memory.ram_base', 'RUCUX_RAM_BASE'],
-        ['board.platform.memory.ram_size', 'RUCUX_RAM_SIZE']
+        ['board.platform.memory.ram_size', 'RUCUX_RAM_SIZE'],
+        ['board.platform.cpu_count', 'RUCUX_CPU_COUNT']
     ]
     foreach spec : board_defines
         probe = run_command('python3', meson.current_source_dir() + '/tools/product_info.py', 'get', product_name, spec[0], check: false)
@@ -316,6 +321,15 @@ if arch == 'aarch64'
         kernel_args += ['-DRUCUX_UART_PL011=1']
     else
         kernel_args += ['-DRUCUX_UART_PL011=0']
+    endif
+
+    # PSCI conduit cannot be probed: issuing SMC where firmware expects HVC (or
+    # the reverse) traps. QEMU `virt` uses hvc; the C2's ATF uses smc.
+    psci_cmd = run_command('python3', meson.current_source_dir() + '/tools/product_info.py', 'get', product_name, 'board.platform.psci.conduit', check: false)
+    if psci_cmd.returncode() == 0 and psci_cmd.stdout().strip() == 'smc'
+        kernel_args += ['-DRUCUX_PSCI_HVC=0']
+    else
+        kernel_args += ['-DRUCUX_PSCI_HVC=1']
     endif
 endif
 

@@ -70,6 +70,10 @@ void gic_cpu_interface::init(uintptr_t base) noexcept {
     write(gicc_reg::CTLR, 1);
 }
 
+uintptr_t gic_cpu_interface::base() noexcept {
+    return base_;
+}
+
 uint32_t gic_cpu_interface::acknowledge() noexcept {
     return read(gicc_reg::IAR);
 }

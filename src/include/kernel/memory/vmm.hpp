@@ -32,6 +32,14 @@ public:
 
     // Handle page fault for demand paging. Returns true if handled.
     static bool handle_page_fault(uintptr_t fault_addr, uint64_t error_code) noexcept;
+
+#if defined(__aarch64__)
+    // Program this CPU's translation registers from the tables the boot CPU
+    // already built, then enable the MMU. Used by secondary cores, which start
+    // with translation off and must join the existing address space rather than
+    // construct a second one.
+    static void enable_on_this_cpu() noexcept;
+#endif
 };
 
 } // namespace kernel::memory

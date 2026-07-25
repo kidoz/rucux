@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <kernel/console.hpp>
 #include <lib/type_traits.hpp>
 #include <stdint.h>
 
@@ -100,9 +101,14 @@ void print_impl(const char* fmt, T first, Rest... rest) noexcept {
 
 } // namespace detail
 
+// Held for the duration of one print() so a formatted line is emitted whole.
+// Locking inside kputc would only make single characters atomic, which still
+// lets concurrent CPUs interleave mid-line.
 template <typename... Args>
 void print(const char* fmt, Args... args) noexcept {
+    uintptr_t flags = console::lock_output();
     detail::print_impl(fmt, args...);
+    console::unlock_output(flags);
 }
 
 } // namespace kernel

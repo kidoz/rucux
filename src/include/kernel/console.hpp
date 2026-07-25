@@ -21,6 +21,12 @@ void reset() noexcept;
 bool register_sink(sink new_sink) noexcept;
 void putc(char c) noexcept;
 void write(const char* s) noexcept;
+
+// Output serialization. kernel::print() holds the lock across a whole
+// formatted line so concurrent CPUs cannot interleave mid-line.
+uintptr_t lock_output() noexcept;
+void unlock_output(uintptr_t flags) noexcept;
+void putc_unlocked(char c) noexcept;
 display_info get_display_info() noexcept;
 
 } // namespace kernel::console

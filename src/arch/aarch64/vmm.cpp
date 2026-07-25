@@ -60,6 +60,18 @@ constexpr uint64_t ADDR_MASK = 0x0000FFFFFFFFF000ULL;
 
 uint64_t* g_l1_table = nullptr;
 
+// TCR_EL1: 39-bit VA on TTBR0, 4 KiB granule, inner-shareable write-back
+// walks, 40-bit intermediate physical addresses. Shared by the boot CPU and
+// every secondary, which must use identical translation settings.
+constexpr uint64_t T0SZ = 25;
+constexpr uint64_t TCR_VALUE = T0SZ            // TTBR0 region size
+                               | (0ULL << 14)  // TG0 = 4 KiB granule
+                               | (3ULL << 12)  // SH0 = inner shareable
+                               | (1ULL << 10)  // ORGN0 = WB WA
+                               | (1ULL << 8)   // IRGN0 = WB WA
+                               | (1ULL << 23)  // EPD1: no TTBR1 walks
+                               | (2ULL << 32); // IPS = 40-bit PA
+
 bool is_ram(uint64_t phys) noexcept {
     constexpr uint64_t base = static_cast<uint64_t>(RUCUX_RAM_BASE);
     constexpr uint64_t size = static_cast<uint64_t>(RUCUX_RAM_SIZE);
@@ -155,17 +167,7 @@ void vmm::init() noexcept {
         g_l1_table[gb] = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(l2)) | DESC_VALID | DESC_TABLE;
     }
 
-    // TCR_EL1: 39-bit VA on TTBR0, 4 KiB granule, inner-shareable write-back
-    // walks, 40-bit intermediate physical addresses.
-    constexpr uint64_t T0SZ = 25;
-    constexpr uint64_t tcr = T0SZ                // TTBR0 region size
-                             | (0ULL << 14)      // TG0 = 4 KiB granule
-                             | (3ULL << 12)      // SH0 = inner shareable
-                             | (1ULL << 10)      // ORGN0 = WB WA
-                             | (1ULL << 8)       // IRGN0 = WB WA
-                             | (1ULL << 23)      // EPD1: no TTBR1 walks
-                             | (2ULL << 32);     // IPS = 40-bit PA
-    asm volatile("msr tcr_el1, %0" ::"r"(tcr));
+    asm volatile("msr tcr_el1, %0" ::"r"(TCR_VALUE));
 
     const auto ttbr0 = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(g_l1_table));
     asm volatile("msr ttbr0_el1, %0" ::"r"(ttbr0));
@@ -183,6 +185,28 @@ void vmm::init() noexcept {
     asm volatile("isb" ::: "memory");
 
     kernel::print("AArch64 VMM: MMU enabled, L1 at {}\n", reinterpret_cast<void*>(g_l1_table));
+}
+
+void vmm::enable_on_this_cpu() noexcept {
+    if (!g_l1_table)
+        return;
+
+    constexpr uint64_t mair = 0xFF00ULL;
+    asm volatile("msr mair_el1, %0" ::"r"(mair));
+    asm volatile("msr tcr_el1, %0" ::"r"(TCR_VALUE));
+
+    const auto ttbr0 = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(g_l1_table));
+    asm volatile("msr ttbr0_el1, %0" ::"r"(ttbr0));
+
+    asm volatile("dsb ish" ::: "memory");
+    asm volatile("tlbi vmalle1" ::: "memory");
+    asm volatile("dsb ish; isb" ::: "memory");
+
+    uint64_t sctlr = 0;
+    asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+    sctlr |= (1ULL << 0) | (1ULL << 2) | (1ULL << 12); // M, C, I
+    asm volatile("msr sctlr_el1, %0" ::"r"(sctlr) : "memory");
+    asm volatile("isb" ::: "memory");
 }
 
 uintptr_t vmm::create_address_space() noexcept {

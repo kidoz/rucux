@@ -8,7 +8,8 @@ runtime:
 artifacts:
   kernel: builddir-aarch64/kernel.elf
 platform:
-  cpu_count: 1
+  # Matches the -smp value the aarch64 smoke test launches QEMU with.
+  cpu_count: 4
   uart:
     base: 0x09000000
     type: pl011

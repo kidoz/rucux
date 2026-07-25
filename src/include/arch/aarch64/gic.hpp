@@ -45,6 +45,9 @@ public:
     static uint32_t read(uint32_t reg) noexcept;
     static void write(uint32_t reg, uint32_t value) noexcept;
 
+    // Secondary cores need this to enable their own banked interface.
+    static uintptr_t base() noexcept;
+
 private:
     static uintptr_t base_;
 };

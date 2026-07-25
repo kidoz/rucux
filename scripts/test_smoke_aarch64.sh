@@ -9,6 +9,15 @@ BUILD_DIR="builddir-aarch64-smoke"
 KERNEL_PATH="${BUILD_DIR}/kernel.elf"
 TIMEOUT_SECS="${RUCUX_AARCH64_SMOKE_TIMEOUT:-40}"
 LOG_PATH="${RUCUX_AARCH64_SMOKE_LOG:-qemu_aarch64_smoke.log}"
+SMP_LOG_PATH="${RUCUX_AARCH64_SMP_LOG:-qemu_aarch64_smp.log}"
+
+# Asserted from the 4-core run. "3 of 3" proves PSCI CPU_ON succeeded for every
+# secondary, and an intact marker line proves console output is serialized —
+# without the console lock these interleave and the line is unmatchable.
+smp_markers=(
+    "SMP: 3 of 3 secondary cores online"
+    "rucux (aarch64) boot complete, 4 CPUs online"
+)
 
 # "boot complete" is only reached after the timer IRQ has been serviced five
 # times, so it proves the GIC and generic timer are live — not merely programmed.
@@ -54,13 +63,20 @@ fail() {
 setup_builddir
 meson compile -C "${BUILD_DIR}"
 
+run_qemu() { # $1 = -smp value, $2 = log path
+    timeout "${TIMEOUT_SECS}" qemu-system-aarch64 \
+        -M virt -cpu cortex-a53 -smp "$1" -m 512M \
+        -kernel "${KERNEL_PATH}" \
+        -serial stdio -display none -no-reboot \
+        >"$2" 2>&1 || true
+}
+
 SECONDS=0
-timeout "${TIMEOUT_SECS}" qemu-system-aarch64 \
-    -M virt -cpu cortex-a53 -m 512M \
-    -kernel "${KERNEL_PATH}" \
-    -serial stdio -display none -no-reboot \
-    >"${LOG_PATH}" 2>&1 || true
-elapsed=$SECONDS
+
+# Single core: the full boot path through userspace. Userspace does not yet
+# survive multi-core scheduling (a thread that enters EL0 under -smp 4 never
+# completes), so the EL0 markers are asserted here.
+run_qemu 1 "${LOG_PATH}"
 
 for marker in "${required_markers[@]}"; do
     if ! grep -Fq "${marker}" "${LOG_PATH}"; then
@@ -73,6 +89,17 @@ for marker in "${forbidden_markers[@]}"; do
         fail "unexpected marker: ${marker}"
     fi
 done
+
+# Four cores: secondary bring-up via PSCI, and serialized console output.
+run_qemu 4 "${SMP_LOG_PATH}"
+
+for marker in "${smp_markers[@]}"; do
+    if ! grep -Fq "${marker}" "${SMP_LOG_PATH}"; then
+        fail "missing SMP marker: ${marker} (see ${SMP_LOG_PATH})"
+    fi
+done
+
+elapsed=$SECONDS
 
 if [ "${elapsed}" -ge "${TIMEOUT_SECS}" ]; then
     echo "smoke-aarch64: QEMU terminated by timeout (expected for kernel-only test)"

@@ -2,6 +2,7 @@
 #include <arch/aarch64/console.hpp>
 #include <arch/aarch64/exception.hpp>
 #include <arch/aarch64/gic.hpp>
+#include <arch/aarch64/smp.hpp>
 #include <arch/aarch64/syscall.hpp>
 #include <arch/aarch64/timer.hpp>
 #include <arch/aarch64/uart.hpp>
@@ -39,6 +40,9 @@
 #endif
 #ifndef RUCUX_RAM_SIZE
 #define RUCUX_RAM_SIZE 0x20000000
+#endif
+#ifndef RUCUX_CPU_COUNT
+#define RUCUX_CPU_COUNT 1
 #endif
 
 extern "C" void switch_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
@@ -262,7 +266,10 @@ void kernel_main(uint64_t fdt_addr) {
     kernel::scheduler::scheduler::spawn(&preempt_probe, 1);
     kernel::scheduler::scheduler::spawn(&user_hello, 2);
 
-    kernel::print("rucux (aarch64) boot complete, 1 CPUs online\n");
+    smp_boot_aps(RUCUX_CPU_COUNT);
+
+    kernel::print("rucux (aarch64) boot complete, {} CPUs online\n",
+                  kernel::cpu::g_cpu_count.load(kernel::relaxed));
 
     // Hand over: from here the timer tick drives scheduling, and this boot
     // context is abandoned on the next switch — exactly as ARMv7 does.

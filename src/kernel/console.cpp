@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/console.hpp>
 #include <kernel/print.hpp>
+#include <kernel/sync/spinlock.hpp>
 
 namespace kernel::console {
 namespace {
@@ -11,6 +12,12 @@ constexpr display_info DEFAULT_DISPLAY_INFO = {80, 25, 0, 0, false};
 sink g_sinks[MAX_SINKS] = {};
 uint32_t g_sink_count = 0;
 int32_t g_display_sink = -1;
+
+// Serializes output across CPUs. Without it, concurrent writes from secondary
+// cores interleave mid-line and corrupt the log — which also breaks any test
+// that greps for a marker. IRQ-safe because console output happens from
+// interrupt handlers as well as thread context.
+kernel::irq_spinlock g_console_lock;
 
 } // namespace
 
@@ -35,10 +42,25 @@ bool register_sink(sink new_sink) noexcept {
     return true;
 }
 
-void putc(char c) noexcept {
+uintptr_t lock_output() noexcept {
+    return g_console_lock.lock();
+}
+
+void unlock_output(uintptr_t flags) noexcept {
+    g_console_lock.unlock(flags);
+}
+
+// Caller must already hold the console lock.
+void putc_unlocked(char c) noexcept {
     for (uint32_t i = 0; i < g_sink_count; ++i) {
         g_sinks[i].putc(c);
     }
+}
+
+void putc(char c) noexcept {
+    uintptr_t flags = g_console_lock.lock();
+    putc_unlocked(c);
+    g_console_lock.unlock(flags);
 }
 
 void write(const char* s) noexcept {
@@ -46,9 +68,12 @@ void write(const char* s) noexcept {
         return;
     }
 
+    // Locked once for the whole string so a line cannot be split by another CPU.
+    uintptr_t flags = g_console_lock.lock();
     for (; *s != '\0'; ++s) {
-        putc(*s);
+        putc_unlocked(*s);
     }
+    g_console_lock.unlock(flags);
 }
 
 display_info get_display_info() noexcept {
@@ -66,12 +91,16 @@ display_info get_display_info() noexcept {
 
 namespace kernel {
 
+// These run underneath kernel::print(), which already holds the console lock,
+// so they must use the unlocked path or the spinlock would deadlock on itself.
 void kputc(char c) noexcept {
-    console::putc(c);
+    console::putc_unlocked(c);
 }
 
 void kwrite(const char* s) noexcept {
-    console::write(s);
+    if (!s) return;
+    for (; *s != '\0'; ++s)
+        console::putc_unlocked(*s);
 }
 
 } // namespace kernel
