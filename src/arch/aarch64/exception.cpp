@@ -92,6 +92,11 @@ extern "C" void aarch64_irq_handler() {
     arch::aarch64::gic_cpu_interface::end_of_interrupt(irq);
 }
 
+// Reached only if a kernel thread's entry function returns, which none should.
+extern "C" void aarch64_thread_exit() {
+    kernel::scheduler::scheduler::exit(0);
+}
+
 extern "C" void aarch64_fault_handler(uint64_t index, uint64_t esr, uint64_t elr) {
     kernel::print("\n*** AArch64 {} fault (vector {}) ***\n", arch::aarch64::fault_name(index), index);
     kernel::print("ESR_EL1 = {}\n", reinterpret_cast<void*>(static_cast<uintptr_t>(esr)));

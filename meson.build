@@ -154,12 +154,15 @@ elif arch == 'arm'
     ]
 elif arch == 'aarch64'
     # ARMv8-A / AArch64. Native execution state for the Odroid C2 (Amlogic S905).
-    # -mgeneral-regs-only keeps FP/SIMD out of kernel code: CPACR_EL1 is left at
-    # its reset value, so any generated SIMD would trap.
     common_cpp_args += [
-        '-mgeneral-regs-only',
         '-mstrict-align'
     ]
+    # Kernel-only: CPACR_EL1 is left at its reset value, so FP/SIMD generated in
+    # kernel code would trap. Userspace runs with FP available and needs it —
+    # printf's float paths will not compile under this flag.
+    kernel_args += ['-mgeneral-regs-only']
+    user_c_args += ['-DRUCUX_ARCH="aarch64"']
+    user_cpp_args += ['-DRUCUX_ARCH="aarch64"']
     src_files = [
         'src/arch/aarch64/start.S',
         'src/arch/aarch64/exception_vectors.S',
@@ -192,6 +195,8 @@ elif arch == 'aarch64'
         'src/kernel/trace.cpp',
         'src/kernel/time.cpp',
         'src/kernel/vfs/vfs.cpp',
+        'src/kernel/vfs/ramfs.cpp',
+        'src/kernel/vfs/tty.cpp',
         'src/kernel/process/credentials.cpp',
         'src/kernel/process/signal.cpp',
         'lib/string.cpp',
@@ -203,11 +208,11 @@ endif
 
 add_project_arguments(common_cpp_args, language: 'cpp')
 
-# LibC + userspace + kernel linker script — currently amd64-only.
-# ARMv7 libc syscall ABI and userspace toolchain are not yet wired up;
-# ARMv7 builds only the freestanding kernel.elf.
+# LibC + userspace + kernel linker script.
+# amd64 and AArch64 build userspace; ARMv7's libc syscall ABI is not wired up,
+# so it builds only the freestanding kernel.elf.
 embedded_headers = []
-if arch == 'x86_64'
+if arch == 'x86_64' or arch == 'aarch64'
     libc = static_library('c',
         ['libc/src/syscalls.cpp', 'libc/src/socket.cpp', 'libc/src/stdio.cpp',
          'libc/src/string.cpp', 'libc/src/pthread.cpp', 'lib/string.cpp',
@@ -230,14 +235,23 @@ if arch == 'x86_64'
     )
 
     # User-space setup
-    user_linker_script = meson.current_source_dir() + '/userspace/linker.ld'
+    if arch == 'aarch64'
+        user_linker_script = meson.current_source_dir() + '/userspace/linker_aarch64.ld'
+        user_crt0 = 'userspace/lib/crt0_aarch64.S'
+        # Start with a single program: the AArch64 syscall path has never been
+        # executed, so prove it before porting the rest of the userspace tree.
+        user_apps = ['hello']
+    else
+        user_linker_script = meson.current_source_dir() + '/userspace/linker.ld'
+        user_crt0 = 'userspace/lib/crt0.S'
+        user_apps = ['init', 'console', 'echo', 'cat', 'ls', 'kbd', 'net', 'pkg']
+    endif
     user_link_args = ['-nostdlib', '-static', '-T', user_linker_script]
-    user_apps = ['init', 'console', 'echo', 'cat', 'ls', 'kbd', 'net', 'pkg']
     embed_script = find_program('scripts/embed.py')
 
     foreach app : user_apps
         app_exe = executable(app,
-            ['userspace/' + app + '/main.cpp', 'userspace/lib/crt0.S'],
+            ['userspace/' + app + '/main.cpp', user_crt0],
             include_directories: include_directories('libc/include', 'src/include', 'lib/include', '.'),
             cpp_args: user_cpp_args,
             c_args: user_c_args,
@@ -254,9 +268,11 @@ if arch == 'x86_64'
         )
     endforeach
 
-    kernel_linker_script = meson.current_source_dir() + '/src/arch/amd64/linker.ld'
-elif arch == 'aarch64'
-    kernel_linker_script = meson.current_source_dir() + '/src/arch/aarch64/linker.ld'
+    if arch == 'aarch64'
+        kernel_linker_script = meson.current_source_dir() + '/src/arch/aarch64/linker.ld'
+    else
+        kernel_linker_script = meson.current_source_dir() + '/src/arch/amd64/linker.ld'
+    endif
 else
     kernel_linker_script = meson.current_source_dir() + '/src/arch/armv7/linker.ld'
 endif

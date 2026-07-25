@@ -22,6 +22,8 @@ required_markers=(
     "Scheduler: context switch round-trip verified"
     "rucux (aarch64) boot complete, 1 CPUs online"
     "Scheduler: preemption reached a scheduled thread"
+    "userspace: entering EL0"
+    "userspace: hello from EL0"
 )
 
 # A translation mismatch still boots, so assert its absence explicitly rather
@@ -30,6 +32,9 @@ forbidden_markers=(
     "TRANSLATION MISMATCH"
     "CONTEXT SWITCH FAILED"
     "AArch64 synchronous fault"
+    "AArch64 IRQ fault"
+    "userspace: short write"
+    "open_stdio: /dev/tty not found"
 )
 
 setup_builddir() {

@@ -43,6 +43,26 @@ switch_context:
     add     sp, sp, #96
     ret
 
+// ─── aarch64_thread_entry ─────────────────────────────────────────────────
+// Trampoline for freshly spawned kernel threads.
+//
+// A new thread is reached by `ret`, not `eret`, so it inherits PSTATE from
+// whoever called switch_context. schedule() is normally called from the IRQ
+// handler, where the hardware has masked IRQs on exception entry — so without
+// this, a fresh thread runs with interrupts off, its WFI never wakes, and the
+// timer tick that would preempt it never arrives.
+//
+// spawn() places the real entry point in x19 and this trampoline in x30.
+
+.global aarch64_thread_entry
+.type aarch64_thread_entry, %function
+aarch64_thread_entry:
+    msr     daifclr, #2         // unmask IRQ for the new thread
+    blr     x19                 // call the thread's entry point
+    bl      aarch64_thread_exit // entry returned: terminate the thread
+1:  wfe
+    b       1b
+
 // ─── jump_to_user_space ───────────────────────────────────────────────────
 // void jump_to_user_space(void* entry, void* stack, void* arg);
 //   x0 = user entry point

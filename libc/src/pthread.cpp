@@ -6,19 +6,9 @@
 #include <uapi/kernel/syscalls.h>
 #include <unistd.h>
 
-extern "C" {
+#include "syscall_impl.h"
 
-static long __syscall(long num, long a1 = 0, long a2 = 0, long a3 = 0, long a4 = 0, long a5 = 0, long a6 = 0) {
-    long ret;
-    register long r10 asm("r10") = a4;
-    register long r8 asm("r8") = a5;
-    register long r9 asm("r9") = a6;
-    asm volatile("syscall"
-                 : "=a"(ret)
-                 : "a"(num), "D"(a1), "S"(a2), "d"(a3), "r"(r10), "r"(r8), "r"(r9)
-                 : "rcx", "r11", "memory");
-    return ret;
-}
+extern "C" {
 
 int sched_yield(void) {
     __syscall(SYS_YIELD);

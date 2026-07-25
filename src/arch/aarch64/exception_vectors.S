@@ -2,10 +2,13 @@
 //
 // AArch64 exception vector table.
 //
-// VBAR_EL1 requires 2 KiB alignment; the table is 16 entries of 0x80 bytes,
-// grouped in fours by originating state: EL1t, EL1h, EL0(64), EL0(32).
-
-.section .vectors, "ax"
+// VBAR_EL1 requires 2 KiB alignment; the table is 16 entries of exactly 0x80
+// bytes, grouped in fours by originating state: EL1t, EL1h, EL0(64), EL0(32).
+//
+// Each slot holds only a branch. Register save/restore does not fit in 0x80
+// bytes — SAVE_REGS plus RESTORE_REGS alone is ~136 bytes — and an oversized
+// entry silently shifts every following slot to the next 0x80 boundary, so the
+// handler bodies live out of line in .text.
 
 // Save the AAPCS caller-saved set plus x29/x30. Enough to call into C++ and
 // return; callee-saved registers are preserved by the C++ side.
@@ -49,9 +52,49 @@
     add     sp, sp, #256
 .endm
 
-// A fault we do not handle: report the class and halt.
-.macro FAULT_ENTRY index
+// ─── Vector table ─────────────────────────────────────────────────────────
+
+.macro VENTRY label
     .balign 0x80
+    b       \label
+.endm
+
+.section .vectors, "ax"
+.balign 2048
+.global aarch64_vector_table
+.type aarch64_vector_table, %object
+aarch64_vector_table:
+    // Current EL, SP_EL0
+    VENTRY  vec_el1t_sync
+    VENTRY  vec_el1t_irq
+    VENTRY  vec_el1t_fiq
+    VENTRY  vec_el1t_serror
+
+    // Current EL, SP_ELx — where the kernel itself runs
+    VENTRY  vec_el1h_sync
+    VENTRY  vec_el1h_irq
+    VENTRY  vec_el1h_fiq
+    VENTRY  vec_el1h_serror
+
+    // Lower EL, AArch64 — userspace
+    VENTRY  vec_el0_sync
+    VENTRY  vec_el0_irq
+    VENTRY  vec_el0_fiq
+    VENTRY  vec_el0_serror
+
+    // Lower EL, AArch32 — unused; the kernel never drops to AArch32
+    VENTRY  vec_el0_32_sync
+    VENTRY  vec_el0_32_irq
+    VENTRY  vec_el0_32_fiq
+    VENTRY  vec_el0_32_serror
+
+// ─── Handler bodies ───────────────────────────────────────────────────────
+
+.section .text
+
+// A fault we do not handle: report the vector index and halt.
+.macro FAULT_STUB name, index
+\name:
     SAVE_REGS
     mov     x0, #\index
     mrs     x1, esr_el1
@@ -60,50 +103,36 @@
     b       .
 .endm
 
-.macro IRQ_ENTRY
-    .balign 0x80
+FAULT_STUB vec_el1t_sync,    0
+FAULT_STUB vec_el1t_irq,     1
+FAULT_STUB vec_el1t_fiq,     2
+FAULT_STUB vec_el1t_serror,  3
+FAULT_STUB vec_el1h_sync,    4
+FAULT_STUB vec_el1h_fiq,     6
+FAULT_STUB vec_el1h_serror,  7
+FAULT_STUB vec_el0_fiq,      10
+FAULT_STUB vec_el0_serror,   11
+FAULT_STUB vec_el0_32_sync,  12
+FAULT_STUB vec_el0_32_irq,   13
+FAULT_STUB vec_el0_32_fiq,   14
+FAULT_STUB vec_el0_32_serror, 15
+
+// IRQ taken while the kernel was running, and IRQ taken while userspace was
+// running. Userspace runs with DAIF clear, so the timer tick lands here
+// constantly — routing it to a fault stub halts the moment EL0 starts.
+vec_el1h_irq:
+vec_el0_irq:
     SAVE_REGS
     bl      aarch64_irq_handler
     RESTORE_REGS
     eret
-.endm
 
-// Synchronous exception from a lower EL: an SVC syscall, or a fault taken in
-// userspace. The C++ side reads ESR_EL1 to tell them apart and may rewrite the
-// saved x0 with a syscall return value, so the frame pointer is passed in.
-.macro LOWER_SYNC_ENTRY
-    .balign 0x80
+// Synchronous exception from userspace: an SVC syscall, or a fault taken at
+// EL0. The C++ side reads ESR_EL1 to tell them apart and may rewrite the saved
+// x0 with a syscall return value, so the frame pointer is passed in.
+vec_el0_sync:
     SAVE_REGS
     mov     x0, sp
     bl      aarch64_lower_sync_handler
     RESTORE_REGS
     eret
-.endm
-
-.balign 2048
-.global aarch64_vector_table
-.type aarch64_vector_table, %object
-aarch64_vector_table:
-    // Current EL, SP_EL0
-    FAULT_ENTRY 0                       // synchronous
-    FAULT_ENTRY 1                       // IRQ
-    FAULT_ENTRY 2                       // FIQ
-    FAULT_ENTRY 3                       // SError
-
-    // Current EL, SP_ELx — this is where the kernel itself runs
-    FAULT_ENTRY 4                       // synchronous
-    IRQ_ENTRY                           // IRQ
-    FAULT_ENTRY 6                       // FIQ
-    FAULT_ENTRY 7                       // SError
-
-    // Lower EL, AArch64
-    LOWER_SYNC_ENTRY                    // synchronous: SVC, or a fault from EL0
-    FAULT_ENTRY 9                       // IRQ
-    FAULT_ENTRY 10                      // FIQ
-    FAULT_ENTRY 11                      // SError
-
-    // Lower EL, AArch32
-    FAULT_ENTRY 12                      // synchronous
-    FAULT_ENTRY 13                      // IRQ
-    FAULT_ENTRY 14                      // FIQ
-    FAULT_ENTRY 15                      // SError

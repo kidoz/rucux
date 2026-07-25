@@ -34,6 +34,10 @@ extern "C" void switch_context(uintptr_t* old_stack, uintptr_t new_stack) noexce
 extern "C" {
 uintptr_t g_current_kernel_stack = 0;
 void jump_to_user_space(void* entry, void* stack, void* arg);
+#if defined(__aarch64__)
+// Unmasks IRQs before calling the thread entry point held in x19.
+void aarch64_thread_entry();
+#endif
 }
 
 static thread* find_thread_locked(uint32_t tid, thread** prev_out = nullptr) noexcept {
@@ -274,11 +278,16 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
         *(--stack) = 0;
     t->stack_pointer = reinterpret_cast<uintptr_t>(stack);
 #elif defined(__aarch64__)
+    // A fresh thread is reached by `ret`, so it inherits PSTATE from the
+    // switching context — usually the IRQ handler, where IRQs are masked.
+    // Enter through a trampoline that unmasks them: entry in x19, trampoline
+    // in x30.
     uint64_t* stack = reinterpret_cast<uint64_t*>((t->stack_base + t->stack_size) & ~0xFULL);
     stack -= 12;
     for (int i = 0; i < 12; ++i)
         stack[i] = 0;
-    stack[11] = reinterpret_cast<uint64_t>(entry); // x30, where `ret` lands
+    stack[0] = reinterpret_cast<uint64_t>(entry);                  // x19
+    stack[11] = reinterpret_cast<uint64_t>(&aarch64_thread_entry); // x30
     t->stack_pointer = reinterpret_cast<uintptr_t>(stack);
 #endif
     t->async_head = 0;

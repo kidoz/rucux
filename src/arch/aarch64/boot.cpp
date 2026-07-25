@@ -10,7 +10,14 @@
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
+#include <kernel/memory/pmm.hpp>
+#include <kernel/process/elf.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/vfs/ramfs.hpp>
+#include <kernel/vfs/tty.hpp>
+#include <kernel/vfs/vfs.hpp>
+
+#include <hello_bin.hpp>
 #include <stdint.h>
 
 // Hardware defaults come from the board manifest via meson (see board.yaml).
@@ -35,6 +42,7 @@
 #endif
 
 extern "C" void switch_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
+extern "C" void jump_to_user_space(void* entry, void* stack, void* arg);
 
 namespace {
 
@@ -75,6 +83,59 @@ void preempt_probe() noexcept {
     kernel::print("Scheduler: preemption reached a scheduled thread\n");
     for (;;)
         asm volatile("wfi");
+}
+
+// Minimal root filesystem so an fd can resolve to something writable.
+void init_rootfs() noexcept {
+    kernel::vfs::vfs_manager::init();
+    auto* root = kernel::vfs::ramfs::create_root();
+    kernel::vfs::vfs_manager::set_root(root); // without this get_root() returns null
+    auto* dev = kernel::vfs::ramfs::create_directory(root, "dev");
+    kernel::vfs::ramfs::attach_node(dev, kernel::vfs::tty::create());
+}
+
+void open_stdio(kernel::scheduler::thread* t) noexcept {
+    auto* root = kernel::vfs::vfs_manager::get_root();
+    auto* dev = root ? root->ops->finddir(root, "dev") : nullptr;
+    auto* tty = dev ? dev->ops->finddir(dev, "tty") : nullptr;
+    if (!tty) {
+        kernel::print("open_stdio: /dev/tty not found\n");
+        return;
+    }
+    t->ensure_fd_capacity(3);
+    for (int i = 0; i < 3; ++i) {
+        t->fd_table[i].node = tty;
+        t->fd_table[i].offset = 0;
+        t->fd_table[i].flags = 2; // O_RDWR
+    }
+}
+
+// Kernel thread that hands control to EL0. Everything up to the ERET is the
+// same shape as the amd64 path.
+void user_hello() noexcept {
+    constexpr uintptr_t USER_STACK_VA = 0x1000100000;
+
+    uintptr_t space = kernel::memory::vmm::create_address_space();
+    uintptr_t entry = kernel::process::elf::load(space, hello_bin, hello_bin_size);
+    if (!entry) {
+        kernel::print("userspace: ELF load failed\n");
+        kernel::scheduler::scheduler::exit(1);
+        return;
+    }
+
+    kernel::memory::vmm::switch_to(space);
+
+    void* stack = kernel::memory::pmm::alloc_page();
+    kernel::memory::vmm::map(USER_STACK_VA, reinterpret_cast<uintptr_t>(stack),
+                             kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE |
+                                 kernel::memory::page_flags::USER);
+
+    auto* t = kernel::scheduler::scheduler::current_thread();
+    t->pml4_phys = space;
+    open_stdio(t);
+
+    kernel::print("userspace: entering EL0 at {}\n", reinterpret_cast<void*>(entry));
+    jump_to_user_space(reinterpret_cast<void*>(entry), reinterpret_cast<void*>(USER_STACK_VA + 4096), nullptr);
 }
 
 // Confirm translation is actually live. The SCTLR_EL1.M bit only says the MMU
@@ -195,8 +256,11 @@ void kernel_main(uint64_t fdt_addr) {
     verify_context_switch();
     syscall_init();
 
+    init_rootfs();
+
     // A real thread so preemption has somewhere to go besides idle.
     kernel::scheduler::scheduler::spawn(&preempt_probe, 1);
+    kernel::scheduler::scheduler::spawn(&user_hello, 2);
 
     kernel::print("rucux (aarch64) boot complete, 1 CPUs online\n");
 
