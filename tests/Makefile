@@ -1,28 +1,54 @@
 CXX ?= c++
-CXXFLAGS = -std=c++20 -Wall -Wextra -g -I../src/include
-LDFLAGS = -lpthread
-
-TESTS = test_atomic test_spinlock test_buddy test_libc
+CXXFLAGS = -std=c++23 -Wall -Wextra -g
+CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
+LDLIBS = -lpthread
+OBJDIR = ../builddir-host-tests
+TESTS = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access
+LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
+LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
+LIBC_SYMBOLS = vsprintf vsnprintf snprintf strtol strtoul strtoll strtoull strtod strtof strtold sscanf htons htonl ntohs ntohl inet_ntoa inet_pton inet_ntop
+LIBC_RENAMES = $(foreach symbol,$(LIBC_SYMBOLS),-D$(symbol)=rucux_$(symbol))
 
 .PHONY: all clean run
-
 all: $(TESTS)
 
-test_atomic: test_atomic.cpp test_harness.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $<
+$(OBJDIR):
+	mkdir -p $@
 
-test_spinlock: test_spinlock.cpp test_harness.hpp
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $<
+$(OBJDIR)/test_%.o: test_%.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 
-test_buddy: test_buddy.cpp test_harness.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $<
+$(OBJDIR)/buddy.o: ../src/kernel/memory/buddy.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 
-test_libc: test_libc.cpp test_harness.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $<
+$(OBJDIR)/elf_validate.o: ../src/kernel/process/elf_validate.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+$(OBJDIR)/libc_%.o: ../libc/src/%.cpp | $(OBJDIR)
+	$(CXX) $(CXXFLAGS) -I../libc/include -I.. $(LIBC_RENAMES) -fno-builtin -MMD -MP -c -o $@ $<
+
+test_atomic: $(OBJDIR)/test_atomic.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+test_spinlock: $(OBJDIR)/test_spinlock.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+test_buddy: $(OBJDIR)/test_buddy.o $(OBJDIR)/buddy.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+test_libc: $(OBJDIR)/test_libc.o $(LIBC_OBJECTS)
+	$(CXX) -o $@ $^ $(LDLIBS)
+test_elf: $(OBJDIR)/test_elf.o $(OBJDIR)/elf_validate.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+
+$(OBJDIR)/user_access.o: ../src/kernel/memory/user_access.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/syscall.o: ../src/kernel/syscall.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+test_user_access: $(OBJDIR)/test_user_access.o $(OBJDIR)/user_access.o $(OBJDIR)/syscall.o
+	$(CXX) -o $@ $^ $(LDLIBS)
 
 run: $(TESTS)
-	@echo ""
-	@for t in $(TESTS); do echo "--- Running $$t ---"; ./$$t; echo ""; done
+	@set -e; for t in $(TESTS); do ./$$t; done
 
 clean:
-	rm -f $(TESTS)
+	rm -f $(TESTS) $(OBJDIR)/*.o $(OBJDIR)/*.d
+
+-include $(wildcard $(OBJDIR)/*.d)
