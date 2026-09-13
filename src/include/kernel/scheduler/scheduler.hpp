@@ -107,7 +107,8 @@ public:
     static void init() noexcept;
     static void schedule() noexcept;
     static thread* spawn(void (*entry)(), uint32_t tid) noexcept;
-    static thread* spawn_user(uintptr_t pml4_phys, void* entry, void* stack, void* arg, uint32_t tid = 0) noexcept;
+    static thread* spawn_user(uintptr_t pml4_phys, void* entry, void* stack, void* arg, uint32_t tid = 0,
+                              bool enqueue = true) noexcept;
     static void add_thread(thread* t) noexcept;
     static void yield() noexcept;
     static void block(thread_state reason) noexcept;

@@ -5,6 +5,7 @@
 #include <kernel/process/elf.hpp>
 #include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/sync/spinlock.hpp>
 #include <kernel/vfs/vfs.hpp>
 #include <knew.hpp>
 #include <lib/string.hpp>
@@ -15,8 +16,10 @@ namespace {
 
 #if defined(__x86_64__)
 constexpr uintptr_t USER_STACK_BASE = 0x8000100000ULL;
+#elif defined(__aarch64__)
+constexpr uintptr_t USER_STACK_BASE = 0x1000100000ULL;
 #else
-constexpr uintptr_t USER_STACK_BASE = 0x70000000UL;
+constexpr uintptr_t USER_STACK_BASE = 0x80010000UL;
 #endif
 constexpr size_t USER_STACK_SIZE = 64 * 1024;
 
@@ -78,10 +81,12 @@ long spawn_path(const char* path, uint32_t requested_tid) noexcept {
     uintptr_t entry = kernel::process::elf::load(pml4, image, node->length);
     delete[] image;
     if (!entry) {
+        kernel::memory::vmm::discard_address_space(pml4);
         kernel::print("SPAWN: ELF load failed for {}\n", path);
         return -1;
     }
 
+    uintptr_t irq_flags = kernel::irq_save();
     uintptr_t old_pml4 = kernel::memory::vmm::get_active_page_table();
     kernel::memory::vmm::switch_to(pml4);
 
@@ -89,26 +94,39 @@ long spawn_path(const char* path, uint32_t requested_tid) noexcept {
         void* user_stack_page = kernel::memory::pmm::alloc_page();
         if (!user_stack_page) {
             kernel::memory::vmm::switch_to(old_pml4);
+            kernel::irq_restore(irq_flags);
+            kernel::memory::vmm::discard_address_space(pml4);
             kernel::print("SPAWN: failed to allocate user stack for {}\n", path);
             return -1;
         }
 
+        lib::memset(user_stack_page, 0, kernel::memory::pmm::PAGE_SIZE);
         kernel::memory::vmm::map(USER_STACK_BASE + offset, reinterpret_cast<uintptr_t>(user_stack_page),
                                  kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE |
-                                     kernel::memory::page_flags::USER);
+                                     kernel::memory::page_flags::USER | kernel::memory::page_flags::NO_EXECUTE);
+        if (kernel::memory::vmm::get_phys(USER_STACK_BASE + offset) != reinterpret_cast<uintptr_t>(user_stack_page)) {
+            kernel::memory::pmm::free_page(user_stack_page);
+            kernel::memory::vmm::switch_to(old_pml4);
+            kernel::irq_restore(irq_flags);
+            kernel::memory::vmm::discard_address_space(pml4);
+            return -1;
+        }
     }
 
     kernel::memory::vmm::switch_to(old_pml4);
+    kernel::irq_restore(irq_flags);
 
     auto* t = kernel::scheduler::scheduler::spawn_user(pml4, reinterpret_cast<void*>(entry),
                                                        reinterpret_cast<void*>(USER_STACK_BASE + USER_STACK_SIZE),
-                                                       nullptr, requested_tid);
+                                                       nullptr, requested_tid, false);
     if (!t) {
+        kernel::memory::vmm::discard_address_space(pml4);
         kernel::print("SPAWN: spawn_user failed for {}\n", path);
         return -1;
     }
 
     open_stdio(t);
+    kernel::scheduler::scheduler::add_thread(t);
     return t->tid;
 }
 

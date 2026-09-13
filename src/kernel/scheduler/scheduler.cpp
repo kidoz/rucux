@@ -173,6 +173,7 @@ static thread* try_steal(cpu::per_cpu* thief) noexcept {
 
 static void clone_trampoline() {
     thread* t = scheduler::scheduler::current_thread();
+    kernel::print("userspace: entering EL0 at {}\n", t->user_entry);
     jump_to_user_space(t->user_entry, t->user_stack, t->user_arg);
 }
 
@@ -320,7 +321,8 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     return t;
 }
 
-thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, void* arg, uint32_t tid) noexcept {
+thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, void* arg, uint32_t tid,
+                              bool enqueue) noexcept {
     thread* t = new thread();
     if (!t) return nullptr;
     thread* parent = current_thread();
@@ -400,7 +402,7 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
         g_all_threads = t;
     }
 
-    add_thread(t);
+    if (enqueue) add_thread(t);
     return t;
 }
 
@@ -548,23 +550,24 @@ void scheduler::schedule() noexcept {
     thread* new_thread = nullptr;
     bool old_thread_requeued = false;
 
-choose_next: {
-    uintptr_t rq_flags = pcpu->sched_lock.lock();
+choose_next:
+    {
+        uintptr_t rq_flags = pcpu->sched_lock.lock();
 
-    // Re-enqueue the old thread if it was running
-    if (old_thread && old_thread->state == thread_state::RUNNING && old_thread != pcpu->idle_thread &&
-        !old_thread_requeued) {
-        old_thread->state = thread_state::READY;
-        old_thread->last_cpu = pcpu->cpu_id;
-        enqueue_on_cpu(pcpu, old_thread);
-        old_thread_requeued = true;
+        // Re-enqueue the old thread if it was running
+        if (old_thread && old_thread->state == thread_state::RUNNING && old_thread != pcpu->idle_thread &&
+            !old_thread_requeued) {
+            old_thread->state = thread_state::READY;
+            old_thread->last_cpu = pcpu->cpu_id;
+            enqueue_on_cpu(pcpu, old_thread);
+            old_thread_requeued = true;
+        }
+
+        // Pick highest-priority runnable thread
+        new_thread = dequeue_from_cpu(pcpu);
+
+        pcpu->sched_lock.unlock(rq_flags);
     }
-
-    // Pick highest-priority runnable thread
-    new_thread = dequeue_from_cpu(pcpu);
-
-    pcpu->sched_lock.unlock(rq_flags);
-}
 
     // If nothing on local queue, try work stealing
     if (!new_thread) {

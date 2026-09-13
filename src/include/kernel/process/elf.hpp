@@ -42,6 +42,8 @@ public:
 
     static constexpr uint32_t PT_LOAD = 1;
 
+    static bool validate(const uint8_t* data, size_t size, uint16_t machine) noexcept;
+
     // Load an ELF executable into memory and return the entry point address.
     // Returns 0 on failure.
     static uintptr_t load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept;

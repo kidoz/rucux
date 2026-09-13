@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/process/elf.hpp>
@@ -10,44 +11,33 @@ namespace kernel::process {
 using namespace memory;
 
 uintptr_t elf::load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept {
-    if (size < sizeof(elf64_ehdr)) {
-        kernel::print("ELF load failed: File too small.\n");
-        return 0;
-    }
-
-    uintptr_t old_cr3 = vmm::get_active_page_table();
+#if defined(__x86_64__)
+    constexpr uint16_t machine = 62;
+#elif defined(__aarch64__)
+    constexpr uint16_t machine = 183;
+#else
+    constexpr uint16_t machine = 40;
+#endif
+    if (!pml4 || !validate(data, size, machine)) return 0;
+    // The temporary address space is not the caller's scheduled address space.
+    // Keep preemption disabled until its original table has been restored.
+    struct address_space_scope {
+        uintptr_t flags = kernel::irq_save();
+        uintptr_t previous = vmm::get_active_page_table();
+        ~address_space_scope() {
+            vmm::switch_to(previous);
+            kernel::irq_restore(flags);
+        }
+    } scope;
     vmm::switch_to(pml4);
-
     const auto* ehdr = reinterpret_cast<const elf64_ehdr*>(data);
-
-    // Validate magic number
-    if (ehdr->e_ident[0] != ELFMAG0 || ehdr->e_ident[1] != ELFMAG1 || ehdr->e_ident[2] != ELFMAG2 ||
-        ehdr->e_ident[3] != ELFMAG3) {
-        kernel::print("ELF load failed: Invalid magic number.\n");
-        vmm::switch_to(old_cr3);
-        return 0;
-    }
-
-    // Ensure it's a 64-bit executable (class 2)
-    if (ehdr->e_ident[4] != 2) {
-        kernel::print("ELF load failed: Not a 64-bit ELF.\n");
-        vmm::switch_to(old_cr3);
-        return 0;
-    }
-
-    // Ensure it's an executable file (type 2)
-    if (ehdr->e_type != 2) {
-        kernel::print("ELF load failed: Not an executable file.\n");
-        vmm::switch_to(old_cr3);
-        return 0;
-    }
 
     // Iterate over program headers
     const auto* phdrs = reinterpret_cast<const elf64_phdr*>(data + ehdr->e_phoff);
     for (uint16_t i = 0; i < ehdr->e_phnum; ++i) {
         const auto& phdr = phdrs[i];
 
-        if (phdr.p_type == PT_LOAD) {
+        if (phdr.p_type == PT_LOAD && phdr.p_memsz != 0) {
             // Each page is filled through the kernel's own mapping of the
             // physical frame, before it is mapped into the user address space.
             //
@@ -64,7 +54,6 @@ uintptr_t elf::load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept {
                 void* page = pmm::alloc_page();
                 if (!page) {
                     kernel::print("ELF load failed: Out of physical memory.\n");
-                    vmm::switch_to(old_cr3);
                     return 0;
                 }
 
@@ -84,18 +73,22 @@ uintptr_t elf::load(uintptr_t pml4, const uint8_t* data, size_t size) noexcept {
                 }
                 // Bytes beyond p_filesz stay zero — that is the segment's BSS.
 
-                // Segment flags: R=4, W=2, X=1. NX is still not applied; see
-                // the W^X note in the roadmap.
+                // Segment flags: R=4, W=2, X=1.
                 page_flags flags = page_flags::PRESENT | page_flags::USER;
                 if (phdr.p_flags & 2) flags = flags | page_flags::WRITABLE;
+                if (!(phdr.p_flags & 1)) flags = flags | page_flags::NO_EXECUTE;
 
-                vmm::map(page_base + (p * pmm::PAGE_SIZE), reinterpret_cast<uintptr_t>(page), flags);
+                const uintptr_t address = page_base + p * pmm::PAGE_SIZE;
+                vmm::map(address, reinterpret_cast<uintptr_t>(page), flags);
+                if (vmm::get_phys(address) != reinterpret_cast<uintptr_t>(page)) {
+                    pmm::free_page(page);
+                    return 0;
+                }
             }
         }
     }
 
     kernel::print("ELF Loaded successfully. Entry: {}\n", reinterpret_cast<void*>(ehdr->e_entry));
-    vmm::switch_to(old_cr3);
     return ehdr->e_entry;
 }
 
