@@ -14,6 +14,7 @@
 .type aarch64_ap_entry, %function
 
 aarch64_ap_entry:
+    msr     daifset, #0xf               // no IRQ before the per-CPU vectors are installed
     mov     x19, x0                     // preserve cpu_id across the EL drop
 
     ldr     x0, =0x30d00800             // SCTLR_EL1: MMU/caches off, RES1 set

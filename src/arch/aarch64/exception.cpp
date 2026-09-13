@@ -12,14 +12,14 @@ namespace arch::aarch64 {
 
 namespace {
 
-volatile uint64_t g_irq_count = 0;
+kernel::atomic<uint64_t> g_irq_count{0};
 
 // Preemption is gated because exceptions_init() unmasks IRQs early, so the
 // timer is already ticking while kernel_main is still bringing the system up.
 // schedule() with no current thread switches to idle via
 // switch_context(nullptr, ...), which abandons the boot context permanently —
 // so it must stay off until boot is ready to hand over.
-volatile bool g_preemption_enabled = false;
+kernel::atomic<bool> g_preemption_enabled{false};
 
 // Interrupt IDs 1020-1023 are reserved; 1023 means "spurious".
 constexpr uint32_t GIC_SPURIOUS_MIN = 1020;
@@ -57,11 +57,11 @@ void exceptions_init() noexcept {
 }
 
 uint64_t irq_count() noexcept {
-    return g_irq_count;
+    return g_irq_count.load(kernel::relaxed);
 }
 
 void enable_preemption() noexcept {
-    g_preemption_enabled = true;
+    g_preemption_enabled.store(true, kernel::release);
 }
 
 } // namespace arch::aarch64
@@ -70,21 +70,19 @@ extern "C" void aarch64_irq_handler() {
     uint32_t irq = arch::aarch64::gic_cpu_interface::acknowledge();
     uint32_t id = irq & 0x3FF;
 
-    if (id >= arch::aarch64::GIC_SPURIOUS_MIN)
-        return; // spurious; no EOI required
+    if (id >= arch::aarch64::GIC_SPURIOUS_MIN) return; // spurious; no EOI required
 
-    // Explicit load/store: compound assignment on a volatile is deprecated.
-    const uint64_t seen = arch::aarch64::g_irq_count;
-    arch::aarch64::g_irq_count = seen + 1;
+    arch::aarch64::g_irq_count.fetch_add(1, kernel::relaxed);
 
     if (id == arch::aarch64::TIMER_IRQ) {
         arch::aarch64::generic_timer::rearm();
-        kernel::cpu::this_cpu()->ticks++;
+        auto* pcpu = kernel::cpu::this_cpu();
+        pcpu->ticks++;
+        if (pcpu->cpu_id != 0 && pcpu->ticks == 5) kernel::print("AP{}: timer IRQ verified\n", pcpu->cpu_id);
         // EOI before switching away: schedule() may not return to this frame,
         // and leaving the interrupt active would block every later one.
         arch::aarch64::gic_cpu_interface::end_of_interrupt(irq);
-        if (arch::aarch64::g_preemption_enabled)
-            kernel::scheduler::scheduler::schedule();
+        if (arch::aarch64::g_preemption_enabled.load(kernel::acquire)) kernel::scheduler::scheduler::schedule();
         return;
     }
 

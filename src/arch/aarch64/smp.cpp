@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <arch/aarch64/exception.hpp>
 #include <arch/aarch64/gic.hpp>
 #include <arch/aarch64/psci.hpp>
 #include <arch/aarch64/smp.hpp>
@@ -44,8 +45,7 @@ extern "C" void aarch64_ap_main(uint64_t cpu_id) {
     kernel::cpu::ap_init(static_cast<uint32_t>(cpu_id), static_cast<uint32_t>(mpidr & 0xFF));
 
     // Per-CPU banked GIC interface and timer.
-    if (g_gic_cpu_base != 0)
-        gic_cpu_interface::init(g_gic_cpu_base);
+    if (g_gic_cpu_base != 0) gic_cpu_interface::init(g_gic_cpu_base);
     gic_distributor::enable_irq(TIMER_IRQ);
     generic_timer::init_periodic(1000);
 
@@ -69,11 +69,11 @@ extern "C" void aarch64_ap_main(uint64_t cpu_id) {
     pcpu->idle_thread = idle;
     pcpu->current_thread = nullptr;
 
-    g_aps_online.fetch_add(1, kernel::relaxed);
+    g_aps_online.fetch_add(1, kernel::release);
     kernel::print("AP{}: online (MPIDR {})\n", static_cast<uint32_t>(cpu_id),
                   reinterpret_cast<void*>(static_cast<uintptr_t>(mpidr)));
 
-    asm volatile("msr daifclr, #2" ::: "memory");
+    exceptions_init(); // VBAR_EL1 is per-CPU; install it before unmasking IRQs.
     for (;;)
         asm volatile("wfi");
 }
@@ -83,9 +83,9 @@ void smp_boot_aps(uint32_t num_cpus) noexcept {
 
     kernel::print("SMP: PSCI version {}, conduit {}\n", psci::version(), psci::uses_hvc() ? "hvc" : "smc");
 
-    if (num_cpus > MAX_AP_CPUS + 1)
-        num_cpus = MAX_AP_CPUS + 1;
+    if (num_cpus > MAX_AP_CPUS + 1) num_cpus = MAX_AP_CPUS + 1;
 
+    uint32_t started = 0;
     for (uint32_t id = 1; id < num_cpus; ++id) {
         // Affinity 0 is the core index on both QEMU `virt` and the S905's
         // single-cluster Cortex-A53 layout.
@@ -93,12 +93,13 @@ void smp_boot_aps(uint32_t num_cpus) noexcept {
         int32_t rc = psci::cpu_on(target_mpidr, reinterpret_cast<uintptr_t>(&aarch64_ap_entry), id);
         if (rc != psci_ret::SUCCESS)
             kernel::print("SMP: CPU_ON for core {} failed ({})\n", id, rc);
+        else
+            ++started;
     }
 
     // Bounded wait; a core that never checks in must not hang boot.
     for (uint32_t spin = 0; spin < 100000000U; ++spin) {
-        if (g_aps_online.load(kernel::relaxed) == num_cpus - 1)
-            break;
+        if (g_aps_online.load(kernel::acquire) == started) break;
         asm volatile("yield");
     }
 
