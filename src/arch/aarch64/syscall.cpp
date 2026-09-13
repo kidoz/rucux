@@ -9,10 +9,12 @@
 #include <arch/aarch64/syscall.hpp>
 #include <kernel/ipc/ipc.hpp>
 #include <kernel/memory/mmap.hpp>
+#include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/syscall.hpp>
 #include <kernel/vfs/vfs.hpp>
 #include <stdint.h>
 #include <uapi/kernel/syscalls.h>
@@ -39,7 +41,7 @@ const char* ec_name(uint64_t ec) noexcept {
 
 } // namespace
 
-long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, long a6) noexcept {
+long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a5, long a6) noexcept {
     switch (num) {
     case SYS_EXIT:
         kernel::scheduler::scheduler::exit();
@@ -96,6 +98,10 @@ long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, lon
     }
 }
 
+long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, long a6) noexcept {
+    return kernel::checked_syscall(dispatch_kernel, num, a1, a2, a3, a4, a5, a6);
+}
+
 void syscall_init() noexcept {
     // SVC lands in the vector table set by exceptions_init(); AArch64 needs no
     // separate MSR programming the way x86 SYSCALL/SYSRET does.
@@ -125,13 +131,11 @@ extern "C" void aarch64_lower_sync_handler(uint64_t* frame) {
     // A fault in userspace may be a demand-paging miss. If the VMA layer backs
     // it, ERET simply retries the faulting instruction.
     if (ec == arch::aarch64::EC_DATA_ABORT || ec == arch::aarch64::EC_INSTRUCTION_ABORT) {
-        if (kernel::memory::vmm::handle_page_fault(static_cast<uintptr_t>(far), esr))
-            return;
+        if (kernel::memory::vmm::handle_page_fault(static_cast<uintptr_t>(far), esr)) return;
     }
 
     kernel::print("\n*** EL0 {} ***\n", arch::aarch64::ec_name(ec));
-    kernel::print("ESR_EL1 = {}, FAR_EL1 = {}, ELR_EL1 = {}\n",
-                  reinterpret_cast<void*>(static_cast<uintptr_t>(esr)),
+    kernel::print("ESR_EL1 = {}, FAR_EL1 = {}, ELR_EL1 = {}\n", reinterpret_cast<void*>(static_cast<uintptr_t>(esr)),
                   reinterpret_cast<void*>(static_cast<uintptr_t>(far)),
                   reinterpret_cast<void*>(static_cast<uintptr_t>(elr)));
     kernel::print("Terminating thread.\n");

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include <arch/amd64/io.hpp>
 #include <arch/amd64/syscall.hpp>
+#include <kernel/memory/user_access.hpp>
+#include <kernel/syscall.hpp>
 #include <stdint.h>
 #include <uapi/kernel/syscalls.h>
 
@@ -23,7 +25,14 @@ extern "C" void check_signals(uintptr_t* rsp) {
     if (rsp[0] == 0x5168E700) {
         // Perform sigreturn
         uintptr_t user_rsp = rsp[10];
-        auto* ctx = reinterpret_cast<sigcontext*>(user_rsp);
+        sigcontext context{};
+        if (!kernel::memory::copy_from_user(&context, reinterpret_cast<void*>(user_rsp), sizeof(context)) ||
+            !kernel::memory::user_range(context.rip, 1) || !kernel::memory::user_range(context.rsp, 1)) {
+            kernel::scheduler::scheduler::exit(-1);
+            return;
+        }
+        auto* ctx = &context;
+        ctx->rflags = (ctx->rflags & 0xCD5ULL) | 0x202ULL; // Arithmetic flags only; no IOPL/NT/VM.
 
         rsp[0] = ctx->rax;
         rsp[2] = ctx->r15;
@@ -75,9 +84,8 @@ extern "C" void check_signals(uintptr_t* rsp) {
     user_rsp -= sizeof(sigcontext);
     user_rsp &= ~15ULL;
 
-    // Make sure the memory is paged in (we should really use copy_to_user, but we are identity mapped or user
-    // accessible here)
-    auto* ctx = reinterpret_cast<sigcontext*>(user_rsp);
+    sigcontext context{};
+    auto* ctx = &context;
 
     ctx->rax = rsp[0];
     ctx->r15 = rsp[2];
@@ -96,7 +104,13 @@ extern "C" void check_signals(uintptr_t* rsp) {
     rsp[10] = user_rsp - 8;                        // New RSP, subtracting 8 to simulate a call (pushing restorer)
 
     // Push the restorer address onto the user stack so the handler returns to it
-    *reinterpret_cast<uintptr_t*>(rsp[10]) = reinterpret_cast<uintptr_t>(t->sig_restorers[signum]);
+    uintptr_t restorer = reinterpret_cast<uintptr_t>(t->sig_restorers[signum]);
+    if (!kernel::memory::user_range(rsp[9], 1) || !kernel::memory::user_range(restorer, 1) ||
+        !kernel::memory::copy_to_user(reinterpret_cast<void*>(user_rsp), ctx, sizeof(*ctx)) ||
+        !kernel::memory::copy_to_user(reinterpret_cast<void*>(rsp[10]), &restorer, sizeof(restorer))) {
+        kernel::scheduler::scheduler::exit(-1);
+        return;
+    }
 
     // Signal handlers expect the signal number in RDI
     // Since syscall entry clobbered RDI, we will just use a hack:
@@ -109,31 +123,7 @@ extern "C" void check_signals(uintptr_t* rsp) {
     t->sig_mask |= (1U << signum);
 }
 
-long sys_sigreturn(uintptr_t* rsp) {
-    auto* t = kernel::scheduler::scheduler::current_thread();
-    if (!t) return -1;
-
-    // The user stack points to the sigcontext (since we returned from the handler and popped the restorer)
-    uintptr_t user_rsp = rsp[10];
-    auto* ctx = reinterpret_cast<sigcontext*>(user_rsp);
-
-    rsp[0] = ctx->rax;
-    rsp[2] = ctx->r15;
-    rsp[3] = ctx->r14;
-    rsp[4] = ctx->r13;
-    rsp[5] = ctx->r12;
-    rsp[6] = ctx->rbx;
-    rsp[7] = ctx->rbp;
-    rsp[8] = ctx->rflags;
-    rsp[9] = ctx->rip;
-    rsp[10] = ctx->rsp;
-
-    t->sig_mask = ctx->oldmask;
-
-    return ctx->rax; // syscall_dispatch will overwrite rsp[0] with this return value, which matches ctx->rax!
-}
-
-extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
+static long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
     switch (num) {
     case SYS_GETDENTS:
         return kernel::vfs::vfs_manager::sys_getdents(static_cast<int>(a1), reinterpret_cast<void*>(a2),
@@ -289,6 +279,10 @@ extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, l
     default:
         return -1;
     }
+}
+
+extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
+    return kernel::checked_syscall(dispatch_kernel, num, a1, a2, a3, a4, a5, a6);
 }
 
 extern "C" void syscall_entry();

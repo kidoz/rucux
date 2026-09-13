@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <arch/armv7/syscall.hpp>
+#include <kernel/memory/user_access.hpp>
+#include <kernel/syscall.hpp>
 #include <stdint.h>
 #include <uapi/kernel/syscalls.h>
 
@@ -81,7 +83,14 @@ extern "C" void check_signals(uintptr_t* sp_ptr) {
 
     if (sp_ptr[0] == 0x5168E700) {
         uint32_t user_sp = get_user_sp();
-        auto* ctx = reinterpret_cast<sigcontext*>(user_sp);
+        sigcontext context{};
+        if (!kernel::memory::copy_from_user(&context, reinterpret_cast<void*>(user_sp), sizeof(context)) ||
+            !kernel::memory::user_range(context.pc, 1) || !kernel::memory::user_range(context.sp, 1)) {
+            kernel::scheduler::scheduler::exit(-1);
+            return;
+        }
+        auto* ctx = &context;
+        ctx->cpsr = (ctx->cpsr & 0xF8000000U) | 0x10; // Return only to unprivileged ARM state.
 
         sp_ptr[0] = ctx->r0;
         sp_ptr[1] = ctx->r1;
@@ -130,7 +139,8 @@ extern "C" void check_signals(uintptr_t* sp_ptr) {
     user_sp -= sizeof(sigcontext);
     user_sp &= ~7U; // 8-byte alignment
 
-    auto* ctx = reinterpret_cast<sigcontext*>(user_sp);
+    sigcontext context{};
+    auto* ctx = &context;
     ctx->r0 = sp_ptr[0];
     ctx->r1 = sp_ptr[1];
     ctx->r2 = sp_ptr[2];
@@ -150,6 +160,13 @@ extern "C" void check_signals(uintptr_t* sp_ptr) {
     ctx->cpsr = get_spsr();
     ctx->oldmask = t->sig_mask;
 
+    if (!kernel::memory::copy_to_user(reinterpret_cast<void*>(user_sp), ctx, sizeof(*ctx)) ||
+        !kernel::memory::user_range(reinterpret_cast<uintptr_t>(handler), 1) ||
+        !kernel::memory::user_range(reinterpret_cast<uintptr_t>(t->sig_restorers[signum]), 1)) {
+        kernel::scheduler::scheduler::exit(-1);
+        return;
+    }
+
     // Set registers to jump to handler
     sp_ptr[13] = reinterpret_cast<uint32_t>(handler); // pc
     set_user_sp(user_sp);
@@ -161,7 +178,7 @@ extern "C" void check_signals(uintptr_t* sp_ptr) {
 
 // Shared syscall dispatcher — called from the SVC assembly stub.
 // Same interface as amd64: num in first arg, up to 6 args following.
-extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
+static long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
     switch (num) {
     case SYS_EXIT:
         kernel::scheduler::scheduler::exit();
@@ -216,6 +233,10 @@ extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, l
     default:
         return -1;
     }
+}
+
+extern "C" long syscall_dispatch(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
+    return kernel::checked_syscall(dispatch_kernel, num, a1, a2, a3, a4, a5, a6);
 }
 
 void syscall_init() noexcept {

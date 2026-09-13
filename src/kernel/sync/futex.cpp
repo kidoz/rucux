@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <kernel/memory/user_access.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/sync/futex.hpp>
 
@@ -33,7 +34,12 @@ long futex_wait(uint32_t* uaddr, uint32_t val) noexcept {
     // Check value under bucket lock to prevent lost wakeups
     uintptr_t flags = bucket.lock.lock();
 
-    if (*uaddr != val) {
+    uint32_t observed = 0;
+    if (!memory::copy_from_user(&observed, uaddr, sizeof(observed))) {
+        bucket.lock.unlock(flags);
+        return -14;
+    }
+    if (observed != val) {
         bucket.lock.unlock(flags);
         return -1; // Value changed — don't sleep
     }
