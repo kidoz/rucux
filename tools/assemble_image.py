@@ -162,10 +162,21 @@ def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> 
     if not kernel_path.exists():
         raise AssembleError(f"kernel artifact not found: {kernel_path}")
 
+    platform = board.get("platform")
+    platform = platform if isinstance(platform, dict) else {}
+
+    # Staging address the ELF is read into before `bootelf` relocates it to the
+    # link address. It must be clear of both U-Boot and the kernel's own load
+    # address, so it comes from the board manifest rather than a constant.
+    stage_addr = platform.get("boot_stage_address", "0x10000000")
+
     with tempfile.TemporaryDirectory(prefix="rucux-sd-") as tmpdir:
         tmp_path = Path(tmpdir)
         boot_scr_path = tmp_path / "boot.scr"
-        create_boot_scr("fatload mmc 0:1 0x10000000 kernel.elf\nbootelf 0x10000000\n", boot_scr_path)
+        create_boot_scr(
+            f"fatload mmc 0:1 {stage_addr} kernel.elf\nbootelf {stage_addr}\n",
+            boot_scr_path,
+        )
 
         fat_img_path = tmp_path / "fat.img"
         fat_size_mib = size_mib - 2
@@ -207,7 +218,57 @@ def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> 
             with open(fat_img_path, "rb") as fat:
                 shutil.copyfileobj(fat, out)
 
+        write_boot_firmware(output_path, board, lba_start)
+
     return output_path
+
+
+def write_boot_firmware(output_path: Path, board: dict[str, object], lba_start: int) -> None:
+    """Write the SoC bootloader into the sectors ahead of the partition.
+
+    Amlogic's boot ROM loads its first stage from raw sectors near the start of
+    the card, before any partition table. Without this the image only boots on a
+    board that already has firmware on eMMC.
+
+    Offsets are vendor-specific and are read from the board manifest rather than
+    hardcoded here; see .agents/runbooks/ODROID_C2_BRINGUP_ROADMAP.md.
+    """
+    boot = board.get("boot")
+    boot = boot if isinstance(boot, dict) else {}
+
+    firmware = boot.get("firmware_image")
+    if not firmware:
+        print(
+            "warning: board declares no boot.firmware_image; the image has no "
+            "bootloader and will only boot where firmware already exists on eMMC",
+            file=sys.stderr,
+        )
+        return
+
+    firmware_path = Path(str(firmware))
+    if not firmware_path.is_absolute():
+        firmware_path = REPO_ROOT / firmware_path
+    if not firmware_path.exists():
+        raise AssembleError(f"boot firmware image not found: {firmware_path}")
+
+    try:
+        offset = int(str(boot.get("firmware_offset_bytes", "512")), 0)
+    except ValueError as exc:
+        raise AssembleError(f"invalid boot.firmware_offset_bytes: {exc}") from exc
+
+    blob = firmware_path.read_bytes()
+    limit = lba_start * 512
+    if offset + len(blob) > limit:
+        raise AssembleError(
+            f"firmware ({len(blob)} bytes at offset {offset}) would overrun the "
+            f"partition start at byte {limit}; increase the partition offset"
+        )
+
+    with open(output_path, "r+b") as out:
+        out.seek(offset)
+        out.write(blob)
+
+    print(f"wrote {len(blob)} bytes of boot firmware at offset {offset}")
 
 def assemble_image(product_name: str, image_name: str) -> Path:
     data = product_info.resolved_image_manifest(product_name, image_name)
