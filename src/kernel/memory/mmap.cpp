@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/memory/mmap.hpp>
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
@@ -22,10 +23,12 @@
 
 namespace kernel::memory {
 
-#if defined(__LP64__) || defined(__x86_64__) || defined(__aarch64__)
+#if defined(__x86_64__)
 static uintptr_t g_next_mmap_addr = 0xA000000000;
+#elif defined(__aarch64__)
+static uintptr_t g_next_mmap_addr = 0x2000000000ULL;
 #else
-static uintptr_t g_next_mmap_addr = 0x40000000;
+static uintptr_t g_next_mmap_addr = 0x80000000;
 #endif
 
 // Per-address-space VMA manager.
@@ -43,7 +46,9 @@ static void ensure_vma_init() noexcept {
 
 void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int fd, long offset) noexcept {
     auto* t = scheduler::scheduler::current_thread();
-    if (!t || length == 0) return MAP_FAILED;
+    if (!t || length == 0 || length > USER_END - USER_BEGIN || (prot & ~7) ||
+        (prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
+        return MAP_FAILED;
 
     ensure_vma_init();
 
@@ -53,10 +58,13 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
     uintptr_t virt_start = reinterpret_cast<uintptr_t>(addr);
     if (virt_start == 0 || !(flags & MAP_FIXED)) {
         virt_start = g_next_mmap_addr;
+        if (!user_range(virt_start, aligned_len)) return MAP_FAILED;
         g_next_mmap_addr += aligned_len;
     } else if (virt_start % pmm::PAGE_SIZE != 0) {
         return MAP_FAILED;
     }
+
+    if (!user_range(virt_start, aligned_len)) return MAP_FAILED;
 
     // Create VMA to track this mapping
     g_vma.insert(virt_start, virt_start + aligned_len, static_cast<uint32_t>(prot), static_cast<uint32_t>(flags), fd,
@@ -64,6 +72,7 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
 
     page_flags pflags = page_flags::PRESENT | page_flags::USER;
     if (prot & PROT_WRITE) pflags = pflags | page_flags::WRITABLE;
+    if (!(prot & PROT_EXEC)) pflags = pflags | page_flags::NO_EXECUTE;
 
     // For anonymous mappings: allocate and map pages immediately
     // (Demand paging will be added in the VMM task)
@@ -92,9 +101,11 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
                     void* phys = pmm::alloc_page();
                     if (!phys) return MAP_FAILED;
                     lib::memset(phys, 0, pmm::PAGE_SIZE);
+                    size_t remaining = length - i * pmm::PAGE_SIZE;
+                    size_t count = remaining < pmm::PAGE_SIZE ? remaining : pmm::PAGE_SIZE;
+                    node->ops->read(node, offset + i * pmm::PAGE_SIZE, count, phys);
                     vmm::map(virt_start + (i * pmm::PAGE_SIZE), reinterpret_cast<uintptr_t>(phys), pflags);
                 }
-                node->ops->read(node, offset, length, reinterpret_cast<void*>(virt_start));
             }
         }
     }
@@ -104,7 +115,7 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
 
 int mmap_manager::sys_munmap(void* addr, size_t length) noexcept {
     uintptr_t virt = reinterpret_cast<uintptr_t>(addr);
-    if (length == 0 || virt % pmm::PAGE_SIZE != 0) return -1;
+    if (length == 0 || virt % pmm::PAGE_SIZE != 0 || !user_range(virt, length)) return -22;
 
     size_t num_pages = (length + pmm::PAGE_SIZE - 1) / pmm::PAGE_SIZE;
 
