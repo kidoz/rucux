@@ -10,10 +10,10 @@
 // entry silently shifts every following slot to the next 0x80 boundary, so the
 // handler bodies live out of line in .text.
 
-// Save the AAPCS caller-saved set plus x29/x30. Enough to call into C++ and
-// return; callee-saved registers are preserved by the C++ side.
+// Preserve all GPRs and the exception return state across C++ calls and
+// scheduling. Each suspended exception keeps its own ELR, SPSR and user SP.
 .macro SAVE_REGS
-    sub     sp, sp, #256
+    sub     sp, sp, #288
     stp     x0,  x1,  [sp, #16 * 0]
     stp     x2,  x3,  [sp, #16 * 1]
     stp     x4,  x5,  [sp, #16 * 2]
@@ -30,9 +30,19 @@
     stp     x26, x27, [sp, #16 * 13]
     stp     x28, x29, [sp, #16 * 14]
     str     x30,      [sp, #16 * 15]
+    mrs     x0, elr_el1
+    mrs     x1, spsr_el1
+    stp     x0, x1, [sp, #256]
+    mrs     x0, sp_el0
+    str     x0, [sp, #272]
 .endm
 
 .macro RESTORE_REGS
+    ldp     x0, x1, [sp, #256]
+    msr     elr_el1, x0
+    msr     spsr_el1, x1
+    ldr     x0, [sp, #272]
+    msr     sp_el0, x0
     ldp     x0,  x1,  [sp, #16 * 0]
     ldp     x2,  x3,  [sp, #16 * 1]
     ldp     x4,  x5,  [sp, #16 * 2]
@@ -49,7 +59,7 @@
     ldp     x26, x27, [sp, #16 * 13]
     ldp     x28, x29, [sp, #16 * 14]
     ldr     x30,      [sp, #16 * 15]
-    add     sp, sp, #256
+    add     sp, sp, #288
 .endm
 
 // ─── Vector table ─────────────────────────────────────────────────────────
