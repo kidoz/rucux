@@ -52,7 +52,17 @@
 #define SYS_SIGPROCMASK 47
 #define SYS_NANOSLEEP 48
 #define SYS_GETTIMEOFDAY 49
-#define SYS_IPC_CALL  50   // Fast IPC: send + wait for reply (register-based)
-#define SYS_IPC_REPLY 51   // Fast IPC: reply to caller + resume them
-#define SYS_SPAWN     52   // Process creation: spawn a new process from an ELF file
-#define SYS_SIGRETURN 53   // Return from a user-space signal handler
+#define SYS_IPC_CALL 50  // Fast IPC: send + wait for reply (register-based)
+#define SYS_IPC_REPLY 51 // Fast IPC: reply to caller + resume them
+#define SYS_SPAWN 52     // Process creation: spawn a new process from an ELF file
+#define SYS_SIGRETURN 53 // Return from a user-space signal handler
+
+// Service control extensions.
+#define SYS_TOP 54
+#define SYS_TRACE_CTL 55
+#define SYS_LOG_CTL 56
+#define SYS_DISPLAY_CTL 57
+#define SYS_INPUT_CTL 58
+#define SYS_GUI_SESSION 59
+#define SYS_UNIX_IPC 60
+#define SYS_POWER_CTL 61
