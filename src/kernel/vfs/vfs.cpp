@@ -5,6 +5,7 @@
 #include <kernel/vfs/vfs.hpp>
 #include <knew.hpp>
 #include <lib/string.hpp>
+#include <uapi/kernel/stat.h>
 
 namespace kernel::vfs {
 
@@ -219,18 +220,31 @@ int vfs_manager::sys_lseek(int fd, long offset, int whence) noexcept {
     return new_offset;
 }
 
+static void fill_stat(const vfs_node* node, void* buffer) noexcept {
+    struct stat result{};
+    constexpr uint32_t types[] = {0100000, 0040000, 0020000, 0060000, 0140000, 0100000};
+    result.st_ino = node->inode;
+    result.st_mode = types[static_cast<unsigned>(node->type)] | (node->mask & 07777);
+    result.st_nlink = 1;
+    result.st_uid = node->uid;
+    result.st_gid = node->gid;
+    result.st_size = static_cast<int64_t>(node->length);
+    result.st_blksize = 4096;
+    result.st_blocks = static_cast<int64_t>(node->length / 512 + (node->length % 512 != 0));
+    lib::memcpy(buffer, &result, sizeof(result));
+}
+
 int vfs_manager::sys_stat(const char* path, void* statbuf) noexcept {
     vfs_node* node = resolve_path(path);
-    if (!node) return -1;
-    lib::memset(statbuf, 0, 144);
+    if (!node || !statbuf) return -1;
+    fill_stat(node, statbuf);
     return 0;
 }
 
 int vfs_manager::sys_fstat(int fd, void* statbuf) noexcept {
-    auto* t = scheduler::scheduler::current_thread();
-    auto* fdesc = get_fd(t, fd);
-    if (!fdesc || !fdesc->node) return -1;
-    lib::memset(statbuf, 0, 144);
+    auto* node = get_fd_node(fd);
+    if (!node || !statbuf) return -1;
+    fill_stat(node, statbuf);
     return 0;
 }
 
@@ -428,7 +442,7 @@ int vfs_manager::sys_poll(void* fds_ptr, unsigned int nfds, int timeout) noexcep
 struct epoll_event {
     uint32_t events;
     uint64_t data;
-};
+} __attribute__((packed));
 
 struct epoll_entry {
     int fd;
