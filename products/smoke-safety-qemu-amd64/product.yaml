@@ -1,5 +1,5 @@
-name: smoke-qemu-aarch64
-board: qemu-aarch64-virt
+name: smoke-safety-qemu-amd64
+board: qemu-amd64
 services: []
 programs:
   - hello

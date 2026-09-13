@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PRODUCT="smoke-qemu-aarch64"
-BUILD_DIR="builddir-aarch64-smoke"
+BUILD_DIR="${RUCUX_AARCH64_BUILD_DIR:-builddir-aarch64-smoke}"
 KERNEL_PATH="${BUILD_DIR}/kernel.elf"
 TIMEOUT_SECS="${RUCUX_AARCH64_SMOKE_TIMEOUT:-40}"
 LOG_PATH="${RUCUX_AARCH64_SMOKE_LOG:-qemu_aarch64_smoke.log}"
@@ -17,6 +17,11 @@ SMP_LOG_PATH="${RUCUX_AARCH64_SMP_LOG:-qemu_aarch64_smp.log}"
 smp_markers=(
     "SMP: 3 of 3 secondary cores online"
     "rucux (aarch64) boot complete, 4 CPUs online"
+    "AP1: timer IRQ verified"
+    "AP2: timer IRQ verified"
+    "AP3: timer IRQ verified"
+    "userspace: scheduling verified"
+    "syscall safety: PASS"
 )
 
 # "boot complete" is only reached after the timer IRQ has been serviced five
@@ -33,11 +38,16 @@ required_markers=(
     "Scheduler: preemption reached a scheduled thread"
     "userspace: entering EL0"
     "userspace: hello from EL0"
+    "userspace: scheduling verified"
+    "syscall safety: PASS"
 )
 
 # A translation mismatch still boots, so assert its absence explicitly rather
 # than relying on the positive markers alone.
 forbidden_markers=(
+    "syscall safety: FAIL"
+    "*** EL0"
+    "ELF load failed"
     "TRANSLATION MISMATCH"
     "CONTEXT SWITCH FAILED"
     "AArch64 synchronous fault"
@@ -64,18 +74,20 @@ setup_builddir
 meson compile -C "${BUILD_DIR}"
 
 run_qemu() { # $1 = -smp value, $2 = log path
+    local rc=0
     timeout "${TIMEOUT_SECS}" qemu-system-aarch64 \
         -M virt -cpu cortex-a53 -smp "$1" -m 512M \
         -kernel "${KERNEL_PATH}" \
-        -serial stdio -display none -no-reboot \
-        >"$2" 2>&1 || true
+        -serial stdio -display none -monitor none -nic none -no-reboot \
+        >"$2" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+        fail "QEMU exited with status $rc (see $2)"
+    fi
 }
 
 SECONDS=0
 
-# Single core: the full boot path through userspace. Userspace does not yet
-# survive multi-core scheduling (a thread that enters EL0 under -smp 4 never
-# completes), so the EL0 markers are asserted here.
+# Single core: userspace switching and syscall boundary checks.
 run_qemu 1 "${LOG_PATH}"
 
 for marker in "${required_markers[@]}"; do
@@ -99,10 +111,16 @@ for marker in "${smp_markers[@]}"; do
     fi
 done
 
+for marker in "${forbidden_markers[@]}"; do
+    if grep -Fq "${marker}" "${SMP_LOG_PATH}"; then
+        fail "unexpected SMP marker: ${marker} (see ${SMP_LOG_PATH})"
+    fi
+done
+
 elapsed=$SECONDS
 
 if [ "${elapsed}" -ge "${TIMEOUT_SECS}" ]; then
-    echo "smoke-aarch64: QEMU terminated by timeout (expected for kernel-only test)"
+    echo "smoke-aarch64: QEMU terminated by timeout (expected after userspace tests finish)"
 fi
 
 echo "smoke-aarch64: PASS (${elapsed}s)"

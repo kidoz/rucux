@@ -5,6 +5,7 @@
 // through x0. It deliberately avoids libc so a failure points at the syscall
 // path rather than at library code.
 
+#include <uapi/kernel/syscalls.h>
 #include <unistd.h>
 
 namespace {
@@ -27,9 +28,14 @@ int main() {
         return 1;
     }
 
-    // Verified manually: storing to &main here faults with a permission fault
-    // (ESR 0x9200004F, FAR at the .text address), confirming elf::load's
-    // read-only mapping is enforced at EL0. Not left enabled — the EL0 fault
-    // path does not yet terminate the thread cleanly and re-faults.
+    volatile unsigned long value = 0x12345678;
+    for (int i = 0; i < 200; ++i) {
+        syscall(SYS_YIELD);
+        for (volatile unsigned spin = 0; spin < 5000; spin = spin + 1) {
+        }
+        if (value != 0x12345678) return 1;
+    }
+    const char done[] = "userspace: scheduling verified\n";
+    write(1, done, sizeof(done) - 1);
     return 0;
 }
