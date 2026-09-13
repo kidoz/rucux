@@ -18,8 +18,10 @@ class ManifestError(RuntimeError):
     pass
 
 
-def parse_scalar(value: str) -> str:
+def parse_scalar(value: str) -> str | list[str]:
     value = value.strip()
+    if value == "[]":
+        return []
     if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
         return value[1:-1]
     return value

@@ -40,14 +40,8 @@ static_assert(lib::is_same_v<lib::uint64_t, unsigned long long>);
 static_assert(lib::is_same_v<lib::remove_reference_t<int&>, int>);
 static_assert(lib::is_same_v<lib::remove_cv_t<const volatile int>, int>);
 
-#include <cat_bin.hpp>
-#include <console_bin.hpp>
-#include <echo_bin.hpp>
-#include <init_bin.hpp>
-#include <kbd_bin.hpp>
-#include <kernel/process/elf.hpp>
-#include <ls_bin.hpp>
-#include <net_bin.hpp>
+#include <generated_embedded_apps.hpp>
+#include <kernel/process/spawn.hpp>
 
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/time.hpp>
@@ -57,136 +51,9 @@ extern "C" {
 
 extern void jump_to_user_space(void* entry, void* stack, void* arg);
 
-static void open_stdio(kernel::scheduler::thread* t) {
-    auto* root = kernel::vfs::vfs_manager::get_root();
-    auto* dev = root->ops->finddir(root, "dev");
-    if (!dev) {
-        kernel::print("open_stdio: /dev not found!\n");
-        return;
-    }
-    auto* tty = dev->ops->finddir(dev, "tty");
-    if (!tty) {
-        kernel::print("open_stdio: /dev/tty not found!\n");
-        return;
-    }
-    t->ensure_fd_capacity(3);
-    for (int i = 0; i < 3; i++) {
-        t->fd_table[i].node = tty;
-        t->fd_table[i].offset = 0;
-        t->fd_table[i].flags = 2; // O_RDWR
-    }
-}
-
-void user_init() {
-    uintptr_t pml4 = kernel::memory::vmm::create_address_space();
-    uintptr_t entry = kernel::process::elf::load(pml4, init_bin, init_bin_size);
-    if (!entry)
-        while (true)
-            ;
-
-    kernel::memory::vmm::switch_to(pml4);
-
-    void* user_stack = kernel::memory::pmm::alloc_page();
-    kernel::memory::vmm::map(0x8000100000, reinterpret_cast<uintptr_t>(user_stack),
-                             kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE |
-                                 kernel::memory::page_flags::USER);
-
-    auto* t = kernel::scheduler::scheduler::current_thread();
-    t->pml4_phys = pml4;
-    open_stdio(t);
-
-    jump_to_user_space(reinterpret_cast<void*>(entry), reinterpret_cast<void*>(0x8000100000 + 4096), nullptr);
-}
-
-void user_console() {
-    uintptr_t pml4 = kernel::memory::vmm::create_address_space();
-    uintptr_t entry = kernel::process::elf::load(pml4, console_bin, console_bin_size);
-    if (!entry)
-        while (true)
-            ;
-
-    kernel::memory::vmm::switch_to(pml4);
-
-    void* user_stack = kernel::memory::pmm::alloc_page();
-    kernel::memory::vmm::map(0x8000100000, reinterpret_cast<uintptr_t>(user_stack),
-                             kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE |
-                                 kernel::memory::page_flags::USER);
-
-    auto* t = kernel::scheduler::scheduler::current_thread();
-    t->pml4_phys = pml4;
-    open_stdio(t);
-
-    jump_to_user_space(reinterpret_cast<void*>(entry), reinterpret_cast<void*>(0x8000100000 + 4096), nullptr);
-}
-
-void user_echo() {
-    uintptr_t pml4 = kernel::memory::vmm::create_address_space();
-    uintptr_t entry = kernel::process::elf::load(pml4, echo_bin, echo_bin_size);
-    if (!entry)
-        while (true)
-            ;
-
-    kernel::memory::vmm::switch_to(pml4);
-
-    void* user_stack = kernel::memory::pmm::alloc_page();
-    kernel::memory::vmm::map(0x8000100000, reinterpret_cast<uintptr_t>(user_stack),
-                             kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE |
-                                 kernel::memory::page_flags::USER);
-
-    auto* t = kernel::scheduler::scheduler::current_thread();
-    t->pml4_phys = pml4;
-    open_stdio(t);
-
-    jump_to_user_space(reinterpret_cast<void*>(entry), reinterpret_cast<void*>(0x8000100000 + 4096), nullptr);
-}
-
-void user_kbd() {
-    uintptr_t pml4 = kernel::memory::vmm::create_address_space();
-    uintptr_t entry = kernel::process::elf::load(pml4, kbd_bin, kbd_bin_size);
-    if (!entry)
-        while (true)
-            ;
-
-    kernel::memory::vmm::switch_to(pml4);
-
-    void* user_stack = kernel::memory::pmm::alloc_page();
-    kernel::memory::vmm::map(0x8000100000, reinterpret_cast<uintptr_t>(user_stack),
-                             kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE |
-                                 kernel::memory::page_flags::USER);
-
-    auto* t = kernel::scheduler::scheduler::current_thread();
-    t->pml4_phys = pml4;
-    open_stdio(t);
-
-    jump_to_user_space(reinterpret_cast<void*>(entry), reinterpret_cast<void*>(0x8000100000 + 4096), nullptr);
-}
-
-void user_net() {
-    uintptr_t pml4 = kernel::memory::vmm::create_address_space();
-    uintptr_t entry = kernel::process::elf::load(pml4, net_bin, net_bin_size);
-    if (!entry)
-        while (true)
-            ;
-
-    kernel::memory::vmm::switch_to(pml4);
-
-    void* user_stack = kernel::memory::pmm::alloc_page();
-    kernel::memory::vmm::map(0x8000100000, reinterpret_cast<uintptr_t>(user_stack),
-                             kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE |
-                                 kernel::memory::page_flags::USER);
-
-    auto* t = kernel::scheduler::scheduler::current_thread();
-    t->pml4_phys = pml4;
-    open_stdio(t);
-
-    jump_to_user_space(reinterpret_cast<void*>(entry), reinterpret_cast<void*>(0x8000100000 + 4096), nullptr);
-}
-
-void thread_test() {
-    kernel::print("Thread testing...\n");
-    while (true) {
-        kernel::scheduler::scheduler::yield();
-    }
+void start_product() {
+    kernel::boot::start_initial_processes();
+    kernel::scheduler::scheduler::exit();
 }
 
 extern "C" uint8_t kernel_end[];
@@ -285,13 +152,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     kernel::vfs::ramfs::create_directory(terminfo, "x");
 
     auto* bin = kernel::vfs::ramfs::create_directory(root, "bin");
-    kernel::vfs::ramfs::create_file(bin, "init", init_bin, init_bin_size);
-    kernel::vfs::ramfs::create_file(bin, "console", console_bin, console_bin_size);
-    kernel::vfs::ramfs::create_file(bin, "echo", echo_bin, echo_bin_size);
-    kernel::vfs::ramfs::create_file(bin, "cat", cat_bin, cat_bin_size);
-    kernel::vfs::ramfs::create_file(bin, "ls", ls_bin, ls_bin_size);
-    kernel::vfs::ramfs::create_file(bin, "kbd", kbd_bin, kbd_bin_size);
-    kernel::vfs::ramfs::create_file(bin, "net", net_bin, net_bin_size);
+    kernel::boot::populate_embedded_binaries(bin);
 
     // APIC + SMP initialization
     // Validate RSDP pointer: must be in low memory (<4GB) and start with "RSD PTR "
@@ -343,17 +204,12 @@ extern "C" void kernel_main(rucux_boot_info* info) {
 
     kernel::print("rucux (amd64) Complete!\n");
 
-    // Re-enable interrupts now that boot is done
-    asm volatile("sti");
-
-    // Spawn User Space
-    kernel::scheduler::scheduler::spawn(user_init, 1);
-    kernel::scheduler::scheduler::spawn(user_console, 2);
-    kernel::scheduler::scheduler::spawn(user_net, 5);
-    kernel::scheduler::scheduler::spawn(user_echo, 3);
-    kernel::scheduler::scheduler::spawn(user_kbd, 4);
+    // Publish the first runnable thread before timer IRQs can schedule away
+    // from the boot stack. An empty queue would abandon boot for idle.
+    kernel::scheduler::scheduler::spawn(start_product, 100);
 
     kernel::print("Transitioning to Multi-Process Scheduler...\n");
+    asm volatile("sti");
     kernel::scheduler::scheduler::schedule();
 
     // We should not reach here

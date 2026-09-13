@@ -281,7 +281,8 @@ void kick_pending_services_locked() noexcept {
 
 void initialize_registry() {
     pthread_mutex_lock(&g_services_lock);
-    for (const auto& config : k_service_configs) {
+    for (unsigned i = 0; i < k_service_config_count; ++i) {
+        const auto& config = k_service_configs[i];
         auto* entry = ensure_service_locked(config.name);
         if (!entry) {
             pthread_mutex_unlock(&g_services_lock);

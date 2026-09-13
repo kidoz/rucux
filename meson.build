@@ -23,6 +23,24 @@ common_cpp_args = [
     '-I' + meson.current_source_dir()
 ]
 
+fs = import('fs')
+product_name = get_option('product')
+product_arch = run_command('python3', files('tools/product_info.py'), 'get', product_name, 'arch', check: true).stdout().strip()
+expected_arch = {'x86_64': 'amd64', 'arm': 'armv7', 'aarch64': 'aarch64'}
+if product_arch != expected_arch[host_machine.cpu_family()]
+    error('Product architecture ' + product_arch + ' does not match the cross file')
+endif
+configure_file(input: 'products/' + product_name + '/product.yaml', output: 'selected-product.yaml', copy: true)
+product_board = run_command('python3', files('tools/product_info.py'), 'get', product_name, 'board_name', check: true).stdout().strip()
+configure_file(input: 'boards/' + product_board + '/board.yaml', output: 'selected-board.yaml', copy: true)
+product_sources = run_command('python3', files('tools/generate_product_headers.py'), '--sources', product_name, check: true).stdout().strip()
+product_headers = custom_target('product_headers',
+    input: [files('products/' + product_name + '/product.yaml'), files('tools/product_info.py')],
+    output: ['generated_embedded_apps.hpp', 'generated_init_config.hpp'],
+    command: ['python3', files('tools/generate_product_headers.py'), '@OUTPUT0@', '@OUTPUT1@', product_name],
+    depend_files: files('tools/generate_product_headers.py'),
+    build_by_default: true)
+
 # Architecture-specific flags
 arch = host_machine.cpu_family()
 kernel_args = []
@@ -210,6 +228,8 @@ else
     error('Unsupported architecture: ' + arch)
 endif
 
+src_files += ['src/kernel/syscall.cpp', 'src/kernel/memory/user_access.cpp', 'src/kernel/process/elf_validate.cpp']
+
 add_project_arguments(common_cpp_args, language: 'cpp')
 
 # LibC + userspace + kernel linker script.
@@ -218,7 +238,7 @@ add_project_arguments(common_cpp_args, language: 'cpp')
 embedded_headers = []
 if arch == 'x86_64' or arch == 'aarch64'
     libc = static_library('c',
-        ['libc/src/syscalls.cpp', 'libc/src/socket.cpp', 'libc/src/stdio.cpp',
+        ['libc/src/unsupported.cpp', 'libc/src/trace.cpp', 'libc/src/trace_producer.cpp', 'libc/src/reboot.cpp', 'libc/src/unix_ipc.cpp', 'libc/src/dlfcn_stubs.cpp', 'libc/src/syscalls.cpp', 'libc/src/socket.cpp', 'libc/src/stdio.cpp',
          'libc/src/string.cpp', 'libc/src/pthread.cpp', 'lib/string.cpp',
          'libc/src/file.cpp', 'libc/src/clearerr.cpp', 'libc/src/snprintf.cpp',
          'libc/src/fseeko.cpp', 'libc/src/lseek.cpp', 'libc/src/strerror.cpp',
@@ -226,7 +246,7 @@ if arch == 'x86_64' or arch == 'aarch64'
          'libc/src/exit.cpp', 'libc/src/unistd_stubs.cpp', 'libc/src/std_files.cpp',
          'libc/src/stdlib.cpp', 'libc/src/ctype.cpp', 'libc/src/strrchr.cpp',
          'libc/src/errno.cpp', 'libc/src/time.cpp', 'libc/src/strdup.cpp',
-         'libc/src/syslog.cpp', 'libc/src/strchr.cpp', 'libc/src/strncmp.cpp', 'libc/src/strlen.cpp',
+         'libc/src/syslog.cpp', 'libc/src/strchr.cpp', 'libc/src/strncmp.cpp',
          'libc/src/strtol.cpp', 'libc/src/netdb.cpp', 'libc/src/strcspn.cpp',
          'libc/src/signal.cpp', 'libc/src/dirent.cpp', 'libc/src/poll.cpp',
          'libc/src/strstr.cpp', 'libc/src/getopt.cpp', 'libc/src/locale.cpp',
@@ -242,21 +262,43 @@ if arch == 'x86_64' or arch == 'aarch64'
     if arch == 'aarch64'
         user_linker_script = meson.current_source_dir() + '/userspace/linker_aarch64.ld'
         user_crt0 = 'userspace/lib/crt0_aarch64.S'
-        # Start with a single program: the AArch64 syscall path has never been
-        # executed, so prove it before porting the rest of the userspace tree.
-        user_apps = ['hello']
+
     else
         user_linker_script = meson.current_source_dir() + '/userspace/linker.ld'
         user_crt0 = 'userspace/lib/crt0.S'
-        user_apps = ['init', 'console', 'echo', 'cat', 'ls', 'kbd', 'net', 'pkg']
+
     endif
     user_link_args = ['-nostdlib', '-static', '-T', user_linker_script]
     embed_script = find_program('scripts/embed.py')
 
-    foreach app : user_apps
+    user_specs = product_sources == '' ? [] : product_sources.split('\n')
+    foreach spec : user_specs
+        parts = spec.split(':')
+        app = parts[0]
+        app_deps = []
+        app_archives = []
+        app_includes = []
+        if app == 'wm' or app == 'wm_client'
+            if product_arch != 'amd64'
+                error(app + ' requires an amd64 Wayland sysroot')
+            endif
+            app_includes += include_directories('sysroot/usr/include')
+            if app == 'wm'
+                app_archives += files('sysroot/usr/lib/libwayland-server.a')
+                app_archives += files('sysroot/usr/lib/libffi.a')
+            else
+                app_archives += files('sysroot/usr/lib/libwayland-client.a')
+                app_archives += files('sysroot/usr/lib/libffi.a')
+            endif
+        endif
+        foreach archive : app_archives
+            app_deps += declare_dependency(link_args: [archive.full_path()])
+        endforeach
         app_exe = executable(app,
-            ['userspace/' + app + '/main.cpp', user_crt0],
-            include_directories: include_directories('libc/include', 'src/include', 'lib/include', '.'),
+            [parts[1], user_crt0, product_headers],
+            include_directories: [include_directories('libc/include', 'src/include', 'lib/include', '.'), app_includes],
+            dependencies: app_deps,
+            link_depends: app_archives + files(user_linker_script),
             cpp_args: user_cpp_args,
             c_args: user_c_args,
             link_args: user_link_args,
@@ -337,7 +379,9 @@ endif
 executable('kernel.elf',
     src_files,
     embedded_headers,
+    product_headers,
     install: false,
     cpp_args: kernel_args,
-    link_args: kernel_link_args
+    link_args: kernel_link_args,
+    link_depends: files(kernel_linker_script)
 )
