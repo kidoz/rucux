@@ -9,6 +9,10 @@
 
 extern "C" {
 
+long syscall(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
+    return __syscall(num, a1, a2, a3, a4, a5, a6);
+}
+
 int open(const char* path, int flags, ...) {
     return (int)__syscall(SYS_OPEN, (long)path, (long)flags);
 }

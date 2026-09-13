@@ -3,6 +3,7 @@
 #define _LIBC_UNISTD_H
 
 #include <stddef.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 
 #define _POSIX_TIMERS 1
@@ -11,6 +12,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+int fsync(int fd);
 
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
