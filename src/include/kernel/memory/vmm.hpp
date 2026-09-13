@@ -21,12 +21,18 @@ class vmm {
 public:
     static void init() noexcept;
     static uintptr_t create_address_space() noexcept;
+    // Reclaim an unpublished address space whose user frames are privately
+    // owned (e.g. a failed exec). It must not be active on any CPU.
+    static void discard_address_space(uintptr_t root) noexcept;
     static void map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept;
     static void map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept;
     static void unmap(uintptr_t virt) noexcept;
     static void switch_to(uintptr_t pml4_phys) noexcept;
     static uintptr_t get_active_page_table() noexcept;
     static uintptr_t get_phys(uintptr_t virt) noexcept;
+    // Caller holds user_mapping_lock. Returns zero unless every paging level
+    // permits EL0/user access, including write permission when requested.
+    static uintptr_t get_user_phys(uintptr_t virt, bool write) noexcept;
     static void disable_write_protect() noexcept;
     static void enable_write_protect() noexcept;
 

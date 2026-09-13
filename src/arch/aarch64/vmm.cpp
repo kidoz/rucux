@@ -12,6 +12,7 @@
 // table; the kernel currently runs identity-mapped, so TTBR1 is unused.
 
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
@@ -93,8 +94,7 @@ uint64_t flags_to_desc(page_flags flags) noexcept {
         bits |= DESC_UXN; // kernel pages are never executable by EL0
     }
 
-    if (raw & static_cast<uint64_t>(page_flags::NO_EXECUTE))
-        bits |= DESC_UXN | DESC_PXN;
+    if (raw & static_cast<uint64_t>(page_flags::NO_EXECUTE)) bits |= DESC_UXN | DESC_PXN;
 
     return bits;
 }
@@ -188,8 +188,7 @@ void vmm::init() noexcept {
 }
 
 void vmm::enable_on_this_cpu() noexcept {
-    if (!g_l1_table)
-        return;
+    if (!g_l1_table) return;
 
     constexpr uint64_t mair = 0xFF00ULL;
     asm volatile("msr mair_el1, %0" ::"r"(mair));
@@ -217,7 +216,32 @@ uintptr_t vmm::create_address_space() noexcept {
     return reinterpret_cast<uintptr_t>(fresh);
 }
 
+// Only private 4 KiB user mappings belong to an unpublished ELF image.
+static void discard_private_table(uintptr_t address, unsigned depth) noexcept {
+    auto* table = reinterpret_cast<uint64_t*>(address);
+    for (size_t i = 0; i < 512; ++i) {
+        if (!(table[i] & 1)) continue;
+        uintptr_t child = static_cast<uintptr_t>(table[i] & 0x0000FFFFFFFFF000ULL);
+        if (depth == 1)
+            pmm::free_page(reinterpret_cast<void*>(child));
+        else
+            discard_private_table(child, depth - 1);
+    }
+    pmm::free_page(reinterpret_cast<void*>(address));
+}
+
+void vmm::discard_address_space(uintptr_t root) noexcept {
+    if (!root || root == get_active_page_table()) return;
+    irq_lock_guard guard(user_mapping_lock);
+    auto* table = reinterpret_cast<uint64_t*>(root);
+    for (size_t i = 4; i < 512; ++i) {
+        if (table[i] & 1) discard_private_table(static_cast<uintptr_t>(table[i] & 0x0000FFFFFFFFF000ULL), 2);
+    }
+    pmm::free_page(reinterpret_cast<void*>(root));
+}
+
 void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x1FF;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
     const size_t l3_idx = (virt >> 12) & 0x1FF;
@@ -246,6 +270,7 @@ void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
 }
 
 void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x1FF;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
 
@@ -257,6 +282,7 @@ void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
 }
 
 void vmm::unmap(uintptr_t virt) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x1FF;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
     const size_t l3_idx = (virt >> 12) & 0x1FF;
@@ -301,6 +327,25 @@ uintptr_t vmm::get_phys(uintptr_t virt) noexcept {
     if (!(l3[l3_idx] & DESC_VALID)) return 0;
 
     return static_cast<uintptr_t>((l3[l3_idx] & ADDR_MASK) | (virt & 0xFFF));
+}
+
+uintptr_t vmm::get_user_phys(uintptr_t virt, bool write) noexcept {
+    if (!user_range(virt, 1)) return 0;
+    auto* table = reinterpret_cast<const uint64_t*>(get_active_page_table());
+    for (int shift = 30; shift >= 12; shift -= 9) {
+        uint64_t entry = table[(virt >> shift) & 511];
+        if (!(entry & 1)) return 0;
+        if (shift == 12 || !(entry & 2)) {
+            if (!(entry & (1ULL << 6)) || (write && (entry & (1ULL << 7)))) return 0;
+            if (((entry >> 2) & 7) != 1) return 0; // Normal RAM only, not device MMIO.
+            const uint64_t mask = (1ULL << shift) - 1;
+            return static_cast<uintptr_t>((entry & 0x0000FFFFFFFFF000ULL & ~mask) | (virt & mask));
+        }
+        // APTable can prohibit EL0 access or writes at an intermediate level.
+        if ((entry & (1ULL << 61)) || (write && (entry & (1ULL << 62)))) return 0;
+        table = reinterpret_cast<const uint64_t*>(static_cast<uintptr_t>(entry & 0x0000FFFFFFFFF000ULL));
+    }
+    return 0;
 }
 
 void vmm::disable_write_protect() noexcept {
