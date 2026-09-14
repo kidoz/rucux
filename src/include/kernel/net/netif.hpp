@@ -4,6 +4,7 @@
 #include <kernel/sync/spinlock.hpp>
 #include <lib/stddef.hpp>
 #include <stdint.h>
+#include <uapi/kernel/net.h>
 
 namespace kernel::net {
 
@@ -62,5 +63,6 @@ void netif_input(netif* iface, netbuf* buf) noexcept;
 
 // Initialize the network subsystem (creates loopback, etc.)
 void net_init() noexcept;
+int net_get_info(rucux_net_info* info) noexcept;
 
 } // namespace kernel::net

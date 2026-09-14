@@ -66,6 +66,23 @@ netif* netif_loopback() noexcept {
     return g_loopback;
 }
 
+int net_get_info(rucux_net_info* info) noexcept {
+    if (!info) return -22;
+    lib::memset(info, 0, sizeof(*info));
+    // Interfaces and addresses are populated at boot and immutable afterwards.
+    for (auto* iface = g_iface_list; iface && info->count < RUCUX_NETIF_MAX; iface = iface->next_iface) {
+        auto& out = info->interfaces[info->count++];
+        for (size_t i = 0; i < sizeof(out.name) - 1 && iface->name[i]; ++i)
+            out.name[i] = iface->name[i];
+        out.address = iface->ip.addr;
+        out.netmask = iface->ip.netmask;
+        out.gateway = iface->ip.gateway;
+        out.mtu = iface->mtu;
+        lib::memcpy(out.mac, iface->mac.bytes, sizeof(out.mac));
+    }
+    return 0;
+}
+
 // ─── Loopback interface ────────────────────────────────────────────────────
 
 static void loopback_tx(netif* iface, netbuf* buf) noexcept {
