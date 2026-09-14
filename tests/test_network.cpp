@@ -448,20 +448,24 @@ tcp_pcb* established_fixture() {
     captured_count = 0;
     return pcb;
 }
-void receive_ack(tcp_pcb* pcb, uint32_t ack, uint8_t flags = TCP_ACK) {
+void receive_ack(tcp_pcb* pcb, uint32_t ack, uint8_t flags = TCP_ACK, uint16_t window = 65535,
+                 const uint8_t* options = nullptr, size_t options_length = 0, const char* payload = nullptr,
+                 size_t length = 0, int32_t sequence_offset = 0) {
     auto* nb = netbuf::alloc();
-    auto* tcp = reinterpret_cast<tcp_header*>(nb->put(20));
+    auto* tcp = reinterpret_cast<tcp_header*>(nb->put(20 + options_length + length));
     *tcp = {};
+    if (options_length) std::memcpy(nb->data() + 20, options, options_length);
+    if (length) std::memcpy(nb->data() + 20 + options_length, payload, length);
     tcp->src_port = pcb->remote_port;
     tcp->dst_port = pcb->local_port;
-    tcp->seq_num = htonl(pcb->rcv_nxt);
+    tcp->seq_num = htonl(pcb->rcv_nxt + sequence_offset);
     tcp->ack_num = htonl(ack);
-    tcp->data_offset = 5 << 4;
+    tcp->data_offset = static_cast<uint8_t>(((20 + options_length) / 4) << 4);
     tcp->flags = flags;
-    tcp->window = htons(65535);
+    tcp->window = htons(window);
     nb->src_ip = pcb->remote_ip;
     nb->dst_ip = pcb->local_ip;
-    tcp->checksum = checksum_pseudo(nb->src_ip, nb->dst_ip, IPPROTO_TCP, tcp, 20);
+    tcp->checksum = checksum_pseudo(nb->src_ip, nb->dst_ip, IPPROTO_TCP, tcp, nb->len());
     tcp_input(capture_iface(), nb);
 }
 void expire_closed(tcp_pcb* pcb) {
@@ -547,7 +551,7 @@ TEST(tcp_retries_retained_data_and_partial_ack_suffix) {
     data[0] = 'z';
     ASSERT_EQ(pcb->unacked_count, 1U);
     ASSERT_EQ(captured_count, 1U);
-    ticks += 499;
+    ticks = pcb->retransmit_at - 1;
     tcp_tick(ticks);
     ASSERT_EQ(captured_count, 1U);
     ++ticks;
@@ -557,7 +561,7 @@ TEST(tcp_retries_retained_data_and_partial_ack_suffix) {
     ASSERT_EQ(pcb->snd_nxt, 1006U);
     receive_ack(pcb, 1003);
     ASSERT_EQ(pcb->unacked_count, 1U);
-    ticks += 500;
+    ticks = pcb->retransmit_at;
     tcp_tick(ticks);
     ASSERT_EQ(captured_count, 3U);
     auto* header = reinterpret_cast<tcp_header*>(captured[2] + 34);
@@ -597,8 +601,8 @@ TEST(tcp_retry_exhaustion_wakes_reader_and_reclaims_packets) {
     ASSERT_EQ(tcp_send(pcb, "lost", 4), 4);
     pcb->wait_recv = &current;
     current.state = kernel::scheduler::thread_state::BLOCKED;
-    for (unsigned delay : {500, 1000, 2000, 4000}) {
-        ticks += delay;
+    for (unsigned attempt = 0; attempt < 4; ++attempt) {
+        ticks = pcb->retransmit_at;
         tcp_tick(ticks);
     }
     ASSERT_EQ(captured_count, 5U);
@@ -607,7 +611,7 @@ TEST(tcp_retry_exhaustion_wakes_reader_and_reclaims_packets) {
     auto deadline = pcb->retransmit_at;
     receive_ack(pcb, 1000);
     ASSERT_EQ(pcb->retransmit_at, deadline);
-    ticks += 4000;
+    ticks = pcb->retransmit_at;
     tcp_tick(ticks);
     ASSERT_EQ(pcb->state, tcp_state::CLOSED);
     ASSERT_EQ(pcb->error, -110);
@@ -625,7 +629,7 @@ TEST(tcp_active_connect_retries_syn_before_wakeup) {
     connecting = tcp_new();
     captured_count = 0;
     on_schedule = [] {
-        ticks += 500;
+        ticks = connecting->retransmit_at;
         tcp_tick(ticks);
         receive_ack(connecting, connecting->snd_nxt, TCP_SYN | TCP_ACK);
     };
@@ -664,7 +668,7 @@ TEST(tcp_simultaneous_retries_do_not_recurse_through_loopback) {
         netif_input(iface, buf);
         --depth;
     };
-    ticks += 500;
+    ticks = clients[0]->retransmit_at;
     tcp_tick(ticks);
     netif_loopback()->transmit = original;
     ASSERT_EQ(maximum, 1U);
@@ -691,6 +695,227 @@ TEST(tcp_reset_frees_retransmission_state) {
     tcp_close(pcb);
     ASSERT_EQ(live_allocations, before);
 }
+
+TEST(tcp_congestion_limits_flight_and_recovers_after_timeout) {
+    auto before = live_allocations;
+    auto* pcb = established_fixture();
+    char data[1460]{};
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), 536);
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), -11);
+    ASSERT(!(tcp_poll_events(pcb) & 4));
+    receive_ack(pcb, 1536);
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), 536);
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), 536);
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), -11);
+    ticks = pcb->retransmit_at;
+    tcp_tick(ticks);
+    ASSERT_EQ(captured_count, 4U);
+    ASSERT_EQ(captured_len[3], 54UL + 536);
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), -11);
+    receive_ack(pcb, pcb->snd_nxt);
+    ASSERT_EQ(pcb->cwnd, 1072U);
+    // At ssthresh, one ACK of half the window does not grow cwnd.
+    ASSERT_EQ(tcp_send(pcb, data, 536), 536);
+    ASSERT_EQ(tcp_send(pcb, data, 536), 536);
+    uint32_t first_ack = pcb->snd_nxt - 536;
+    receive_ack(pcb, first_ack);
+    ASSERT_EQ(pcb->cwnd, 1072U);
+    receive_ack(pcb, first_ack + 536);
+    ASSERT_EQ(pcb->cwnd, 1608U);
+    ticks += pcb->rto;
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), 536);
+    ASSERT_EQ(tcp_send(pcb, data, 1), -11); // Idle restart also limits bursts.
+    expire_closed(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_rtt_estimator_ignores_ambiguous_ack_and_backoffs) {
+    auto before = live_allocations;
+    auto* pcb = established_fixture();
+    tcp_send(pcb, "a", 1);
+    ticks += 600;
+    receive_ack(pcb, pcb->snd_nxt);
+    ASSERT_EQ(pcb->rto, 1800ULL);
+    tcp_send(pcb, "b", 1);
+    ticks += 1000;
+    receive_ack(pcb, pcb->snd_nxt);
+    ASSERT_EQ(pcb->rto, 1950ULL);
+    tcp_send(pcb, "cd", 2);
+    ticks = pcb->retransmit_at;
+    tcp_tick(ticks);
+    ASSERT_EQ(pcb->rto, 3900ULL);
+    ticks += 10;
+    receive_ack(pcb, pcb->snd_nxt - 1); // Partial ACK is ambiguous too.
+    ASSERT_EQ(pcb->rto, 3900ULL);
+    receive_ack(pcb, pcb->snd_nxt);
+    ASSERT_EQ(pcb->rto, 3900ULL);
+    tcp_send(pcb, "e", 1);
+    ticks += 100;
+    receive_ack(pcb, pcb->snd_nxt);
+    ASSERT(pcb->rto < 3900 && pcb->rto >= 1000);
+    expire_closed(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_mss_options_are_validated_and_negotiated_in_both_directions) {
+    auto before = live_allocations;
+    // Exercise absent, tiny, typical and oversized peer MSS values.
+    for (uint32_t mss : {0U, 1U, 256U, 1200U, 65535U}) {
+        auto* listener = established_fixture();
+        listener->state = tcp_state::CLOSED;
+        ASSERT_EQ(tcp_listen(listener, 1), 0);
+        uint8_t options[] = {1, 2, 4, static_cast<uint8_t>(mss >> 8), static_cast<uint8_t>(mss), 0, 0, 0};
+        receive_ack(listener, 0, TCP_SYN, 65535, options, mss ? sizeof(options) : 0);
+        ASSERT_EQ(listener->pending_count, 1);
+        ASSERT_EQ(captured_count, 1U);
+        auto* syn = reinterpret_cast<tcp_header*>(captured[0] + 34);
+        ASSERT_EQ(syn->data_offset, 6 << 4);
+        ASSERT(std::memcmp(captured[0] + 54, "\x02\x04\x05\xb4", 4) == 0);
+        ++listener->rcv_nxt; // Build the peer's final handshake ACK.
+        receive_ack(listener, ntohl(syn->seq_num) + 1);
+        auto* pcb = tcp_accept(listener);
+        uint32_t expected = !mss ? 536 : (mss > 1460 ? 1460 : mss);
+        char data[1460]{};
+        ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), static_cast<long>(expected));
+        ASSERT_EQ(tcp_send(pcb, data, 1), -11);
+        tcp_free(pcb);
+        tcp_close(listener);
+    }
+    auto* pcb = established_fixture();
+    pcb->state = tcp_state::SYN_SENT;
+    const uint8_t options[] = {2, 4, 1, 44};
+    receive_ack(pcb, pcb->snd_nxt, TCP_SYN | TCP_ACK, 65535, options, sizeof(options));
+    ASSERT_EQ(pcb->state, tcp_state::ESTABLISHED);
+    char data[1000]{};
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), 300);
+    tcp_free(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_malformed_options_do_not_allocate_children) {
+    auto* listener = established_fixture();
+    listener->state = tcp_state::CLOSED;
+    tcp_listen(listener, 1);
+    auto before = live_allocations;
+    const uint8_t malformed[][8] = {
+        {2, 0}, {2, 1}, {2, 3, 1}, {2, 4, 0, 0}, {3, 9}, {1, 1, 1, 1, 1, 1, 1, 3}, {2, 4, 1, 0, 2, 4, 1, 0}};
+    for (const auto& options : malformed) {
+        receive_ack(listener, 0, TCP_SYN, 65535, options, sizeof(options));
+        ASSERT_EQ(listener->pending_count, 0);
+        ASSERT_EQ(captured_count, 0U);
+        ASSERT_EQ(live_allocations, before);
+    }
+    tcp_close(listener);
+}
+TEST(tcp_zero_window_recovers_lost_update_without_retained_data) {
+    auto before = live_allocations;
+    auto* pcb = established_fixture();
+    tcp_send(pcb, "x", 1);
+    receive_ack(pcb, pcb->snd_nxt, TCP_ACK, 0);
+    ASSERT_EQ(pcb->unacked_count, 0U);
+    auto stalled_allocations = live_allocations, stalled_bytes = live_bytes;
+    ASSERT(!(tcp_poll_events(pcb) & 4));
+    ASSERT_EQ(tcp_send(pcb, "x", 1), -11);
+    // A reader can stay stalled for minutes provided it answers the probes.
+    for (unsigned i = 0; i < 100; ++i) {
+        captured_count = 0;
+        ticks = pcb->persist_at;
+        tcp_tick(ticks);
+        ASSERT_EQ(captured_count, 1U);
+        ASSERT_EQ(captured_len[0], 54UL);
+        auto* probe = reinterpret_cast<tcp_header*>(captured[0] + 34);
+        ASSERT_EQ(ntohl(probe->seq_num), pcb->snd_una - 1);
+        ASSERT_EQ(probe->flags, TCP_ACK);
+        ASSERT_EQ(pcb->snd_nxt, 1001U);
+        ASSERT_EQ(pcb->retries, 0U);
+        receive_ack(pcb, pcb->snd_nxt, TCP_ACK, 0);
+        ASSERT_EQ(live_allocations, stalled_allocations);
+        ASSERT_EQ(live_bytes, stalled_bytes);
+    }
+    receive_ack(pcb, pcb->snd_nxt, TCP_ACK, 128);
+    ASSERT(tcp_poll_events(pcb) & 4);
+    char data[256]{};
+    ASSERT_EQ(tcp_send(pcb, data, sizeof(data)), 128);
+    expire_closed(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_zero_window_retains_data_and_respects_reopened_window) {
+    auto before = live_allocations;
+    auto* pcb = established_fixture();
+    ASSERT_EQ(tcp_send(pcb, "abcdef", 6), 6);
+    receive_ack(pcb, pcb->snd_una, TCP_ACK, 0);
+    ticks = pcb->persist_at;
+    tcp_tick(ticks);
+    ASSERT_EQ(pcb->unacked_count, 1U);
+    ASSERT_EQ(pcb->retries, 0U);
+    receive_ack(pcb, pcb->snd_una, TCP_ACK, 2);
+    ASSERT_EQ(captured_count, 3U);
+    ASSERT_EQ(captured_len[2], 56UL);
+    ASSERT(std::memcmp(captured[2] + 54, "ab", 2) == 0);
+    ASSERT_EQ(pcb->rto, 1000ULL);
+    receive_ack(pcb, 1002, TCP_ACK, 2);
+    ticks = pcb->retransmit_at;
+    tcp_tick(ticks);
+    ASSERT_EQ(captured_len[3], 56UL);
+    ASSERT(std::memcmp(captured[3] + 54, "cd", 2) == 0);
+    receive_ack(pcb, 1004, TCP_ACK, 0);
+    tcp_close(pcb);
+    ASSERT(pcb->fin_pending);
+    ASSERT_EQ(pcb->snd_nxt, 1006U); // FIN waits for peer window space.
+    receive_ack(pcb, 1006, TCP_ACK, 1);
+    ASSERT(!pcb->fin_pending);
+    ASSERT_EQ(pcb->snd_nxt, 1007U);
+    receive_ack(pcb, 1007);
+    ASSERT_EQ(pcb->state, tcp_state::FIN_WAIT_2);
+    ticks += 20000;
+    tcp_tick(ticks);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_zero_window_silent_peer_times_out_and_wakes_waiter) {
+    auto before = live_allocations;
+    auto* pcb = established_fixture();
+    receive_ack(pcb, pcb->snd_nxt, TCP_ACK, 0);
+    pcb->wait_send = &current;
+    current.state = kernel::scheduler::thread_state::BLOCKED;
+    ticks = pcb->persist_expires;
+    tcp_tick(ticks);
+    ASSERT_EQ(current.state, kernel::scheduler::thread_state::READY);
+    ASSERT_EQ(pcb->state, tcp_state::CLOSED);
+    ASSERT_EQ(pcb->error, -110);
+    tcp_close(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_out_of_order_packets_are_acked_and_retransmission_recovers) {
+    auto before = live_allocations;
+    auto* pcb = established_fixture();
+    receive_ack(pcb, 1000, TCP_ACK, 65535, nullptr, 0, "def", 3, 3);
+    ASSERT(!(tcp_poll_events(pcb) & 1));
+    ASSERT_EQ(pcb->rcv_nxt, 4000U);
+    receive_ack(pcb, 1000, TCP_ACK, 65535, nullptr, 0, "abc", 3);
+    // The peer resends the dropped suffix after the cumulative ACK.
+    receive_ack(pcb, 1000, TCP_ACK, 65535, nullptr, 0, "def", 3);
+    receive_ack(pcb, 1000, TCP_ACK, 65535, nullptr, 0, "abc", 3, -6);
+    ASSERT_EQ(pcb->rcv_nxt, 4006U);
+    char data[8]{};
+    ASSERT_EQ(tcp_recv(pcb, data, sizeof(data)), 6);
+    ASSERT(std::memcmp(data, "abcdef", 6) == 0);
+    expire_closed(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_sequence_wrap_preserves_partial_ack_and_mss_suffix) {
+    auto before = live_allocations;
+    auto* pcb = established_fixture();
+    pcb->snd_nxt = pcb->snd_una = 0xFFFFFFFEU;
+    ASSERT_EQ(tcp_send(pcb, "wrap", 4), 4);
+    receive_ack(pcb, 0);
+    ASSERT_EQ(pcb->snd_una, 0U);
+    ticks = pcb->retransmit_at;
+    tcp_tick(ticks);
+    ASSERT_EQ(captured_len[1], 56UL);
+    ASSERT(std::memcmp(captured[1] + 54, "ap", 2) == 0);
+    receive_ack(pcb, 2);
+    ASSERT_EQ(pcb->unacked_count, 0U);
+    expire_closed(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+
 int main() {
     net_init();
     socket_manager::init();
