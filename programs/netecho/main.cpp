@@ -6,6 +6,28 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+namespace {
+bool echo_client(int client) {
+    while (true) {
+        char data[1024];
+        pollfd input{client, POLLIN, 0};
+        if (poll(&input, 1, 30000) <= 0) return false;
+        // Exercise VFS read/write as well as the socket syscall path.
+        auto n = read(client, data, sizeof(data));
+        if (n < 0) return false;
+        if (!n) return true;
+        long sent = 0;
+        while (sent < n) {
+            pollfd output{client, POLLOUT, 0};
+            if (poll(&output, 1, 30000) <= 0) return false;
+            auto count = write(client, data + sent, n - sent);
+            if (count <= 0) return false;
+            sent += count;
+        }
+    }
+}
+} // namespace
+
 // A finite diagnostic service, suitable for isolated packet/lifecycle tests.
 // TCP clients send one stream, half-close it, read the echo, then reconnect.
 int main() {
@@ -35,37 +57,10 @@ int main() {
         if (ready[1].revents & POLLIN) {
             int client = accept(listener, nullptr, nullptr);
             if (client < 0) return 5;
-            while (true) {
-                char data[1024];
-                pollfd input{client, POLLIN, 0};
-                if (poll(&input, 1, 30000) <= 0) {
-                    close(client);
-                    return 6;
-                }
-                // Exercise VFS read/write as well as the socket syscall path.
-                auto n = read(client, data, sizeof(data));
-                if (n < 0) {
-                    close(client);
-                    return 7;
-                }
-                if (!n) break;
-                long sent = 0;
-                while (sent < n) {
-                    pollfd output{client, POLLOUT, 0};
-                    if (poll(&output, 1, 30000) <= 0) {
-                        close(client);
-                        return 8;
-                    }
-                    auto count = write(client, data + sent, n - sent);
-                    if (count <= 0) {
-                        close(client);
-                        return 9;
-                    }
-                    sent += count;
-                }
-            }
+            bool ok = echo_client(client);
             close(client);
             ++connections;
+            if (!ok) printf("netecho: client failed; continuing\n");
         }
     }
     close(listener);
