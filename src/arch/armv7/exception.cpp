@@ -5,6 +5,7 @@
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/time.hpp>
 #include <stdint.h>
 
 namespace arch::armv7 {
@@ -73,6 +74,7 @@ extern "C" void irq_handler_arm() noexcept {
 
     if (irq_num == TIMER_VIRQ) {
         kernel::cpu::this_cpu()->ticks++;
+        if (kernel::cpu::this_cpu()->cpu_id == 0) kernel::time_manager::tick();
         generic_timer::set_timer(generic_timer::get_frequency() / 1000);
         kernel::scheduler::scheduler::schedule();
     } else {

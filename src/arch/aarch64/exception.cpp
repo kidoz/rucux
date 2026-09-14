@@ -5,6 +5,7 @@
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/time.hpp>
 
 extern "C" void* aarch64_vector_table;
 
@@ -78,6 +79,7 @@ extern "C" void aarch64_irq_handler() {
         arch::aarch64::generic_timer::rearm();
         auto* pcpu = kernel::cpu::this_cpu();
         pcpu->ticks++;
+        if (pcpu->cpu_id == 0) kernel::time_manager::tick();
         if (pcpu->cpu_id != 0 && pcpu->ticks == 5) kernel::print("AP{}: timer IRQ verified\n", pcpu->cpu_id);
         // EOI before switching away: schedule() may not return to this frame,
         // and leaving the interrupt active would block every later one.
