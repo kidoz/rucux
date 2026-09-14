@@ -60,7 +60,7 @@ int signal_manager::sys_kill(int pid, int sig) noexcept {
     else
         target = scheduler::scheduler::get_thread_by_tid(static_cast<uint32_t>(pid));
 
-    if (!target) return -1; // ESRCH
+    if (!target || target->state == scheduler::thread_state::TERMINATED) return -3; // ESRCH
 
     if (sig == 0) return 0; // Signal 0 = check permission only
 
@@ -124,7 +124,7 @@ bool signal_manager::consume_fatal_signal(scheduler::thread* t) noexcept {
     if (fatal_sig == 0) return false;
 
     t->sig_pending &= ~(1U << fatal_sig);
-    t->exit_code = 128 + fatal_sig;
+    t->exit_code = fatal_sig & 0x7f; // waitpid signal-status encoding
     t->exited = true;
     t->state = scheduler::thread_state::TERMINATED;
     return true;

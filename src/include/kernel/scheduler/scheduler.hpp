@@ -80,7 +80,8 @@ struct thread {
 #if defined(__x86_64__)
     arch::amd64::fpu_state fpu;
 #endif
-    uint32_t parent_tid;                      // Parent/owner for waitpid-style reaping
+    uint32_t process_id; // Address-space owner, shared by cloned threads
+    uint32_t parent_tid; // Parent/owner for waitpid-style reaping
     int32_t wait_target_tid;
     bool waiting_for_child;
 

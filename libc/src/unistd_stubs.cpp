@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 #include "syscall_impl.h"
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <uapi/kernel/syscalls.h>
 #include <unistd.h>
@@ -81,15 +83,16 @@ int getpagesize(void) {
 }
 
 pid_t wait(int* wstatus) {
-    if (wstatus) *wstatus = 0;
-    return -1; // stub
+    return waitpid(-1, wstatus, 0);
 }
 
 pid_t waitpid(pid_t pid, int* wstatus, int options) {
-    (void)pid;
-    (void)options;
-    if (wstatus) *wstatus = 0;
-    return -1; // stub
+    long result = __syscall(SYS_WAITPID, pid, reinterpret_cast<long>(wstatus), options);
+    if (result < 0) {
+        errno = static_cast<int>(-result);
+        return -1;
+    }
+    return static_cast<pid_t>(result);
 }
 
 pid_t fork(void) {

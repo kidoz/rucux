@@ -11,7 +11,10 @@ _start:
     call main
 
     
-    // Syscall exit (rax = 0)
-    xor %rdi, %rdi
+    // Preserve main's status as the first argument to SYS_EXIT.
+    mov %eax, %edi
     xor %rax, %rax
     syscall
+
+1:  ud2
+    jmp 1b
