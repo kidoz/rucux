@@ -11,6 +11,7 @@ from pathlib import Path
 
 import network_peer
 import tcp_interop
+from udp_forwarder import UdpForwarder
 
 
 def main() -> int:
@@ -83,17 +84,27 @@ def main() -> int:
         ]
         capture = (root / "network-peer.pcap").open("wb")
     interop_port = None
+    udp_forwarder = None
     if args.tcp_interop:
         interop_port = tcp_interop.choose_port()
+        peer_socket, child_socket = socket.socketpair()
+        udp_forwarder = UdpForwarder(peer_socket, interop_port)
         command += [
             "-netdev",
             "user,id=interop,restrict=on,net=10.0.0.0/24,host=10.0.0.2,dhcpstart=10.0.0.15,"
-            f"hostfwd=tcp:127.0.0.1:{interop_port}-10.0.0.10:19092,"
-            f"hostfwd=udp:127.0.0.1:{interop_port}-10.0.0.10:19091",
+            f"hostfwd=tcp:127.0.0.1:{interop_port}-10.0.0.10:19092",
+            "-netdev",
+            f"socket,id=udp-wire,fd={child_socket.fileno()}",
+            "-netdev",
+            "hubport,id=interop-stack,hubid=0,netdev=interop",
+            "-netdev",
+            "hubport,id=interop-udp,hubid=0,netdev=udp-wire",
+            "-netdev",
+            "hubport,id=interop-nic,hubid=0",
             "-device",
-            "e1000,netdev=interop,mac=52:54:00:12:34:56",
+            "e1000,netdev=interop-nic,mac=52:54:00:12:34:56",
             "-object",
-            f"filter-dump,id=interop-capture,netdev=interop,file={root / 'tcp-interop.pcap'}",
+            f"filter-dump,id=interop-capture,netdev=interop-nic,file={root / 'tcp-interop.pcap'}",
         ]
         print(f"TCP interoperability: restricted QEMU, localhost TCP/UDP port {interop_port}", flush=True)
     log_path = root / ("tcp-interop-console.log" if args.tcp_interop else "console-smoke.log")
@@ -107,10 +118,14 @@ def main() -> int:
         )
         if child_socket:
             child_socket.close()
+        if udp_forwarder:
+            udp_forwarder.start()
 
         def wait_for(marker: str, start: int = 0, seconds: float = 12) -> str:
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:
+                if udp_forwarder:
+                    udp_forwarder.check()
                 text = log_path.read_text(errors="replace")
                 if any(s in text for s in ["EXCEPTION ", "#PF at ", "Fault RIP=", "PANIC"]):
                     raise RuntimeError("guest kernel fault")
@@ -163,6 +178,8 @@ def main() -> int:
                 )
             if interop_port is not None:
                 tcp_interop.verify(interop_port, check, wait_for)
+                assert udp_forwarder is not None
+                udp_forwarder.check()
                 # Stop QEMU to flush its capture before checking packet evidence.
                 process.terminate()
                 process.wait(timeout=3)
@@ -172,6 +189,8 @@ def main() -> int:
             print(f"FAIL: {error}; {log_path}")
             return 1
         finally:
+            if udp_forwarder:
+                udp_forwarder.close()
             if peer_socket:
                 peer_socket.close()
             if capture:
