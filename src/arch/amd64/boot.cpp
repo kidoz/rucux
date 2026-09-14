@@ -3,6 +3,7 @@
 #include <arch/amd64/framebuffer.hpp>
 #include <arch/amd64/gdt.hpp>
 #include <arch/amd64/idt.hpp>
+#include <arch/amd64/pic.hpp>
 #include <arch/amd64/pit.hpp>
 #include <arch/amd64/uart.hpp>
 #include <kernel/print.hpp>
@@ -69,7 +70,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     arch::amd64::console::init_early();
     arch::amd64::gdt_init();
     arch::amd64::idt_init();
-    arch::amd64::pit::init(100);
+    arch::amd64::pit::init(1000);
     arch::amd64::syscall_init();
 
     kernel::print("rucux (amd64) Initialized (UEFI)!\n");
@@ -177,7 +178,18 @@ extern "C" void kernel_main(rucux_boot_info* info) {
             arch::amd64::smp_boot_aps(madt, pml4);
         }
     } else {
-        kernel::print("ACPI: No RSDP, using legacy PIC\n");
+        kernel::print("ACPI: No RSDP, using legacy PIC for devices\n");
+        uint32_t apic_lo, apic_hi;
+        asm volatile("rdmsr" : "=a"(apic_lo), "=d"(apic_hi) : "c"(0x1B));
+        if ((apic_lo & (1U << 11)) && !(apic_lo & (1U << 10)) && apic_hi == 0) {
+            // Firmware may leave the PIT's IRQ0 route unusable after UEFI.
+            // The local timer works independently of that external route.
+            arch::amd64::lapic::init(apic_lo & 0xFFFFF000U);
+            arch::amd64::lapic::write(arch::amd64::lapic_reg::LVT_LINT0, 0x700); // PIC ExtINT
+            arch::amd64::pic::mask(0);
+            arch::amd64::idt_use_lapic_timer();
+            arch::amd64::lapic::timer_init(0x20, arch::amd64::calibrate_lapic_timer(), 0x03);
+        }
     }
 
     kernel::pci::init();

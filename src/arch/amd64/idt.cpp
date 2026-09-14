@@ -9,19 +9,24 @@
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/time.hpp>
+#include <kernel/vfs/tty.hpp>
 
 namespace arch::amd64 {
 
 static idt_descriptor g_idt[256];
 static idt_pointer g_idt_ptr;
 static bool g_apic_mode = false;
+static bool g_lapic_timer = false;
+void idt_use_lapic_timer() noexcept {
+    g_lapic_timer = true;
+}
 
 void idt_set_apic_mode(bool enabled) noexcept {
     g_apic_mode = enabled;
 }
 
 static void do_eoi(uint8_t irq) noexcept {
-    if (g_apic_mode)
+    if (g_apic_mode || (irq == 0 && g_lapic_timer))
         lapic::send_eoi();
     else
         pic::send_eoi(irq);
@@ -33,7 +38,7 @@ extern "C" void irq0_entry();
 extern "C" void irq0_handler() noexcept {
     do_eoi(0);
     kernel::cpu::this_cpu()->ticks++;
-    kernel::time_manager::tick();
+    if (kernel::cpu::this_cpu()->cpu_id == 0) kernel::time_manager::tick();
     kernel::scheduler::scheduler::schedule();
 }
 
@@ -44,8 +49,13 @@ extern "C" void irq1_handler() noexcept {
     kernel::scheduler::scheduler::schedule();
 }
 
+extern "C" void irq4_entry();
 extern "C" void irq4_handler() noexcept {
+    // Drain the receive FIFO before EOI, including timeout interrupts.
+    for (unsigned i = 0; i < 256 && (inb(0x3FD) & 1); ++i)
+        kernel::vfs::tty::feed_input(static_cast<char>(inb(0x3F8)));
     do_eoi(4);
+    kernel::scheduler::scheduler::schedule();
 }
 
 // ─── Exception stubs (defined in switch.S) ─────────────────────────────────
@@ -170,9 +180,9 @@ void idt_init() noexcept {
     set_descriptor(19, reinterpret_cast<void*>(isr_stub_19), 0x8E);
 
     // Hardware IRQs (PIC vectors 0x20-0x2F)
-    set_descriptor(0x20, reinterpret_cast<void*>(irq0_entry), 0x8E);   // Timer
-    set_descriptor(0x21, reinterpret_cast<void*>(irq1_entry), 0x8E);   // Keyboard
-    set_descriptor(0x24, reinterpret_cast<void*>(irq4_handler), 0x8E); // COM1
+    set_descriptor(0x20, reinterpret_cast<void*>(irq0_entry), 0x8E); // Timer
+    set_descriptor(0x21, reinterpret_cast<void*>(irq1_entry), 0x8E); // Keyboard
+    set_descriptor(0x24, reinterpret_cast<void*>(irq4_entry), 0x8E); // COM1
 
     g_idt_ptr.size = sizeof(g_idt) - 1;
     g_idt_ptr.offset = reinterpret_cast<uintptr_t>(&g_idt);

@@ -20,6 +20,7 @@ struct idt_pointer {
 } __attribute__((packed));
 
 void idt_init() noexcept;
+void idt_use_lapic_timer() noexcept;
 void idt_set_apic_mode(bool enabled) noexcept;
 
 } // namespace arch::amd64

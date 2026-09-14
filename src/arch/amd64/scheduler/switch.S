@@ -5,11 +5,11 @@
 switch_context:
     // rdi = uintptr_t* old_stack
     // rsi = uintptr_t new_stack
-    
+
     // If old_stack is null, we are starting the first thread
     test %rdi, %rdi
     jz .load_new
-    
+
     // Save callee-saved registers
     push %rbp
     push %rbx
@@ -17,14 +17,14 @@ switch_context:
     push %r13
     push %r14
     push %r15
-    
+
     // Save current stack pointer
     mov %rsp, (%rdi)
 
 .load_new:
     // Load new stack pointer
     mov %rsi, %rsp
-    
+
     // Restore callee-saved registers
     pop %r15
     pop %r14
@@ -32,7 +32,7 @@ switch_context:
     pop %r12
     pop %rbx
     pop %rbp
-    
+
     ret
 
 .global syscall_entry
@@ -46,7 +46,7 @@ syscall_entry:
     mov %rsp, %gs:40
     mov %gs:32, %rsp
     pushq %gs:40
-    
+
     // Save user registers
     push %rcx // RIP
     push %r11 // RFLAGS
@@ -56,10 +56,10 @@ syscall_entry:
     push %r13
     push %r14
     push %r15
-    
+
     // Syscall ABI: num=rax, a1=rdi, a2=rsi, a3=rdx, a4=r10, a5=r8, a6=r9
     // C++ ABI: arg1=rdi, arg2=rsi, arg3=rdx, arg4=rcx, arg5=r8, arg6=r9, arg7=stack
-    
+
     push %r9       // arg7 (a6)
     mov %r8, %r9   // arg6 (a5)
     mov %r10, %r8  // arg5 (a4)
@@ -67,12 +67,12 @@ syscall_entry:
     mov %rsi, %rdx // arg3 (a2)
     mov %rdi, %rsi // arg2 (a1)
     mov %rax, %rdi // arg1 (num)
-    
+
     call syscall_dispatch
-    
+
     // Save rax (return value) before calling check_signals
     push %rax
-    
+
     // Pass pointer to saved registers
     // Current stack:
     // rsp+0:  rax (return value)
@@ -89,7 +89,7 @@ syscall_entry:
     mov %rsp, %rdi
     .extern check_signals
     call check_signals
-    
+
     pop %rax
     add $8, %rsp   // Cleanup arg7
 
@@ -102,10 +102,10 @@ syscall_entry:
     pop %rbp
     pop %r11 // RFLAGS
     pop %rcx // RIP
-    
+
     // Restore user stack pointer
     pop %rsp
-    
+
     swapgs
     sysretq
 
@@ -114,21 +114,21 @@ jump_to_user_space:
     // rdi = user entry point
     // rsi = user stack
     // rdx = user arg
-    
+
     // Prepare iretq stack frame
     // Ring 3 selectors: CS = 0x23 (4 * 8 | 3), SS = 0x1B (3 * 8 | 3)
     mov $0x1B, %ax
     mov %ax, %ds
     mov %ax, %es
-    
+
     pushq $0x1B      // SS
     pushq %rsi       // RSP
     pushq $0x202     // RFLAGS (IF enabled)
     pushq $0x23      // CS
     pushq %rdi       // RIP
-    
+
     mov %rdx, %rdi   // Set user argument 1
-    
+
     iretq
 
 .global irq0_entry
@@ -142,7 +142,7 @@ irq0_entry:
     push %r9
     push %r10
     push %r11
-    
+
     .extern irq0_handler
     call irq0_handler
 
@@ -168,9 +168,35 @@ irq1_entry:
     push %r9
     push %r10
     push %r11
-    
+
     .extern irq1_handler
     call irq1_handler
+
+    pop %r11
+    pop %r10
+    pop %r9
+    pop %r8
+    pop %rdi
+    pop %rsi
+    pop %rdx
+    pop %rcx
+    pop %rax
+    iretq
+
+.global irq4_entry
+irq4_entry:
+    push %rax
+    push %rcx
+    push %rdx
+    push %rsi
+    push %rdi
+    push %r8
+    push %r9
+    push %r10
+    push %r11
+
+    .extern irq4_handler
+    call irq4_handler
 
     pop %r11
     pop %r10
