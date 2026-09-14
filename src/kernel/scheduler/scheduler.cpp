@@ -3,6 +3,7 @@
 #include <arch/armv7/exception.hpp>
 #endif
 #include <kernel/cpu/percpu.hpp>
+#include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/process/signal.hpp>
@@ -217,6 +218,7 @@ void scheduler::init() noexcept {
 
 #if defined(__x86_64__)
     uint64_t* stack = reinterpret_cast<uint64_t*>(idle->stack_base + idle->stack_size);
+    *(--stack) = 0; // Synthetic return slot gives C++ entry RSP % 16 == 8.
     *(--stack) = reinterpret_cast<uint64_t>(idle_task);
     *(--stack) = 0;
     *(--stack) = 0;
@@ -265,6 +267,7 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     // The initial frame must match what the architecture's switch_context pops.
 #if defined(__x86_64__)
     uint64_t* stack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
+    *(--stack) = 0;
     *(--stack) = reinterpret_cast<uint64_t>(entry);
     *(--stack) = 0;
     *(--stack) = 0;
@@ -374,6 +377,7 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
 
 #if defined(__x86_64__)
     uint64_t* kstack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
+    *(--kstack) = 0;
     *(--kstack) = reinterpret_cast<uint64_t>(clone_trampoline);
     *(--kstack) = 0;
     *(--kstack) = 0;
@@ -410,6 +414,13 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
 long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     thread* parent = current_thread();
     if (!parent) return -1;
+#if defined(__x86_64__)
+    // A cloned entry is a C function, unlike an ELF _start entry point.
+    uintptr_t return_slot = (reinterpret_cast<uintptr_t>(stack) & ~15ULL) - 8;
+    uintptr_t sentinel = 0;
+    if (!kernel::memory::copy_to_user(reinterpret_cast<void*>(return_slot), &sentinel, sizeof(sentinel))) return -14;
+    stack = reinterpret_cast<void*>(return_slot);
+#endif
     uint32_t owner_tid = parent->parent_tid ? parent->parent_tid : parent->tid;
 
     thread* t = new thread();
@@ -460,6 +471,7 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
 
 #if defined(__x86_64__)
     uint64_t* kstack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
+    *(--kstack) = 0;
     *(--kstack) = reinterpret_cast<uint64_t>(clone_trampoline);
     *(--kstack) = 0;
     *(--kstack) = 0;
