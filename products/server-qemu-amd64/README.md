@@ -1,6 +1,6 @@
 # Headless administration product
 
-`server-qemu-amd64` is a single-CPU development target for the serial console and basic network diagnostics. It starts init, the console service, the PS/2 keyboard service, and the shell. Graphics, Wayland, logging daemons, and port libraries are not required.
+`server-qemu-amd64` is a single-CPU development target for the serial console and basic UDP/TCP services. It starts init, the console service, the PS/2 keyboard service, and the shell. Graphics, Wayland, logging daemons, and port libraries are not required.
 
 Build from the repository root:
 
@@ -21,6 +21,10 @@ python3 -B tools/test_console_smoke.py \
 ```
 
 The test creates a 48 MiB FAT image and a writable firmware-variable copy inside the build directory. It checks serial input, CR-to-newline conversion, Delete/backspace and Ctrl-U editing, process status, timed sleep, SIMD state across thread switches, exit-status collection, service stop/start, repeated UDP loopback, and shell restart after Ctrl-D. `--isolated-nic` adds an E1000 attached only to an internal QEMU hub; it does not connect to a host or external network. Logs are written to `builddir-server/console-smoke.log`.
+
+Add `--network-peer` instead of `--isolated-nic` to exercise actual Ethernet traffic. The test passes frames between QEMU and a deterministic Python peer over an inherited Unix socket pair. It uses no host IP socket, TAP interface, bridge, or external network. It verifies ARP, malformed IPv4/UDP/TCP rejection, UDP payloads from 0 to 1472 bytes, 32 TCP connections carrying 2048 bytes each, FIN/ACK teardown, reconnection using the same peer port, and restarting the service. It also verifies delivery of the first UDP packet after a lost ARP request and deliberately loses TCP SYN/ACK, handshake ACK, data, data ACK, FIN, and final ACK packets to exercise retransmission. Serial commands execute during traffic. The packet capture is `builddir-server/network-peer.pcap`.
+
+The real NIC path is E1000 PCI INTx receive interrupts and descriptor DMA. The firmware/PIC route is exercised by the smoke test; the IOAPIC route is build-checked only.
 
 For an interactive session after generating the image:
 
@@ -44,16 +48,38 @@ service stop kbd
 service start kbd
 run /bin/netstat
 run /bin/netcheck
+start /bin/netecho
 run /bin/terminal_smoke
 exit
 ```
 
-`run` accepts an absolute executable path and waits for its exit status; argument passing is not implemented. `terminal_smoke` deliberately exits with status 7 after its checks. The serial shell returns after logout or Ctrl-D. Console status reflects init registration; it is not an independent service health probe.
+`run` accepts an absolute executable path and waits for its exit status. `start` launches a background program and returns its PID; the shell reaps finished children between commands. Neither command supports arguments or job control. Background programs inherit the console, so only programs that do not read terminal input should be started this way. `terminal_smoke` deliberately exits with status 7 after its checks. The serial shell returns after logout or Ctrl-D. Console status reflects init registration; it is not an independent service health probe.
+
+`netecho` is a diagnostic echo service on UDP port 19091 and TCP port 19092. TCP connections are served sequentially; a peer sends data, half-closes its stream, reads the echo, then closes. A UDP datagram containing `quit` shuts down the service. It also exits on 30 seconds of inactivity or a stalled client. It has no authentication and is intended only for the isolated test.
+
+Hosted regression checks:
+
+```sh
+make -C tests run
+c++ -std=c++23 -g -fsanitize=address,undefined \
+  -Isrc/include -idirafter lib/include -I. tests/test_network.cpp \
+  src/kernel/net/{netbuf,netif,ethernet,arp,ipv4,checksum,udp,tcp,socket}.cpp \
+  -o builddir-host-tests/test_network_sanitized
+./builddir-host-tests/test_network_sanitized
+```
+
+The network suite uses production protocol/socket code with host allocation, scheduler and I/O boundaries. It checks length/checksum validation, bounded queues/backlogs, receive-buffer saturation, file-descriptor exhaustion, partial acknowledgements, retry exhaustion, simultaneous retransmissions, ARP queue expiry, timeout cleanup, and 100 TCP lifecycles with allocation counts and bytes returning to baseline. These host checks do not establish DMA or SMP correctness.
 
 ## Current server limits
 
 This is a trusted, isolated development environment, not a production or Internet-facing server. There is no login/authentication boundary or SSH service. PTYs, foreground job control, Ctrl-C signal delivery, shell pipelines/redirection, and complete raw-terminal timeout semantics remain unimplemented. The shell and keyboard share one TTY. Monotonic uptime is available; realtime clock/calendar functions are incomplete.
 
-`netstat` reports the kernel's boot-time interface configuration. Loopback is `127.0.0.1`; an E1000, when present, uses the existing static `10.0.0.10/24` configuration with gateway `10.0.0.1`. These commands do not configure DHCP, routing, or DNS. The UDP test proves local socket/IPv4 delivery and repeated close/reopen; it does not prove external connectivity. NIC receive/IRQ integration, TCP teardown, malformed-packet handling, and resource limits need additional work before exposing a network service.
+`netstat` reports the kernel's boot-time interface configuration. Loopback is `127.0.0.1`; an E1000, when present, uses the existing static `10.0.0.10/24` configuration with gateway `10.0.0.1`. These commands do not configure DHCP, routing, or DNS. The isolated peer test proves local Ethernet UDP/TCP delivery beyond loopback; it does not establish Internet interoperability.
 
-The next milestones are external networking in an explicitly isolated test network, persistent configuration/logging, and authenticated remote administration. Multi-CPU server operation and physical hardware remain outside this product's validated scope.
+UDP sends are limited to 1472 bytes and each receive queue to 32 packets. TCP is limited to 128 control blocks, at most 16 pending connections per listener, and 32767 receive bytes per connection. Half-open connections and closed connections have a 15-second lifetime limit; established but unaccepted connections expire after 5 seconds. The development TIME_WAIT interval is 2 seconds. TCP retains at most eight unacknowledged data segments per connection plus one FIN. Sends may return short counts or EAGAIN when the peer window or this queue is exhausted.
+
+TCP retransmits its oldest unacknowledged segment with a development timeout of 500 ms, then backs off to 1, 2, and 4 seconds. Four retransmission attempts are allowed; exhaustion reports ETIMEDOUT and releases retained packets. Cumulative and partial acknowledgements remove acknowledged data. This is basic timeout-based recovery; adaptive RTT estimation, fast retransmit, congestion control, option/MSS negotiation, zero-window probing, out-of-order buffering, and complete socket option/nonblocking semantics remain unimplemented.
+
+ARP queues at most four packets for each of eight unresolved neighbors, sends up to three requests one second apart, and discards unresolved queues after three seconds. Cache entries are scoped to the interface; dynamically learned entries expire after 60 seconds. Queue/ring exhaustion drops packets. TCP can recover a dropped frame within its retry budget; UDP remains best effort. ICMP, fragmentation/reassembly, DHCP and DNS are unavailable. Testing covers a 1500-byte-MTU Ethernet link with deterministic packet loss; it does not establish general Internet TCP compatibility. Concurrent close/read on shared sockets and socket operations across multiple CPUs remain unvalidated.
+
+The next milestones are TCP congestion/window handling and interoperability, persistent configuration/logging, and authenticated remote administration. Multi-CPU server operation and physical hardware remain outside this product's validated scope.
