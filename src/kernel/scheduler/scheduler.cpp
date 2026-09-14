@@ -633,6 +633,9 @@ choose_next:
             kernel::memory::vmm::switch_to(new_thread->pml4_phys);
         }
         uintptr_t* old_sp = old_thread ? &old_thread->stack_pointer : nullptr;
+#if defined(__x86_64__)
+        arch::amd64::switch_fpu(old_thread ? &old_thread->fpu : nullptr, new_thread->fpu);
+#endif
         switch_context(old_sp, new_thread->stack_pointer);
     }
 

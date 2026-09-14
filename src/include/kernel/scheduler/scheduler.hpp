@@ -3,6 +3,9 @@
 #include <kernel/process/credentials.hpp>
 #include <lib/stddef.hpp>
 #include <stdint.h>
+#if defined(__x86_64__)
+#include <arch/amd64/fpu.hpp>
+#endif
 
 namespace kernel::scheduler {
 
@@ -74,6 +77,9 @@ struct thread {
     uint32_t sig_pending;                     // Pending signals bitmask
     int exit_code;                            // Exit status (for pthread_join)
     bool exited;                              // True after thread has exited
+#if defined(__x86_64__)
+    arch::amd64::fpu_state fpu;
+#endif
     uint32_t parent_tid;                      // Parent/owner for waitpid-style reaping
     int32_t wait_target_tid;
     bool waiting_for_child;

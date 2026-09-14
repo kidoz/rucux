@@ -139,6 +139,9 @@ static void direct_switch(scheduler::thread* from, scheduler::thread* to) noexce
         kernel::memory::vmm::switch_to(to->pml4_phys);
     }
 
+#if defined(__x86_64__)
+    arch::amd64::switch_fpu(&from->fpu, to->fpu);
+#endif
     switch_context(&from->stack_pointer, to->stack_pointer);
 }
 
