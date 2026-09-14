@@ -137,6 +137,34 @@ TEST(buddy_oom_returns_zero) {
     ASSERT_EQ(p, (uintptr_t)0);
 }
 
+TEST(buddy_reallocation_preserves_live_pages) {
+    auto* b = make_buddy();
+    uintptr_t pages[128]{};
+    for (unsigned i = 0; i < 128; ++i) {
+        pages[i] = b->alloc_page();
+        ASSERT(pages[i]);
+        memset(reinterpret_cast<void*>(pages[i]), static_cast<int>(i + 1), PAGE_SIZE);
+    }
+    for (unsigned cycle = 0; cycle < 20; ++cycle) {
+        for (unsigned i = 0; i < 128; i += 2)
+            b->free_page(pages[i]);
+        for (unsigned i = 0; i < 128; i += 2) {
+            pages[i] = b->alloc_page();
+            ASSERT(pages[i]);
+            memset(reinterpret_cast<void*>(pages[i]), static_cast<int>(i + 1), PAGE_SIZE);
+        }
+        for (unsigned i = 0; i < 128; ++i) {
+            const auto* bytes = reinterpret_cast<const unsigned char*>(pages[i]);
+            for (size_t j = 0; j < PAGE_SIZE; ++j)
+                ASSERT_EQ(bytes[j], static_cast<unsigned char>(i + 1));
+            for (unsigned j = 0; j < i; ++j)
+                ASSERT(pages[i] != pages[j]);
+        }
+    }
+    for (auto address : pages)
+        b->free_page(address);
+}
+
 int main() {
     return RUN_ALL_TESTS("Buddy Allocator Tests");
 }

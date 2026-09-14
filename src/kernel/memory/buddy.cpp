@@ -7,6 +7,7 @@ namespace kernel::memory {
 
 uint32_t buddy_allocator::pages_to_order(size_t count) noexcept {
     if (count <= 1) return 0;
+    if (count > (1UL << MAX_ORDER)) return MAX_ORDER + 1;
     uint32_t order = 0;
     size_t size = 1;
     while (size < count) {
@@ -17,26 +18,9 @@ uint32_t buddy_allocator::pages_to_order(size_t count) noexcept {
 }
 
 uintptr_t buddy_allocator::buddy_of(uintptr_t addr, uint32_t order) const noexcept {
-    uintptr_t offset = addr - base_;
-    uintptr_t buddy_offset = offset ^ (PAGE_SIZE << order);
-    return base_ + buddy_offset;
-}
-
-// Each order has its own region in the bitmap to avoid aliasing.
-// bitmap_offsets_[order] gives the starting BIT offset for that order.
-// Within an order, pair_index = page_index / (2^(order+1)).
-void buddy_allocator::toggle_bit(uintptr_t addr, uint32_t order) noexcept {
-    size_t page_idx = (addr - base_) / PAGE_SIZE;
-    size_t pair_idx = page_idx >> (order + 1);
-    size_t bit = bitmap_offsets_[order] + pair_idx;
-    buddy_bitmap_[bit / 8] ^= (1 << (bit % 8));
-}
-
-bool buddy_allocator::is_free(uintptr_t addr, uint32_t order) const noexcept {
-    size_t page_idx = (addr - base_) / PAGE_SIZE;
-    size_t pair_idx = page_idx >> (order + 1);
-    size_t bit = bitmap_offsets_[order] + pair_idx;
-    return (buddy_bitmap_[bit / 8] >> (bit % 8)) & 1;
+    // Free blocks are aligned to physical addresses, including arenas whose
+    // base is not aligned to their largest order.
+    return addr ^ (PAGE_SIZE << order);
 }
 
 void buddy_allocator::init(uintptr_t base, size_t total_pages) noexcept {
@@ -47,28 +31,9 @@ void buddy_allocator::init(uintptr_t base, size_t total_pages) noexcept {
     for (uint32_t i = 0; i <= MAX_ORDER; ++i)
         free_lists_[i] = nullptr;
 
-    // Calculate per-order bitmap offsets (in bits).
-    // Order k needs total_pages / 2^(k+1) bits.
-    size_t total_bits = 0;
-    for (uint32_t k = 0; k <= MAX_ORDER; ++k) {
-        bitmap_offsets_[k] = total_bits;
-        size_t bits_for_order = total_pages >> (k + 1);
-        if (bits_for_order == 0) bits_for_order = 1;
-        total_bits += bits_for_order;
-    }
-    size_t bitmap_bytes = total_bits / 8 + 1;
-    size_t bitmap_pages = (bitmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-
-    buddy_bitmap_ = reinterpret_cast<uint8_t*>(base);
-    lib::memset(buddy_bitmap_, 0, bitmap_bytes);
-
-    // The managed area starts after the bitmap
-    uintptr_t managed_start = base + bitmap_pages * PAGE_SIZE;
-    size_t managed_pages = total_pages > bitmap_pages ? total_pages - bitmap_pages : 0;
-
     // Add all managed pages as free blocks, starting from the highest order
-    uintptr_t addr = managed_start;
-    size_t remaining = managed_pages;
+    uintptr_t addr = base;
+    size_t remaining = total_pages;
 
     while (remaining > 0) {
         // Find the largest order block that:
@@ -95,8 +60,7 @@ void buddy_allocator::init(uintptr_t base, size_t total_pages) noexcept {
         remaining -= block_pages;
     }
 
-    kernel::print("Buddy: {} pages managed ({} MB), bitmap {} pages\n", free_pages_,
-                  (free_pages_ * PAGE_SIZE) / (1024 * 1024), bitmap_pages);
+    kernel::print("Buddy: {} pages managed ({} MB)\n", free_pages_, (free_pages_ * PAGE_SIZE) / (1024 * 1024));
 }
 
 uintptr_t buddy_allocator::alloc(uint32_t order) noexcept {
@@ -125,44 +89,33 @@ uintptr_t buddy_allocator::alloc(uint32_t order) noexcept {
         buddy->order = current;
         buddy->next = free_lists_[current];
         free_lists_[current] = buddy;
-        toggle_bit(addr, current);
     }
 
-    toggle_bit(addr, order);
     free_pages_ -= (1UL << order);
     return addr;
 }
 
 void buddy_allocator::free(uintptr_t addr, uint32_t order) noexcept {
-    if (addr == 0 || order > MAX_ORDER) return;
+    if (addr == 0 || order > MAX_ORDER || addr < base_ || addr % (PAGE_SIZE << order) != 0 ||
+        (addr - base_) / PAGE_SIZE >= total_pages_ || (1UL << order) > total_pages_ - (addr - base_) / PAGE_SIZE)
+        return;
 
     kernel::irq_lock_guard guard(lock_);
 
     free_pages_ += (1UL << order);
 
-    // Try to coalesce with buddy
+    // Membership in the same-order free list proves the buddy is free.
+    // The former parity bitmap could claim a buddy was free even when it was
+    // absent from this list, merging live pages into an allocatable block.
     while (order < MAX_ORDER) {
-        toggle_bit(addr, order);
-
-        // If the bit is now 1, the buddy is still allocated → can't coalesce
-        if (is_free(addr, order)) break;
-
-        // Buddy is free → remove it from its free list and coalesce
         uintptr_t buddy_addr = buddy_of(addr, order);
-
-        // Remove buddy from free list
-        free_block** pp = &free_lists_[order];
-        while (*pp) {
-            if (reinterpret_cast<uintptr_t>(*pp) == buddy_addr) {
-                *pp = (*pp)->next;
-                break;
-            }
-            pp = &(*pp)->next;
-        }
-
-        // Merge: use the lower address as the new block
+        free_block** link = &free_lists_[order];
+        while (*link && reinterpret_cast<uintptr_t>(*link) != buddy_addr)
+            link = &(*link)->next;
+        if (!*link) break;
+        *link = (*link)->next;
         if (buddy_addr < addr) addr = buddy_addr;
-        order++;
+        ++order;
     }
 
     // Insert into free list

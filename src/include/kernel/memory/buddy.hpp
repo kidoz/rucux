@@ -44,16 +44,8 @@ private:
     // Get buddy address for a block at addr of given order
     uintptr_t buddy_of(uintptr_t addr, uint32_t order) const noexcept;
 
-    // Check if page at addr is marked as free in bitmap
-    bool is_free(uintptr_t addr, uint32_t order) const noexcept;
-
-    // Toggle the buddy-pair bit (used to detect if buddy is free for coalescing)
-    void toggle_bit(uintptr_t addr, uint32_t order) noexcept;
-
     free_block* free_lists_[MAX_ORDER + 1]{};
-    uint8_t* buddy_bitmap_;                  // Per-order bitmap (non-overlapping regions)
-    size_t bitmap_offsets_[MAX_ORDER + 1]{}; // Bit offset for each order
-    uintptr_t base_;                         // Start of managed physical memory
+    uintptr_t base_; // Start of managed physical memory
     size_t total_pages_;
     size_t free_pages_;
     kernel::irq_spinlock lock_;
