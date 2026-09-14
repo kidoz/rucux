@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import network_peer
+import tcp_interop
 
 
 def main() -> int:
@@ -18,15 +19,19 @@ def main() -> int:
     parser.add_argument("--bootloader", type=Path, required=True)
     parser.add_argument("--uefi-code", type=Path, required=True)
     parser.add_argument("--uefi-vars", type=Path, required=True)
-    parser.add_argument(
+    network = parser.add_mutually_exclusive_group()
+    network.add_argument(
         "--isolated-nic", action="store_true", help="Attach an E1000 to an isolated QEMU hub; no host network"
     )
-    parser.add_argument(
+    network.add_argument(
         "--network-peer", action="store_true", help="Exercise an Ethernet peer over an inherited local socket pair"
     )
+    network.add_argument(
+        "--tcp-interop",
+        action="store_true",
+        help="Use restricted QEMU forwarding on 127.0.0.1 (requires localhost network access)",
+    )
     args = parser.parse_args()
-    if args.network_peer and args.isolated_nic:
-        parser.error("choose only one NIC test mode")
     root: Path = args.build_dir.resolve()
     repo = Path(__file__).resolve().parent.parent
     if not root.is_relative_to(repo) or not (root / "kernel.elf").is_file():
@@ -77,7 +82,21 @@ def main() -> int:
             "e1000,netdev=peer,mac=52:54:00:12:34:56",
         ]
         capture = (root / "network-peer.pcap").open("wb")
-    log_path = root / "console-smoke.log"
+    interop_port = None
+    if args.tcp_interop:
+        interop_port = tcp_interop.choose_port()
+        command += [
+            "-netdev",
+            "user,id=interop,restrict=on,net=10.0.0.0/24,host=10.0.0.2,dhcpstart=10.0.0.15,"
+            f"hostfwd=tcp:127.0.0.1:{interop_port}-10.0.0.10:19092,"
+            f"hostfwd=udp:127.0.0.1:{interop_port}-10.0.0.10:19091",
+            "-device",
+            "e1000,netdev=interop,mac=52:54:00:12:34:56",
+            "-object",
+            f"filter-dump,id=interop-capture,netdev=interop,file={root / 'tcp-interop.pcap'}",
+        ]
+        print(f"TCP interoperability: restricted QEMU, localhost TCP/UDP port {interop_port}", flush=True)
+    log_path = root / ("tcp-interop-console.log" if args.tcp_interop else "console-smoke.log")
     with log_path.open("wb") as log:
         process = subprocess.Popen(
             command,
@@ -142,6 +161,12 @@ def main() -> int:
                 print(
                     "PASS: isolated Ethernet ARP/UDP, TCP retransmission/reconnect, malformed packets, concurrent console"
                 )
+            if interop_port is not None:
+                tcp_interop.verify(interop_port, check, wait_for)
+                # Stop QEMU to flush its capture before checking packet evidence.
+                process.terminate()
+                process.wait(timeout=3)
+                print(tcp_interop.packet_summary(root / "tcp-interop.pcap"))
             print(f"PASS: serial console, editing, service queries, directory listing, process status; {log_path}")
         except Exception as error:
             print(f"FAIL: {error}; {log_path}")
