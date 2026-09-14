@@ -48,6 +48,7 @@ SERVICE_POLICIES = {
         "dependencies": ["console"],
     },
     "sh": {
+        "restart_on_success": True,
         "autostart": True,
         "restart_on_failure": True,
         "max_restart_attempts": 8,
@@ -210,6 +211,7 @@ def write_init_config_header(path: Path, services: list[str], programs: list[str
             out.write(
                 f'    {{"{app}", "/bin/{app}", {cpp_bool(bool(policy["autostart"]))}, '
                 f'{cpp_bool(bool(policy["restart_on_failure"]))}, '
+                f'{cpp_bool(bool(policy.get("restart_on_success", False)))}, '
                 f'{int(policy["max_restart_attempts"])}, {int(policy["restart_delay_ms"])}, '
                 f'{{{deps[0]}, {deps[1]}, {deps[2]}}}, {dep_count}}},\n'
             )

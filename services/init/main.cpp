@@ -33,6 +33,7 @@ struct service_entry {
     uint32_t state;
     bool autostart;
     bool restart_on_failure;
+    bool restart_on_success;
     uint32_t max_restart_attempts;
     uint32_t restart_delay_ms;
     bool registered;
@@ -101,6 +102,7 @@ service_entry* ensure_service_locked(const char* name) {
     entry->state = INITD_SERVICE_UNKNOWN;
     entry->autostart = false;
     entry->restart_on_failure = false;
+    entry->restart_on_success = false;
     entry->max_restart_attempts = 0;
     entry->restart_delay_ms = 0;
     entry->registered = false;
@@ -192,7 +194,7 @@ void* restart_worker_main(void* arg) {
 }
 
 void schedule_restart_locked(service_entry* entry) {
-    if (!entry || !entry->restart_on_failure) return;
+    if (!entry || (!entry->restart_on_failure && !entry->restart_on_success)) return;
     if (entry->restart_pending || entry->tid != 0) return;
     if (entry->max_restart_attempts != 0 && entry->restart_budget_used >= entry->max_restart_attempts) return;
 
@@ -292,6 +294,7 @@ void initialize_registry() {
         entry->path = config.path;
         entry->autostart = config.autostart;
         entry->restart_on_failure = config.restart_on_failure;
+        entry->restart_on_success = config.restart_on_success;
         entry->max_restart_attempts = config.max_restart_attempts;
         entry->restart_delay_ms = config.restart_delay_ms;
         entry->dependency_count = config.dependency_count;
@@ -352,6 +355,7 @@ void* reaper_main(void*) {
                 entry->state = INITD_SERVICE_STOPPED;
                 entry->restart_budget_used = 0;
                 entry->start_requested = false;
+                if (entry->restart_on_success) schedule_restart_locked(entry);
             } else {
                 entry->state = INITD_SERVICE_FAILED;
                 entry->failure_count++;
@@ -393,7 +397,8 @@ void handle_register(const message& msg) {
     entry->registered = true;
     entry->stop_requested = false;
     entry->restart_pending = false;
-    entry->restart_budget_used = 0;
+    // Registration is not a health check; a crash immediately afterwards
+    // must still consume the bounded automatic restart budget.
     entry->start_requested = false;
     entry->state = INITD_SERVICE_RUNNING;
     uint32_t tid = entry->tid;
