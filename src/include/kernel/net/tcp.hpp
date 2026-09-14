@@ -47,6 +47,7 @@ enum class tcp_state : uint8_t {
 // TCP Protocol Control Block — one per connection
 struct tcp_pcb {
     tcp_state state;
+    bool fin_pending;
     bool detached; // Application closed; retain only bounded teardown state.
     int error;
     uint64_t expires;
@@ -71,6 +72,26 @@ struct tcp_pcb {
     unsigned unacked_count;
     unsigned retries;
     uint64_t retransmit_at;
+
+    // Byte-based congestion control and integer RTT estimation (milliseconds).
+    uint32_t send_mss;
+    uint32_t cwnd;
+    uint32_t ssthresh;
+    uint32_t congestion_credit;
+    uint32_t srtt;
+    uint32_t rttvar;
+    uint64_t rto;
+    uint64_t last_data_sent;
+    bool rtt_pending;
+    bool rtt_blocked;
+    uint64_t rtt_started;
+    uint32_t rtt_end;
+    uint32_t rtt_block_until;
+
+    // Zero-window probes do not consume sequence space or the loss retry budget.
+    uint64_t persist_at;
+    uint64_t persist_expires;
+    uint64_t persist_delay;
 
     // Receive buffer (data received, waiting for app to read)
     uint8_t* rcv_buf;
