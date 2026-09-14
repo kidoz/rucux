@@ -150,6 +150,7 @@ elif arch == 'arm'
         'src/kernel/sync/rcu.cpp',
         'src/kernel/console.cpp',
         'src/kernel/vfs/vfs.cpp',
+        'src/kernel/vfs/tty.cpp',
         'src/kernel/process/elf.cpp',
         'src/kernel/process/spawn.cpp',
         'src/kernel/process/credentials.cpp',

@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++23 -Wall -Wextra -g
 CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
 LDLIBS = -lpthread
 OBJDIR = ../builddir-host-tests
-TESTS = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time
+TESTS = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty
 LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
 LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
 LIBC_SYMBOLS = vsprintf vsnprintf snprintf strtol strtoul strtoll strtoull strtod strtof strtold sscanf htons htonl ntohs ntohl inet_ntoa inet_pton inet_ntop
@@ -55,5 +55,9 @@ clean:
 
 $(OBJDIR)/time.o: ../src/kernel/time.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/tty.o: ../src/kernel/vfs/tty.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 test_time: $(OBJDIR)/test_time.o $(OBJDIR)/time.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+test_tty: $(OBJDIR)/test_tty.o $(OBJDIR)/tty.o
 	$(CXX) -o $@ $^ $(LDLIBS)
