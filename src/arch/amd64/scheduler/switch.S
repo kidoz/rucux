@@ -227,6 +227,7 @@ isr_stub_\vec:
     mov $\vec, %rdi
     mov 80(%rsp), %rsi // error code (dummy 0)
     mov 88(%rsp), %rdx // rip
+    mov 96(%rsp), %rcx // cs
     call isr_handler
     pop %r11
     pop %r10
@@ -257,6 +258,7 @@ isr_stub_\vec:
     mov $\vec, %rdi
     mov 72(%rsp), %rsi // error code
     mov 80(%rsp), %rdx // rip
+    mov 88(%rsp), %rcx // cs
     call isr_handler
     pop %r11
     pop %r10

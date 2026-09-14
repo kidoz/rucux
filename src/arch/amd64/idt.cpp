@@ -101,7 +101,7 @@ static const char* const exc_names[] = {"#DE Divide",
                                         "#MC Machine Check",
                                         "#XM SIMD FPE"};
 
-extern "C" void isr_handler(uint64_t vector, uint64_t error_code) noexcept {
+extern "C" void isr_handler(uint64_t vector, uint64_t error_code, uint64_t rip, uint64_t cs) noexcept {
     if (vector == 14) {
         uint64_t cr2;
         asm volatile("mov %%cr2, %0" : "=r"(cr2));
@@ -113,9 +113,15 @@ extern "C" void isr_handler(uint64_t vector, uint64_t error_code) noexcept {
         kernel::print("ISR vector={} err={}\n", vector, error_code);
     }
 
+    kernel::print("Fault RIP={}\n", reinterpret_cast<void*>(rip));
+
     // Dump RIP from the interrupt frame (9 pushes + error code on stack)
     // Don't halt for NMI (vector 2) — it might be spurious
     if (vector == 2) return;
+    if ((cs & 3) == 3) {
+        kernel::print("Terminating faulting userspace thread\n");
+        kernel::scheduler::scheduler::exit(139);
+    }
 
     while (true)
         asm volatile("hlt");
