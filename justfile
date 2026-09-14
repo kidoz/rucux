@@ -6,8 +6,8 @@ format:
 lint:
     ninja -C builddir clang-tidy
 
-# Run both formatter and linter
-check: format lint
+# Run C++ quality checks and Python lint/type/format checks
+check: format lint py-check
 
 # Reconfigure the build directory
 reconfigure:
@@ -104,7 +104,23 @@ test:
 
 # Install Python tool dependencies into .venv (from uv.lock)
 py-sync:
-    uv sync --all-groups
+    uv --cache-dir builddir-python-tools/uv-cache sync --locked --all-groups
+
+# Format project-owned Python scripts
+py-format:
+    uv --cache-dir builddir-python-tools/uv-cache run --offline --no-sync ruff format tools scripts
+
+# Lint without changing files or downloading dependencies
+py-lint:
+    uv --cache-dir builddir-python-tools/uv-cache run --offline --no-sync ruff check tools scripts
+
+# Type-check all project-owned Python scripts
+py-typecheck:
+    uv --cache-dir builddir-python-tools/uv-cache run --offline --no-sync mypy
+
+# Check Python lint, types, and formatting without modifying source files
+py-check: py-lint py-typecheck
+    uv --cache-dir builddir-python-tools/uv-cache run --offline --no-sync ruff format --check tools scripts
 
 # Run a project Python tool, e.g. `just py tools/product_info.py get dev-qemu-amd64 name`
 py *ARGS:

@@ -7,7 +7,6 @@ import argparse
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PRODUCTS_DIR = REPO_ROOT / "products"
 BOARDS_DIR = REPO_ROOT / "boards"
@@ -158,6 +157,8 @@ def command_summary(product_name: str) -> int:
     data = resolved_manifest(product_name)
     product = data["product"]
     board = data["board"]
+    if not isinstance(product, dict):
+        raise ManifestError("resolved product manifest is invalid")
 
     print(f"product: {data['name']}")
     print(f"board: {data['board_name']}")

@@ -62,9 +62,7 @@ def resolve_board(product_name: str) -> dict[str, int]:
     return {
         "uart_base": require_int(uart.get("base"), "board.platform.uart.base"),
         "uart_fr_offset": require_int(uart.get("fr_offset"), "board.platform.uart.fr_offset"),
-        "uart_tx_full_mask": require_int(
-            uart.get("tx_full_mask"), "board.platform.uart.tx_full_mask"
-        ),
+        "uart_tx_full_mask": require_int(uart.get("tx_full_mask"), "board.platform.uart.tx_full_mask"),
         "gic_dist_base": require_int(gic.get("dist_base"), "board.platform.gic.dist_base"),
         "gic_cpu_base": require_int(gic.get("cpu_base"), "board.platform.gic.cpu_base"),
         "timer_irq": require_int(timer.get("irq"), "board.platform.timer.irq"),
@@ -87,42 +85,18 @@ def write_header(path: Path, values: dict[str, int]) -> None:
         out.write("#pragma once\n")
         out.write("#include <stdint.h>\n\n")
         out.write("namespace arch::armv7::platform {\n")
-        out.write(
-            f"inline constexpr uintptr_t UART_BASE = {emit_hex(values['uart_base'])}UL;\n"
-        )
-        out.write(
-            f"inline constexpr uintptr_t UART_FR_OFFSET = {emit_hex(values['uart_fr_offset'])}UL;\n"
-        )
-        out.write(
-            f"inline constexpr uint32_t UART_TX_FULL_MASK = {emit_hex(values['uart_tx_full_mask'])}U;\n"
-        )
-        out.write(
-            f"inline constexpr uintptr_t GIC_DIST_BASE = {emit_hex(values['gic_dist_base'])}UL;\n"
-        )
-        out.write(
-            f"inline constexpr uintptr_t GIC_CPU_BASE = {emit_hex(values['gic_cpu_base'])}UL;\n"
-        )
-        out.write(
-            f"inline constexpr uint32_t TIMER_IRQ = {emit_hex(values['timer_irq'])}U;\n"
-        )
-        out.write(
-            f"inline constexpr uint32_t CPU_COUNT = {values['cpu_count']}U;\n"
-        )
-        out.write(
-            f"inline constexpr uintptr_t RAM_BASE = {emit_hex(values['ram_base'])}UL;\n"
-        )
-        out.write(
-            f"inline constexpr uintptr_t RAM_SIZE = {emit_hex(values['ram_size'])}UL;\n"
-        )
-        out.write(
-            f"inline constexpr uintptr_t KERNEL_LOAD_ADDRESS = {emit_hex(values['kernel_load_address'])}UL;\n"
-        )
-        out.write(
-            f"inline constexpr uint32_t PSCI_CONDUIT = {values['psci_conduit']}U;\n"
-        )
-        out.write(
-            f"inline constexpr uint32_t POWER_SHUTDOWN_METHOD = {values['power_shutdown_method']}U;\n"
-        )
+        out.write(f"inline constexpr uintptr_t UART_BASE = {emit_hex(values['uart_base'])}UL;\n")
+        out.write(f"inline constexpr uintptr_t UART_FR_OFFSET = {emit_hex(values['uart_fr_offset'])}UL;\n")
+        out.write(f"inline constexpr uint32_t UART_TX_FULL_MASK = {emit_hex(values['uart_tx_full_mask'])}U;\n")
+        out.write(f"inline constexpr uintptr_t GIC_DIST_BASE = {emit_hex(values['gic_dist_base'])}UL;\n")
+        out.write(f"inline constexpr uintptr_t GIC_CPU_BASE = {emit_hex(values['gic_cpu_base'])}UL;\n")
+        out.write(f"inline constexpr uint32_t TIMER_IRQ = {emit_hex(values['timer_irq'])}U;\n")
+        out.write(f"inline constexpr uint32_t CPU_COUNT = {values['cpu_count']}U;\n")
+        out.write(f"inline constexpr uintptr_t RAM_BASE = {emit_hex(values['ram_base'])}UL;\n")
+        out.write(f"inline constexpr uintptr_t RAM_SIZE = {emit_hex(values['ram_size'])}UL;\n")
+        out.write(f"inline constexpr uintptr_t KERNEL_LOAD_ADDRESS = {emit_hex(values['kernel_load_address'])}UL;\n")
+        out.write(f"inline constexpr uint32_t PSCI_CONDUIT = {values['psci_conduit']}U;\n")
+        out.write(f"inline constexpr uint32_t POWER_SHUTDOWN_METHOD = {values['power_shutdown_method']}U;\n")
         out.write("} // namespace arch::armv7::platform\n")
 
 

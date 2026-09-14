@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Run the syscall/scheduling product offline, keeping artifacts in its build directory."""
+
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 
 def main() -> int:
@@ -43,15 +44,30 @@ def main() -> int:
         shutil.copyfile(args.uefi_vars, variables)
         command = [
             "qemu-system-x86_64",
-            "-drive", f"if=pflash,format=raw,readonly=on,file={args.uefi_code.resolve()}",
-            "-drive", f"if=pflash,format=raw,file={variables}",
-            "-drive", f"file={image},if=ide,format=raw",
+            "-drive",
+            f"if=pflash,format=raw,readonly=on,file={args.uefi_code.resolve()}",
+            "-drive",
+            f"if=pflash,format=raw,file={variables}",
+            "-drive",
+            f"file={image},if=ide,format=raw",
         ]
     else:
-        command = ["qemu-system-aarch64", "-M", "virt", "-cpu", "cortex-a53",
-                   "-kernel", str(root / "kernel.elf")]
-    command += ["-smp", str(args.cpus), "-m", "512M", "-serial", "stdio", "-display", "none",
-                "-monitor", "none", "-nic", "none", "-no-reboot"]
+        command = ["qemu-system-aarch64", "-M", "virt", "-cpu", "cortex-a53", "-kernel", str(root / "kernel.elf")]
+    command += [
+        "-smp",
+        str(args.cpus),
+        "-m",
+        "512M",
+        "-serial",
+        "stdio",
+        "-display",
+        "none",
+        "-monitor",
+        "none",
+        "-nic",
+        "none",
+        "-no-reboot",
+    ]
     log_path = root / f"safety-smoke-{args.cpus}.log"
     status = 0
     with log_path.open("wb") as log:
@@ -65,8 +81,18 @@ def main() -> int:
         required.append(f"boot complete, {args.cpus} CPUs online")
         required += [f"AP{cpu}: timer IRQ verified" for cpu in range(1, args.cpus)]
     missing = [marker for marker in required if marker not in log]
-    failures = [marker for marker in ("syscall safety: FAIL", "***", "PANIC", "Page Fault", "ELF load failed",
-                                     "userspace: short write") if marker in log]
+    failures = [
+        marker
+        for marker in (
+            "syscall safety: FAIL",
+            "***",
+            "PANIC",
+            "Page Fault",
+            "ELF load failed",
+            "userspace: short write",
+        )
+        if marker in log
+    ]
     if status or missing or failures:
         print(f"FAIL: status={status}, missing={missing}, failures={failures}; see {log_path}")
         return 1

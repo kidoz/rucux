@@ -4,7 +4,18 @@ import argparse
 import json
 import struct
 import sys
-from typing import Optional
+from typing import TypedDict
+
+
+class PendingEvent(TypedDict, total=False):
+    ts: float
+    seq_no: int
+    sysno: int
+    request_type: int
+    sender_tid: int
+    cpu_id: int
+    target_tid: int
+    msg_type: int
 
 
 SNAPSHOT_HEADER_STRUCT = struct.Struct("<IHHIIIIQQQ")
@@ -141,7 +152,18 @@ def parse_snapshot_bytes(data: bytes):
         raise ValueError("snapshot too small")
 
     header = SNAPSHOT_HEADER_STRUCT.unpack_from(data, 0)
-    magic, version, header_size, clock_id, cpu_count, record_size, record_count, clock_freq_hz, records_written, records_overwritten = header
+    (
+        magic,
+        version,
+        header_size,
+        clock_id,
+        cpu_count,
+        record_size,
+        record_count,
+        clock_freq_hz,
+        records_written,
+        records_overwritten,
+    ) = header
     if magic != TRACE_SNAPSHOT_MAGIC:
         raise ValueError("invalid snapshot magic")
     if record_size != SNAPSHOT_RECORD_STRUCT.size:
@@ -194,16 +216,18 @@ def parse_export(path: str):
             raise ValueError(f"invalid export section size at index {index}")
 
         payload_offset = offset + EXPORT_SECTION_STRUCT.size
-        payload = data[payload_offset:offset + section_size]
+        payload = data[payload_offset : offset + section_size]
         name = raw_name.split(b"\0", 1)[0].decode("utf-8", errors="replace")
 
         if section_type == TRACED_EXPORT_SECTION_KERNEL_SNAPSHOT:
             snapshot = parse_snapshot_bytes(payload)
-            sections.append({
-                "type": "kernel_snapshot",
-                "clock_id": clock_id,
-                "snapshot": snapshot,
-            })
+            sections.append(
+                {
+                    "type": "kernel_snapshot",
+                    "clock_id": clock_id,
+                    "snapshot": snapshot,
+                }
+            )
         elif section_type == TRACED_EXPORT_SECTION_PRODUCER_RECORDS:
             records = []
             record_offset = 0
@@ -211,22 +235,26 @@ def parse_export(path: str):
                 records.append(PRODUCER_RECORD_STRUCT.unpack_from(payload, record_offset))
                 record_offset += PRODUCER_RECORD_STRUCT.size
 
-            sections.append({
-                "type": "producer_records",
-                "clock_id": clock_id,
-                "producer_id": producer_id,
-                "category": category,
-                "tid": tid,
-                "record_count": min(record_count, len(records)),
-                "name": name,
-                "records": records[:record_count],
-            })
+            sections.append(
+                {
+                    "type": "producer_records",
+                    "clock_id": clock_id,
+                    "producer_id": producer_id,
+                    "category": category,
+                    "tid": tid,
+                    "record_count": min(record_count, len(records)),
+                    "name": name,
+                    "records": records[:record_count],
+                }
+            )
         else:
-            sections.append({
-                "type": f"unknown_{section_type}",
-                "clock_id": clock_id,
-                "payload_size": len(payload),
-            })
+            sections.append(
+                {
+                    "type": f"unknown_{section_type}",
+                    "clock_id": clock_id,
+                    "payload_size": len(payload),
+                }
+            )
 
         offset += section_size
 
@@ -252,7 +280,7 @@ def load_input(path: str):
     raise ValueError("unknown input format")
 
 
-def convert_raw_timestamp(timestamp: int, base: int, clock_freq_hz: int, override_freq_hz: Optional[int]) -> float:
+def convert_raw_timestamp(timestamp: int, base: int, clock_freq_hz: int, override_freq_hz: int | None) -> float:
     freq = override_freq_hz if override_freq_hz else clock_freq_hz
     delta = timestamp - base
     if freq:
@@ -264,15 +292,15 @@ def convert_monotonic_ns(timestamp_ns: int, base_ns: int) -> float:
     return float(timestamp_ns - base_ns) / 1000.0
 
 
-def convert_snapshot_records(snapshot, override_freq_hz: Optional[int], *, domain_label: str):
+def convert_snapshot_records(snapshot, override_freq_hz: int | None, *, domain_label: str):
     records = snapshot["records"]
     if not records:
         return []
 
     base_ts = min(rec[0] for rec in records)
     trace_events = []
-    pending_syscalls = {}
-    pending_ipc_calls = {}
+    pending_syscalls: dict[tuple[int, int], PendingEvent] = {}
+    pending_ipc_calls: dict[int, PendingEvent] = {}
 
     for rec in records:
         timestamp, seq_no, arg0, arg1, cpu_id, thread_id, rec_type, event, _reserved = rec
@@ -292,23 +320,25 @@ def convert_snapshot_records(snapshot, override_freq_hz: Optional[int], *, domai
             pending = pending_syscalls.pop(key, None)
             if pending is not None:
                 sysno = pending["sysno"]
-                trace_events.append({
-                    "name": f"sys_{SYSCALL_NAMES.get(sysno, str(sysno))}",
-                    "cat": "syscall",
-                    "ph": "X",
-                    "pid": int(cpu_id),
-                    "tid": int(thread_id),
-                    "ts": pending["ts"],
-                    "dur": max(0.0, ts - pending["ts"]),
-                    "args": {
-                        "sysno": sysno,
-                        "return": int(arg1),
-                        "enter_seq_no": pending["seq_no"],
-                        "exit_seq_no": int(seq_no),
-                        "clock": CLOCK_NAMES.get(snapshot["clock_id"], str(snapshot["clock_id"])),
-                        "clock_domain": domain_label,
-                    },
-                })
+                trace_events.append(
+                    {
+                        "name": f"sys_{SYSCALL_NAMES.get(sysno, str(sysno))}",
+                        "cat": "syscall",
+                        "ph": "X",
+                        "pid": int(cpu_id),
+                        "tid": int(thread_id),
+                        "ts": pending["ts"],
+                        "dur": max(0.0, ts - pending["ts"]),
+                        "args": {
+                            "sysno": sysno,
+                            "return": int(arg1),
+                            "enter_seq_no": pending["seq_no"],
+                            "exit_seq_no": int(seq_no),
+                            "clock": CLOCK_NAMES.get(snapshot["clock_id"], str(snapshot["clock_id"])),
+                            "clock_domain": domain_label,
+                        },
+                    }
+                )
                 continue
 
         if event == 15:  # IPC_CALL
@@ -320,94 +350,104 @@ def convert_snapshot_records(snapshot, override_freq_hz: Optional[int], *, domai
                 "cpu_id": int(cpu_id),
             }
             flow_id = f"kernel-{seq_no}"
-            trace_events.append({
-                "name": "ipc_call",
-                "cat": "ipc",
-                "ph": "s",
-                "pid": int(cpu_id),
-                "tid": int(thread_id),
-                "ts": ts,
-                "id": flow_id,
-                "args": {
-                    "target_tid": int(arg0),
-                    "msg_type": int(arg1),
-                    "clock_domain": domain_label,
-                },
-            })
+            trace_events.append(
+                {
+                    "name": "ipc_call",
+                    "cat": "ipc",
+                    "ph": "s",
+                    "pid": int(cpu_id),
+                    "tid": int(thread_id),
+                    "ts": ts,
+                    "id": flow_id,
+                    "args": {
+                        "target_tid": int(arg0),
+                        "msg_type": int(arg1),
+                        "clock_domain": domain_label,
+                    },
+                }
+            )
             continue
 
         if event == 16:  # IPC_REPLY
             caller_tid = int(arg0)
             pending = pending_ipc_calls.pop(caller_tid, None)
             if pending is not None:
-                trace_events.append({
-                    "name": "ipc_call",
+                trace_events.append(
+                    {
+                        "name": "ipc_call",
+                        "cat": "ipc",
+                        "ph": "f",
+                        "pid": int(cpu_id),
+                        "tid": int(thread_id),
+                        "ts": ts,
+                        "id": f"kernel-{pending['seq_no']}",
+                        "bp": "e",
+                        "args": {
+                            "caller_tid": caller_tid,
+                            "msg_type": int(arg1),
+                            "call_cpu": pending["cpu_id"],
+                            "target_tid": pending["target_tid"],
+                            "clock_domain": domain_label,
+                        },
+                    }
+                )
+            trace_events.append(
+                {
+                    "name": "ipc_reply",
                     "cat": "ipc",
-                    "ph": "f",
+                    "ph": "i",
+                    "s": "t",
                     "pid": int(cpu_id),
                     "tid": int(thread_id),
                     "ts": ts,
-                    "id": f"kernel-{pending['seq_no']}",
-                    "bp": "e",
                     "args": {
                         "caller_tid": caller_tid,
                         "msg_type": int(arg1),
-                        "call_cpu": pending["cpu_id"],
-                        "target_tid": pending["target_tid"],
                         "clock_domain": domain_label,
                     },
-                })
-            trace_events.append({
-                "name": "ipc_reply",
-                "cat": "ipc",
+                }
+            )
+            continue
+
+        trace_events.append(
+            {
+                "name": name,
+                "cat": "rucux",
                 "ph": "i",
                 "s": "t",
                 "pid": int(cpu_id),
                 "tid": int(thread_id),
                 "ts": ts,
                 "args": {
-                    "caller_tid": caller_tid,
-                    "msg_type": int(arg1),
+                    "seq_no": int(seq_no),
+                    "arg0": int(arg0),
+                    "arg1": int(arg1),
+                    "record_type": int(rec_type),
+                    "clock": CLOCK_NAMES.get(snapshot["clock_id"], str(snapshot["clock_id"])),
                     "clock_domain": domain_label,
                 },
-            })
-            continue
-
-        trace_events.append({
-            "name": name,
-            "cat": "rucux",
-            "ph": "i",
-            "s": "t",
-            "pid": int(cpu_id),
-            "tid": int(thread_id),
-            "ts": ts,
-            "args": {
-                "seq_no": int(seq_no),
-                "arg0": int(arg0),
-                "arg1": int(arg1),
-                "record_type": int(rec_type),
-                "clock": CLOCK_NAMES.get(snapshot["clock_id"], str(snapshot["clock_id"])),
-                "clock_domain": domain_label,
-            },
-        })
+            }
+        )
 
     for (cpu_id, thread_id), pending in pending_syscalls.items():
         sysno = pending["sysno"]
-        trace_events.append({
-            "name": f"sys_{SYSCALL_NAMES.get(sysno, str(sysno))}_unterminated",
-            "cat": "syscall",
-            "ph": "i",
-            "s": "t",
-            "pid": int(cpu_id),
-            "tid": int(thread_id),
-            "ts": pending["ts"],
-            "args": {
-                "sysno": sysno,
-                "enter_seq_no": pending["seq_no"],
-                "warning": "missing syscall exit event in snapshot window",
-                "clock_domain": domain_label,
-            },
-        })
+        trace_events.append(
+            {
+                "name": f"sys_{SYSCALL_NAMES.get(sysno, str(sysno))}_unterminated",
+                "cat": "syscall",
+                "ph": "i",
+                "s": "t",
+                "pid": int(cpu_id),
+                "tid": int(thread_id),
+                "ts": pending["ts"],
+                "args": {
+                    "sysno": sysno,
+                    "enter_seq_no": pending["seq_no"],
+                    "warning": "missing syscall exit event in snapshot window",
+                    "clock_domain": domain_label,
+                },
+            }
+        )
 
     return trace_events
 
@@ -422,27 +462,31 @@ def convert_producer_section(section):
     tid = int(section["tid"]) if section["tid"] else int(section["producer_id"])
 
     trace_events = []
-    trace_events.append({
-        "name": "process_name",
-        "ph": "M",
-        "pid": pid,
-        "tid": tid,
-        "args": {
-            "name": f"producer:{section['name'] or section['producer_id']}",
-            "category": PRODUCER_CATEGORY_NAMES.get(section["category"], str(section["category"])),
-        },
-    })
-    trace_events.append({
-        "name": "thread_name",
-        "ph": "M",
-        "pid": pid,
-        "tid": tid,
-        "args": {
-            "name": f"{section['name'] or section['producer_id']}:main",
-        },
-    })
+    trace_events.append(
+        {
+            "name": "process_name",
+            "ph": "M",
+            "pid": pid,
+            "tid": tid,
+            "args": {
+                "name": f"producer:{section['name'] or section['producer_id']}",
+                "category": PRODUCER_CATEGORY_NAMES.get(section["category"], str(section["category"])),
+            },
+        }
+    )
+    trace_events.append(
+        {
+            "name": "thread_name",
+            "ph": "M",
+            "pid": pid,
+            "tid": tid,
+            "args": {
+                "name": f"{section['name'] or section['producer_id']}:main",
+            },
+        }
+    )
 
-    pending_net_request = None
+    pending_net_request: PendingEvent | None = None
 
     for rec in records:
         timestamp_ns, seq_no, arg0, arg1, producer_id, event = rec
@@ -459,95 +503,105 @@ def convert_producer_section(section):
 
         if event == 0x2002 and pending_net_request is not None:  # NET_RESP
             request_type = pending_net_request["request_type"]
-            trace_events.append({
-                "name": f"net_{SYSCALL_NAMES.get(request_type, str(request_type))}",
+            trace_events.append(
+                {
+                    "name": f"net_{SYSCALL_NAMES.get(request_type, str(request_type))}",
+                    "cat": f"producer.{PRODUCER_CATEGORY_NAMES.get(section['category'], 'unknown')}",
+                    "ph": "X",
+                    "pid": pid,
+                    "tid": tid,
+                    "ts": pending_net_request["ts"],
+                    "dur": max(0.0, ts - pending_net_request["ts"]),
+                    "args": {
+                        "request_seq_no": pending_net_request["seq_no"],
+                        "response_seq_no": int(seq_no),
+                        "request_type": request_type,
+                        "sender_tid": pending_net_request["sender_tid"],
+                        "result": int(arg1),
+                        "producer_id": int(producer_id),
+                        "producer_name": section["name"],
+                        "clock_domain": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
+                    },
+                }
+            )
+            trace_events.append(
+                {
+                    "name": "net_request_response",
+                    "cat": "producer.flow",
+                    "ph": "s",
+                    "pid": pid,
+                    "tid": tid,
+                    "ts": pending_net_request["ts"],
+                    "id": f"producer-{section['producer_id']}-net-{pending_net_request['seq_no']}",
+                    "args": {
+                        "request_type": request_type,
+                        "sender_tid": pending_net_request["sender_tid"],
+                    },
+                }
+            )
+            trace_events.append(
+                {
+                    "name": "net_request_response",
+                    "cat": "producer.flow",
+                    "ph": "f",
+                    "pid": pid,
+                    "tid": tid,
+                    "ts": ts,
+                    "id": f"producer-{section['producer_id']}-net-{pending_net_request['seq_no']}",
+                    "bp": "e",
+                    "args": {
+                        "request_type": request_type,
+                        "result": int(arg1),
+                    },
+                }
+            )
+            pending_net_request = None
+            continue
+
+        trace_events.append(
+            {
+                "name": TRACE_PRODUCER_EVENT_NAMES.get(event, f"PRODUCER_{event}"),
                 "cat": f"producer.{PRODUCER_CATEGORY_NAMES.get(section['category'], 'unknown')}",
-                "ph": "X",
+                "ph": "i",
+                "s": "t",
                 "pid": pid,
                 "tid": tid,
-                "ts": pending_net_request["ts"],
-                "dur": max(0.0, ts - pending_net_request["ts"]),
+                "ts": ts,
                 "args": {
-                    "request_seq_no": pending_net_request["seq_no"],
-                    "response_seq_no": int(seq_no),
-                    "request_type": request_type,
-                    "sender_tid": pending_net_request["sender_tid"],
-                    "result": int(arg1),
+                    "seq_no": int(seq_no),
+                    "arg0": int(arg0),
+                    "arg1": int(arg1),
                     "producer_id": int(producer_id),
                     "producer_name": section["name"],
                     "clock_domain": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
                 },
-            })
-            trace_events.append({
-                "name": "net_request_response",
-                "cat": "producer.flow",
-                "ph": "s",
+            }
+        )
+
+    if pending_net_request is not None:
+        trace_events.append(
+            {
+                "name": f"net_{SYSCALL_NAMES.get(pending_net_request['request_type'], str(pending_net_request['request_type']))}_unterminated",
+                "cat": f"producer.{PRODUCER_CATEGORY_NAMES.get(section['category'], 'unknown')}",
+                "ph": "i",
+                "s": "t",
                 "pid": pid,
                 "tid": tid,
                 "ts": pending_net_request["ts"],
-                "id": f"producer-{section['producer_id']}-net-{pending_net_request['seq_no']}",
                 "args": {
-                    "request_type": request_type,
+                    "request_seq_no": pending_net_request["seq_no"],
+                    "request_type": pending_net_request["request_type"],
                     "sender_tid": pending_net_request["sender_tid"],
+                    "warning": "missing NET_RESP event in export window",
+                    "clock_domain": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
                 },
-            })
-            trace_events.append({
-                "name": "net_request_response",
-                "cat": "producer.flow",
-                "ph": "f",
-                "pid": pid,
-                "tid": tid,
-                "ts": ts,
-                "id": f"producer-{section['producer_id']}-net-{pending_net_request['seq_no']}",
-                "bp": "e",
-                "args": {
-                    "request_type": request_type,
-                    "result": int(arg1),
-                },
-            })
-            pending_net_request = None
-            continue
-
-        trace_events.append({
-            "name": TRACE_PRODUCER_EVENT_NAMES.get(event, f"PRODUCER_{event}"),
-            "cat": f"producer.{PRODUCER_CATEGORY_NAMES.get(section['category'], 'unknown')}",
-            "ph": "i",
-            "s": "t",
-            "pid": pid,
-            "tid": tid,
-            "ts": ts,
-            "args": {
-                "seq_no": int(seq_no),
-                "arg0": int(arg0),
-                "arg1": int(arg1),
-                "producer_id": int(producer_id),
-                "producer_name": section["name"],
-                "clock_domain": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
-            },
-        })
-
-    if pending_net_request is not None:
-        trace_events.append({
-            "name": f"net_{SYSCALL_NAMES.get(pending_net_request['request_type'], str(pending_net_request['request_type']))}_unterminated",
-            "cat": f"producer.{PRODUCER_CATEGORY_NAMES.get(section['category'], 'unknown')}",
-            "ph": "i",
-            "s": "t",
-            "pid": pid,
-            "tid": tid,
-            "ts": pending_net_request["ts"],
-            "args": {
-                "request_seq_no": pending_net_request["seq_no"],
-                "request_type": pending_net_request["request_type"],
-                "sender_tid": pending_net_request["sender_tid"],
-                "warning": "missing NET_RESP event in export window",
-                "clock_domain": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
-            },
-        })
+            }
+        )
 
     return trace_events
 
 
-def convert_snapshot(snapshot, override_freq_hz: Optional[int]):
+def convert_snapshot(snapshot, override_freq_hz: int | None):
     trace_events = convert_snapshot_records(snapshot, override_freq_hz, domain_label="kernel_raw")
     return {
         "traceEvents": trace_events,
@@ -564,24 +618,26 @@ def convert_snapshot(snapshot, override_freq_hz: Optional[int]):
     }
 
 
-def convert_export(export, override_freq_hz: Optional[int]):
+def convert_export(export, override_freq_hz: int | None):
     trace_events = []
     metadata_sections = []
 
-    trace_events.append({
-        "name": "clock_domains_not_globally_aligned",
-        "cat": "rucux",
-        "ph": "i",
-        "s": "g",
-        "pid": 0,
-        "tid": 0,
-        "ts": 0,
-        "args": {
-            "kernel": "kernel_raw",
-            "userspace": "monotonic_ns",
-            "note": "section timestamps are converted per clock domain and are not globally correlated",
-        },
-    })
+    trace_events.append(
+        {
+            "name": "clock_domains_not_globally_aligned",
+            "cat": "rucux",
+            "ph": "i",
+            "s": "g",
+            "pid": 0,
+            "tid": 0,
+            "ts": 0,
+            "args": {
+                "kernel": "kernel_raw",
+                "userspace": "monotonic_ns",
+                "note": "section timestamps are converted per clock domain and are not globally correlated",
+            },
+        }
+    )
 
     for section in export["sections"]:
         if section["type"] == "kernel_snapshot":
@@ -593,25 +649,29 @@ def convert_export(export, override_freq_hz: Optional[int]):
                     domain_label=EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
                 )
             )
-            metadata_sections.append({
-                "type": "kernel_snapshot",
-                "clock": CLOCK_NAMES.get(snapshot["clock_id"], str(snapshot["clock_id"])),
-                "export_clock": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
-                "records_written": snapshot["records_written"],
-                "records_overwritten": snapshot["records_overwritten"],
-                "cpu_count": snapshot["cpu_count"],
-            })
+            metadata_sections.append(
+                {
+                    "type": "kernel_snapshot",
+                    "clock": CLOCK_NAMES.get(snapshot["clock_id"], str(snapshot["clock_id"])),
+                    "export_clock": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
+                    "records_written": snapshot["records_written"],
+                    "records_overwritten": snapshot["records_overwritten"],
+                    "cpu_count": snapshot["cpu_count"],
+                }
+            )
         elif section["type"] == "producer_records":
             trace_events.extend(convert_producer_section(section))
-            metadata_sections.append({
-                "type": "producer_records",
-                "producer_id": section["producer_id"],
-                "name": section["name"],
-                "category": PRODUCER_CATEGORY_NAMES.get(section["category"], str(section["category"])),
-                "tid": section["tid"],
-                "record_count": section["record_count"],
-                "clock": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
-            })
+            metadata_sections.append(
+                {
+                    "type": "producer_records",
+                    "producer_id": section["producer_id"],
+                    "name": section["name"],
+                    "category": PRODUCER_CATEGORY_NAMES.get(section["category"], str(section["category"])),
+                    "tid": section["tid"],
+                    "record_count": section["record_count"],
+                    "clock": EXPORT_CLOCK_NAMES.get(section["clock_id"], str(section["clock_id"])),
+                }
+            )
         else:
             metadata_sections.append(section)
 
@@ -627,7 +687,7 @@ def convert_export(export, override_freq_hz: Optional[int]):
     }
 
 
-def convert_input(trace_input, override_freq_hz: Optional[int]):
+def convert_input(trace_input, override_freq_hz: int | None):
     if trace_input["format"] == "snapshot":
         return convert_snapshot(trace_input, override_freq_hz)
     if trace_input["format"] == "export":
@@ -636,10 +696,14 @@ def convert_input(trace_input, override_freq_hz: Optional[int]):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Convert rucux trace snapshot or traced export binaries to Chrome/Perfetto JSON")
+    parser = argparse.ArgumentParser(
+        description="Convert rucux trace snapshot or traced export binaries to Chrome/Perfetto JSON"
+    )
     parser.add_argument("input", help="input snapshot/export binary")
     parser.add_argument("-o", "--output", help="output JSON file; defaults to stdout")
-    parser.add_argument("--clock-freq-hz", type=int, default=None, help="override clock frequency for raw clocks like TSC")
+    parser.add_argument(
+        "--clock-freq-hz", type=int, default=None, help="override clock frequency for raw clocks like TSC"
+    )
     args = parser.parse_args()
 
     trace_input = load_input(args.input)

@@ -5,13 +5,23 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 import product_info
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-SERVICE_POLICIES = {
+
+class ServicePolicy(TypedDict, total=False):
+    autostart: bool
+    restart_on_failure: bool
+    restart_on_success: bool
+    max_restart_attempts: int
+    restart_delay_ms: int
+    dependencies: list[str]
+
+
+SERVICE_POLICIES: dict[str, ServicePolicy] = {
     "console": {
         "autostart": True,
         "restart_on_failure": True,
@@ -145,6 +155,7 @@ def resolve_product(product_name: str) -> tuple[list[str], list[str], list[str]]
     apps = services + [program for program in programs if program not in services]
 
     import re
+
     for app in apps:
         if not re.fullmatch(r"[a-z][a-z0-9_]*", app):
             raise RuntimeError(f"invalid application name: {app}")
@@ -167,9 +178,7 @@ def write_embedded_header(path: Path, apps: list[str]) -> None:
         out.write("\n")
         out.write("inline void populate_embedded_binaries(kernel::vfs::vfs_node* bin) {\n")
         for app in apps:
-            out.write(
-                f'    kernel::vfs::ramfs::create_file(bin, "{app}", {app}_bin, {app}_bin_size);\n'
-            )
+            out.write(f'    kernel::vfs::ramfs::create_file(bin, "{app}", {app}_bin, {app}_bin_size);\n')
         out.write("}\n")
         out.write("\n")
         out.write("inline void start_initial_processes() {\n")
@@ -210,10 +219,10 @@ def write_init_config_header(path: Path, services: list[str], programs: list[str
             deps, dep_count = dependency_slots(list(policy["dependencies"]))
             out.write(
                 f'    {{"{app}", "/bin/{app}", {cpp_bool(bool(policy["autostart"]))}, '
-                f'{cpp_bool(bool(policy["restart_on_failure"]))}, '
-                f'{cpp_bool(bool(policy.get("restart_on_success", False)))}, '
-                f'{int(policy["max_restart_attempts"])}, {int(policy["restart_delay_ms"])}, '
-                f'{{{deps[0]}, {deps[1]}, {deps[2]}}}, {dep_count}}},\n'
+                f"{cpp_bool(bool(policy['restart_on_failure']))}, "
+                f"{cpp_bool(bool(policy.get('restart_on_success', False)))}, "
+                f"{int(policy['max_restart_attempts'])}, {int(policy['restart_delay_ms'])}, "
+                f"{{{deps[0]}, {deps[1]}, {deps[2]}}}, {dep_count}}},\n"
             )
         out.write("};\n")
 

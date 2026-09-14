@@ -13,6 +13,11 @@ license = { text = "MIT" }
 dependencies = []
 
 [dependency-groups]
+dev = [
+    "ruff>=0.16,<0.17",
+    "mypy>=2.3,<3",
+]
+
 # Validation tooling for the agent documentation standard (YAML + JSON Schema).
 standards = [
     "pyyaml>=6.0",
@@ -31,3 +36,22 @@ build = [
 # Python distribution. Without this, `uv sync` would try to build `rucux-tools`
 # as a package and fail — there is no module to install.
 package = false
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+include = ["tools/**/*.py", "scripts/**/*.py"]
+cache-dir = "builddir-python-tools/ruff-cache"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["tools", "scripts"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+no_implicit_optional = true
+cache_dir = "builddir-python-tools/mypy-cache"

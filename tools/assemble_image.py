@@ -6,14 +6,15 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
-import struct
+import time
+import zlib
 from pathlib import Path
 
 import product_info
-
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PERSISTENT_JOURNAL_SIZE = 256 * 1024
@@ -78,6 +79,8 @@ def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Pat
     if not isinstance(image_size_mib, str) and not isinstance(image_size_mib, int):
         raise AssembleError("image manifest missing size_mib")
 
+    if not isinstance(image_size_mib, (str, int)):
+        raise AssembleError("image.size_mib must be an integer")
     size_mib = int(image_size_mib)
     output_path = output_path_from_resolved(data, image)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,7 +127,7 @@ def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Pat
             try:
                 run_command(["mmd", "-i", str(output_path), "::/packages"])
             except AssembleError:
-                pass # directory might already exist
+                pass  # directory might already exist
             packages_dir = REPO_ROOT / "packages"
             for port in ports:
                 for match in packages_dir.glob(f"{port}-*.rpkg"):
@@ -133,23 +136,23 @@ def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Pat
     return output_path
 
 
-import zlib
-import time
-
 def create_boot_scr(script_text: str, output_path: Path) -> None:
-    data = script_text.encode('utf-8')
-    data_crc = zlib.crc32(data) & 0xffffffff
+    data = script_text.encode("utf-8")
+    data_crc = zlib.crc32(data) & 0xFFFFFFFF
     size = len(data)
     magic = 0x27051956
     timestamp = int(time.time())
-    fmt = '>IIIIIIIBBBB32s'
-    header_without_crc = struct.pack(fmt, magic, 0, timestamp, size, 0, 0, data_crc, 5, 2, 6, 0, b'rucux boot script')
-    hcrc = zlib.crc32(header_without_crc) & 0xffffffff
-    header = struct.pack(fmt, magic, hcrc, timestamp, size, 0, 0, data_crc, 5, 2, 6, 0, b'rucux boot script')
+    fmt = ">IIIIIIIBBBB32s"
+    header_without_crc = struct.pack(fmt, magic, 0, timestamp, size, 0, 0, data_crc, 5, 2, 6, 0, b"rucux boot script")
+    hcrc = zlib.crc32(header_without_crc) & 0xFFFFFFFF
+    header = struct.pack(fmt, magic, hcrc, timestamp, size, 0, 0, data_crc, 5, 2, 6, 0, b"rucux boot script")
     output_path.write_bytes(header + data)
+
 
 def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> Path:
     image_size_mib = image.get("size_mib", 128)
+    if not isinstance(image_size_mib, (str, int)):
+        raise AssembleError("image.size_mib must be an integer")
     size_mib = int(image_size_mib)
     output_path = output_path_from_resolved(data, image)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,7 +160,7 @@ def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> 
     board = data.get("board")
     if not isinstance(board, dict):
         raise AssembleError("resolved board manifest is invalid")
-        
+
     kernel_path = kernel_path_from_resolved(board)
     if not kernel_path.exists():
         raise AssembleError(f"kernel artifact not found: {kernel_path}")
@@ -182,7 +185,7 @@ def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> 
         fat_size_mib = size_mib - 2
         run_command(["dd", "if=/dev/zero", f"of={fat_img_path}", "bs=1M", f"count={fat_size_mib}", "status=none"])
         run_command(["mformat", "-i", str(fat_img_path), "-F", "::"])
-        
+
         run_command(["mcopy", "-i", str(fat_img_path), str(boot_scr_path), "::/boot.scr"])
         run_command(["mcopy", "-i", str(fat_img_path), str(kernel_path), "::/kernel.elf"])
 
@@ -198,16 +201,16 @@ def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> 
 
         output_path.unlink(missing_ok=True)
         run_command(["dd", "if=/dev/zero", f"of={output_path}", "bs=1M", f"count={size_mib}", "status=none"])
-        
+
         lba_start = 2048
         num_sectors = (fat_size_mib * 1024 * 1024) // 512
         mbr = bytearray(512)
         mbr[446] = 0x80
-        mbr[447:450] = b'\xfe\xff\xff'
+        mbr[447:450] = b"\xfe\xff\xff"
         mbr[450] = 0x0C
-        mbr[451:454] = b'\xfe\xff\xff'
-        mbr[454:458] = lba_start.to_bytes(4, 'little')
-        mbr[458:462] = num_sectors.to_bytes(4, 'little')
+        mbr[451:454] = b"\xfe\xff\xff"
+        mbr[454:458] = lba_start.to_bytes(4, "little")
+        mbr[458:462] = num_sectors.to_bytes(4, "little")
         mbr[510] = 0x55
         mbr[511] = 0xAA
 
@@ -269,6 +272,7 @@ def write_boot_firmware(output_path: Path, board: dict[str, object], lba_start: 
         out.write(blob)
 
     print(f"wrote {len(blob)} bytes of boot firmware at offset {offset}")
+
 
 def assemble_image(product_name: str, image_name: str) -> Path:
     data = product_info.resolved_image_manifest(product_name, image_name)

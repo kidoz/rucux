@@ -12,7 +12,6 @@ import assemble_image
 import product_info
 import resolve_ports
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RELEASES_DIR = REPO_ROOT / "release"
 
@@ -170,8 +169,7 @@ def generate_release(release_name: str) -> Path:
 
     resolved_ports = resolve_ports.resolve_ports(resolve_ports.normalize_ports(product_name))
     materialized_images = [
-        maybe_materialize_image(product_name, image_name, release_output_dir)
-        for image_name in release_images
+        maybe_materialize_image(product_name, image_name, release_output_dir) for image_name in release_images
     ]
 
     manifest_path = release_output_dir / "manifest.yaml"

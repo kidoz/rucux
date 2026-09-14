@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: MIT
 
 import argparse
+import os
 import sys
 import tarfile
 from pathlib import Path
-import shutil
-import os
 
 import product_info
+
 
 def create_package(port_dir: Path, dest_dir: Path) -> int:
     port_yaml_path = port_dir / "port.yaml"
@@ -24,9 +24,9 @@ def create_package(port_dir: Path, dest_dir: Path) -> int:
 
     name = manifest.get("name")
     version = manifest.get("version")
-    
+
     if not name or not version:
-        print(f"error: port.yaml must contain 'name' and 'version'", file=sys.stderr)
+        print("error: port.yaml must contain 'name' and 'version'", file=sys.stderr)
         return 1
 
     staging_dir = port_dir / "pkg-stage"
@@ -34,7 +34,7 @@ def create_package(port_dir: Path, dest_dir: Path) -> int:
     # Write the arch into the manifest and determine filename
     arch = os.environ.get("RUCUX_ARCH", "any")
     manifest["arch"] = arch
-    
+
     # Save the updated manifest back to staging
     staging_yaml = staging_dir / "port.yaml"
     staging_yaml.parent.mkdir(parents=True, exist_ok=True)
@@ -49,7 +49,7 @@ def create_package(port_dir: Path, dest_dir: Path) -> int:
 
     pkg_name = f"{name}-{version}-{arch}.rpkg"
     dest_path = dest_dir / pkg_name
-    
+
     if not staging_dir.exists() or not staging_dir.is_dir():
         print(f"error: staging directory {staging_dir} does not exist", file=sys.stderr)
         return 1
@@ -65,19 +65,23 @@ def create_package(port_dir: Path, dest_dir: Path) -> int:
     print(f"Successfully created {dest_path}")
     return 0
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Package a rucux port into a .rpkg file")
     parser.add_argument("port_dir", help="Path to the port directory containing port.yaml and pkg-stage/")
-    parser.add_argument("--dest", default=str(product_info.REPO_ROOT / "packages"), help="Destination directory for the .rpkg file")
-    
+    parser.add_argument(
+        "--dest", default=str(product_info.REPO_ROOT / "packages"), help="Destination directory for the .rpkg file"
+    )
+
     args = parser.parse_args()
-    
+
     port_dir = Path(args.port_dir).resolve()
     dest_dir = Path(args.dest).resolve()
-    
+
     dest_dir.mkdir(parents=True, exist_ok=True)
-    
+
     return create_package(port_dir, dest_dir)
+
 
 if __name__ == "__main__":
     sys.exit(main())

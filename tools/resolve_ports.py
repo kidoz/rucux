@@ -18,7 +18,7 @@ def load_port_dependencies() -> dict[str, list[str]]:
         port_yaml = port_dir / "port.yaml"
         if not port_yaml.exists():
             continue
-        
+
         try:
             data = product_info.parse_simple_yaml(port_yaml)
             name = str(data.get("name", port_dir.name))
