@@ -29,17 +29,22 @@ void ipv4_input(netif* iface, netbuf* buf) noexcept {
 
     // Validate header checksum
     size_t hdr_len = (ip->ihl_version & 0x0F) * 4;
-    if (checksum(ip, hdr_len) != 0) {
+    const size_t total = ntohs(ip->total_length);
+    // Fragment reassembly is unsupported. Validate before checksum/header access.
+    if (hdr_len < IPV4_HEADER_LEN || hdr_len > buf->len() || total < hdr_len || total > buf->len() ||
+        (ntohs(ip->flags_fragment) & 0xBFFF) || ip->ttl == 0 || checksum(ip, hdr_len) != 0) {
         netbuf::free(buf);
         return;
     }
 
     // Check destination: must be for us, broadcast, or loopback
     if (ip->dst_addr != iface->ip.addr && ip->dst_addr != 0xFFFFFFFF &&
-        (ip->dst_addr | iface->ip.netmask) != 0xFFFFFFFF && iface != netif_loopback()) {
+        ip->dst_addr != (iface->ip.addr | ~iface->ip.netmask) && iface != netif_loopback()) {
         netbuf::free(buf);
         return;
     }
+
+    buf->set_len(total); // Discard Ethernet padding.
 
     // Store metadata for transport layer
     buf->src_ip = ip->src_addr;
@@ -65,6 +70,10 @@ void ipv4_input(netif* iface, netbuf* buf) noexcept {
 void ipv4_output(netbuf* buf, uint32_t src, uint32_t dst, uint8_t protocol) noexcept {
     // Prepend IPv4 header
     auto* ip = reinterpret_cast<ipv4_header*>(buf->push(IPV4_HEADER_LEN));
+    if (!ip) {
+        netbuf::free(buf);
+        return;
+    }
     ip->ihl_version = 0x45; // Version 4, IHL 5 (20 bytes)
     ip->tos = 0;
     ip->total_length = htons(static_cast<uint16_t>(buf->len()));
@@ -85,7 +94,7 @@ void ipv4_output(netbuf* buf, uint32_t src, uint32_t dst, uint8_t protocol) noex
         iface = netif_default();
     }
 
-    if (!iface) {
+    if (!iface || buf->len() > iface->mtu) {
         netbuf::free(buf);
         return;
     }

@@ -5,10 +5,11 @@ namespace kernel::net {
 
 uint16_t checksum(const void* data, size_t len) noexcept {
     uint32_t sum = 0;
-    auto* p = reinterpret_cast<const uint16_t*>(data);
+    auto* p = reinterpret_cast<const uint8_t*>(data);
 
     while (len > 1) {
-        sum += *p++;
+        sum += static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+        p += 2;
         len -= 2;
     }
     if (len) sum += *reinterpret_cast<const uint8_t*>(p);
@@ -31,10 +32,11 @@ uint16_t checksum_pseudo(uint32_t src, uint32_t dst, uint8_t proto, const void* 
     sum += htons(static_cast<uint16_t>(len));
 
     // Data
-    auto* p = reinterpret_cast<const uint16_t*>(data);
+    auto* p = reinterpret_cast<const uint8_t*>(data);
     size_t remaining = len;
     while (remaining > 1) {
-        sum += *p++;
+        sum += static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+        p += 2;
         remaining -= 2;
     }
     if (remaining) sum += *reinterpret_cast<const uint8_t*>(p);

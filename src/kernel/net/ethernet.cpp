@@ -33,7 +33,7 @@ void ethernet_input(netif* iface, netbuf* buf) noexcept {
 void ethernet_output(netif* iface, netbuf* buf, uint32_t dst_ip, uint16_t ethertype) noexcept {
     // Determine next-hop IP (use gateway if destination is off-subnet)
     uint32_t next_hop = dst_ip;
-    if ((dst_ip & iface->ip.netmask) != (iface->ip.addr & iface->ip.netmask)) {
+    if (dst_ip != 0xFFFFFFFF && (dst_ip & iface->ip.netmask) != (iface->ip.addr & iface->ip.netmask)) {
         next_hop = iface->ip.gateway;
         if (!next_hop) {
             netbuf::free(buf);
@@ -41,22 +41,17 @@ void ethernet_output(netif* iface, netbuf* buf, uint32_t dst_ip, uint16_t ethert
         }
     }
 
-    // Resolve MAC address via ARP
-    uint8_t dst_mac[6];
-    if (!arp_resolve(iface, next_hop, dst_mac)) {
-        // ARP request sent, queue packet for later
-        // TODO: implement ARP pending queue (for now, drop the packet)
+    // Prepend Ethernet header
+    auto* eth = reinterpret_cast<eth_header*>(buf->push(ETH_HEADER_LEN));
+    if (!eth) {
         netbuf::free(buf);
         return;
     }
-
-    // Prepend Ethernet header
-    auto* eth = reinterpret_cast<eth_header*>(buf->push(ETH_HEADER_LEN));
-    lib::memcpy(eth->dst, dst_mac, 6);
+    lib::memset(eth->dst, 0, 6);
     lib::memcpy(eth->src, iface->mac.bytes, 6);
     eth->ethertype = htons(ethertype);
 
-    iface->transmit(iface, buf);
+    arp_output(iface, buf, next_hop);
 }
 
 } // namespace kernel::net

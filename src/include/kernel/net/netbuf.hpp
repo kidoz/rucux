@@ -37,7 +37,11 @@ public:
     uint8_t* put(size_t size) noexcept;
 
     // Set data length explicitly (for received packets from NIC)
-    void set_len(size_t len) noexcept { len_ = len; }
+    bool set_len(size_t len) noexcept {
+        if (len > total_size_ - static_cast<size_t>(data_ - buf_)) return false;
+        len_ = len;
+        return true;
+    }
 
     // Total buffer capacity (for NIC DMA setup)
     size_t capacity() const noexcept { return total_size_ - HEADROOM; }

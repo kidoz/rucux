@@ -24,12 +24,11 @@ struct arp_header {
 // Process a received ARP packet
 void arp_input(netif* iface, netbuf* buf) noexcept;
 
-// Resolve an IPv4 address to a MAC address.
-// Returns true and fills `out_mac` if cached.
-// Returns false and sends an ARP request if not cached.
-bool arp_resolve(netif* iface, uint32_t ip, uint8_t out_mac[6]) noexcept;
+// Consumes an Ethernet packet: transmit if cached, otherwise queue bounded work.
+void arp_output(netif* iface, netbuf* buf, uint32_t next_hop) noexcept;
+void arp_tick(uint64_t now) noexcept;
 
-// Add a static ARP entry
-void arp_add_static(uint32_t ip, const uint8_t mac[6]) noexcept;
+// Cache entries are scoped to their interface.
+void arp_add_static(netif* iface, uint32_t ip, const uint8_t mac[6]) noexcept;
 
 } // namespace kernel::net

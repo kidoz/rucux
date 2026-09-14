@@ -47,6 +47,9 @@ enum class tcp_state : uint8_t {
 // TCP Protocol Control Block — one per connection
 struct tcp_pcb {
     tcp_state state;
+    bool detached; // Application closed; retain only bounded teardown state.
+    int error;
+    uint64_t expires;
 
     // Local and remote endpoints
     uint32_t local_ip;
@@ -62,10 +65,12 @@ struct tcp_pcb {
     uint32_t rcv_wnd; // Receive window
     uint32_t iss;     // Initial send sequence number
 
-    // Send buffer (data queued for transmission)
-    uint8_t* snd_buf;
-    size_t snd_buf_size;
-    size_t snd_buf_used;
+    // Immutable sequence ranges retained until cumulatively acknowledged.
+    netbuf* unacked_head;
+    netbuf* unacked_tail;
+    unsigned unacked_count;
+    unsigned retries;
+    uint64_t retransmit_at;
 
     // Receive buffer (data received, waiting for app to read)
     uint8_t* rcv_buf;
@@ -98,6 +103,7 @@ struct tcp_pcb {
 // ─── TCP API ───────────────────────────────────────────────────────────────
 
 void tcp_init() noexcept;
+void tcp_tick(uint64_t now) noexcept;
 void tcp_input(netif* iface, netbuf* buf) noexcept;
 
 tcp_pcb* tcp_new() noexcept;

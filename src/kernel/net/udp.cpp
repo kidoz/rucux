@@ -8,15 +8,17 @@ namespace kernel::net {
 
 static udp_pcb* g_udp_list = nullptr;
 static irq_spinlock g_udp_lock;
-[[maybe_unused]] static uint16_t g_udp_ephemeral = 49152;
+static uint16_t g_udp_ephemeral = 49152;
 
 void udp_init() noexcept {
     g_udp_list = nullptr;
 }
 
-static udp_pcb* find_udp_pcb(uint16_t local_port) noexcept {
+static udp_pcb* find_udp_pcb(uint32_t addr, uint16_t port, uint32_t remote, uint16_t remote_port) noexcept {
     for (auto* p = g_udp_list; p; p = p->next)
-        if (p->local_port == local_port) return p;
+        if (p->bound && p->local_port == port && (!p->local_ip || p->local_ip == addr) &&
+            (!p->connected || (p->remote_ip == remote && p->remote_port == remote_port)))
+            return p;
     return nullptr;
 }
 
@@ -29,9 +31,16 @@ void udp_input(netif* iface, netbuf* buf) noexcept {
 
     auto* udp = reinterpret_cast<udp_header*>(buf->data());
 
+    const size_t length = ntohs(udp->length);
+    if (length < UDP_HEADER_LEN || length > buf->len() ||
+        (udp->checksum && checksum_pseudo(buf->src_ip, buf->dst_ip, IPPROTO_UDP, udp, length))) {
+        netbuf::free(buf);
+        return;
+    }
+    buf->set_len(length);
     irq_lock_guard guard(g_udp_lock);
-    auto* pcb = find_udp_pcb(udp->dst_port);
-    if (!pcb) {
+    auto* pcb = find_udp_pcb(buf->dst_ip, udp->dst_port, buf->src_ip, udp->src_port);
+    if (!pcb || pcb->recv_count >= 32) {
         netbuf::free(buf);
         return;
     }
@@ -42,7 +51,7 @@ void udp_input(netif* iface, netbuf* buf) noexcept {
     buf->pull(UDP_HEADER_LEN);
 
     // Enqueue to PCB receive list
-    uintptr_t flags = pcb->lock.lock();
+    // The global UDP lock protects lookup, queues and wait enrollment.
     buf->next = nullptr;
     if (!pcb->recv_head) {
         pcb->recv_head = pcb->recv_tail = buf;
@@ -56,7 +65,6 @@ void udp_input(netif* iface, netbuf* buf) noexcept {
         scheduler::scheduler::unblock(pcb->wait_recv);
         pcb->wait_recv = nullptr;
     }
-    pcb->lock.unlock(flags);
 }
 
 udp_pcb* udp_new() noexcept {
@@ -90,7 +98,25 @@ void udp_free(udp_pcb* pcb) noexcept {
     delete pcb;
 }
 
+static bool port_used(udp_pcb* pcb, uint32_t addr, uint16_t port) noexcept {
+    for (auto* p = g_udp_list; p; p = p->next)
+        if (p != pcb && p->bound && p->local_port == port && (!addr || !p->local_ip || addr == p->local_ip))
+            return true;
+    return false;
+}
+
 int udp_bind(udp_pcb* pcb, uint32_t addr, uint16_t port) noexcept {
+    irq_lock_guard guard(g_udp_lock);
+    if (pcb->bound) return -22;
+    if (!port) {
+        for (unsigned i = 0; i < 16384; ++i) {
+            port = htons(g_udp_ephemeral++);
+            if (g_udp_ephemeral < 49152) g_udp_ephemeral = 49152;
+            if (!port_used(pcb, addr, port)) break;
+            port = 0;
+        }
+    }
+    if (!port || port_used(pcb, addr, port)) return -98;
     pcb->local_ip = addr;
     pcb->local_port = port;
     pcb->bound = true;
@@ -98,6 +124,12 @@ int udp_bind(udp_pcb* pcb, uint32_t addr, uint16_t port) noexcept {
 }
 
 int udp_connect(udp_pcb* pcb, uint32_t addr, uint16_t port) noexcept {
+    if (!addr || !port) return -22;
+    if (!pcb->bound) {
+        int result = udp_bind(pcb, pcb->local_ip, 0);
+        if (result) return result;
+    }
+    irq_lock_guard guard(g_udp_lock);
     pcb->remote_ip = addr;
     pcb->remote_port = port;
     pcb->connected = true;
@@ -105,8 +137,16 @@ int udp_connect(udp_pcb* pcb, uint32_t addr, uint16_t port) noexcept {
 }
 
 long udp_sendto(udp_pcb* pcb, const void* data, size_t len, uint32_t dst_ip, uint16_t dst_port) noexcept {
+    if (!dst_ip || !dst_port) return -89; // EDESTADDRREQ
+    auto* iface = dst_ip == 0x0100007F ? netif_loopback() : netif_default();
+    if (!iface) return -101;
+    if (len > 1472 || len + UDP_HEADER_LEN + IPV4_HEADER_LEN > iface->mtu) return -90;
+    if (!pcb->bound) {
+        int result = udp_bind(pcb, pcb->local_ip, 0);
+        if (result) return result;
+    }
     auto* buf = netbuf::alloc();
-    if (!buf) return -1;
+    if (!buf) return -12;
 
     // Payload
     auto* payload = buf->put(len);
@@ -121,8 +161,7 @@ long udp_sendto(udp_pcb* pcb, const void* data, size_t len, uint32_t dst_ip, uin
 
     uint32_t src = pcb->local_ip;
     if (src == 0) {
-        auto* iface = netif_default();
-        if (iface) src = iface->ip.addr;
+        src = iface->ip.addr;
     }
 
     ipv4_output(buf, src, dst_ip, IPPROTO_UDP);
@@ -130,33 +169,36 @@ long udp_sendto(udp_pcb* pcb, const void* data, size_t len, uint32_t dst_ip, uin
 }
 
 long udp_recvfrom(udp_pcb* pcb, void* data, size_t len, uint32_t* src_ip, uint16_t* src_port) noexcept {
-    // Block until data
     while (true) {
-        uintptr_t flags = pcb->lock.lock();
+        uintptr_t flags = g_udp_lock.lock();
         if (pcb->recv_head) {
             auto* nb = pcb->recv_head;
             pcb->recv_head = nb->next;
             if (!pcb->recv_head) pcb->recv_tail = nullptr;
             pcb->recv_count--;
-            pcb->lock.unlock(flags);
-
-            size_t to_copy = (len < nb->len()) ? len : nb->len();
+            g_udp_lock.unlock(flags);
+            size_t to_copy = len < nb->len() ? len : nb->len();
             lib::memcpy(data, nb->data(), to_copy);
             if (src_ip) *src_ip = nb->src_ip;
             if (src_port) *src_port = nb->src_port;
             netbuf::free(nb);
             return static_cast<long>(to_copy);
         }
-        pcb->wait_recv = scheduler::scheduler::current_thread();
-        pcb->lock.unlock(flags);
-        scheduler::scheduler::block(scheduler::thread_state::BLOCKED);
+        auto* current = scheduler::scheduler::current_thread();
+        if (pcb->wait_recv && pcb->wait_recv != current) {
+            g_udp_lock.unlock(flags);
+            return -16;
+        }
+        pcb->wait_recv = current;
+        current->state = scheduler::thread_state::BLOCKED;
+        g_udp_lock.unlock(flags);
+        scheduler::scheduler::schedule();
     }
 }
 
 int udp_poll_events(udp_pcb* pcb) noexcept {
-    int events = 4;                  // POLLOUT always
-    if (pcb->recv_head) events |= 1; // POLLIN
-    return events;
+    irq_lock_guard guard(g_udp_lock);
+    return 4 | (pcb->recv_head ? 1 : 0);
 }
 
 } // namespace kernel::net
