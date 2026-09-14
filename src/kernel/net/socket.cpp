@@ -37,9 +37,10 @@ static size_t socket_write(vfs::vfs_node* node, size_t, size_t size, const void*
 }
 
 static void socket_close(vfs::vfs_node* node) {
-    // Note: this leaks the socket for now; would normally clean up PCB here
-    // TCP cleanup requires FIN exchange.
-    g_sockets[node->inode].pcb = nullptr;
+    auto& socket = g_sockets[node->inode];
+    if (socket.type == 2) udp_free(static_cast<udp_pcb*>(socket.pcb));
+    // TCP still requires connection teardown and FIN handling.
+    socket.pcb = nullptr;
     delete node;
 }
 
