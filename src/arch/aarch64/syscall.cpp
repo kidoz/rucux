@@ -15,6 +15,7 @@
 #include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/syscall.hpp>
+#include <kernel/time.hpp>
 #include <kernel/vfs/vfs.hpp>
 #include <stdint.h>
 #include <uapi/kernel/syscalls.h>
@@ -43,8 +44,18 @@ const char* ec_name(uint64_t ec) noexcept {
 
 long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a5, long a6) noexcept {
     switch (num) {
+    case SYS_WAITPID:
+        return kernel::scheduler::scheduler::sys_waitpid(static_cast<int>(a1), reinterpret_cast<int*>(a2),
+                                                         static_cast<int>(a3));
+    case SYS_TOP:
+        return kernel::scheduler::scheduler::sys_top(reinterpret_cast<void*>(a1), static_cast<size_t>(a2));
+    case SYS_CLOCK_GETTIME:
+        return kernel::time_manager::sys_clock_gettime(static_cast<int>(a1), reinterpret_cast<kernel::timespec*>(a2));
+    case SYS_NANOSLEEP:
+        return kernel::time_manager::sys_nanosleep(reinterpret_cast<const kernel::timespec*>(a1),
+                                                   reinterpret_cast<kernel::timespec*>(a2));
     case SYS_EXIT:
-        kernel::scheduler::scheduler::exit();
+        kernel::scheduler::scheduler::exit(static_cast<int>(a1));
         return 0;
     case SYS_WRITE:
         return kernel::vfs::vfs_manager::sys_write(static_cast<int>(a1), reinterpret_cast<const void*>(a2),

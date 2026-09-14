@@ -2,6 +2,7 @@
 #include <arch/amd64/io.hpp>
 #include <arch/amd64/syscall.hpp>
 #include <kernel/memory/user_access.hpp>
+#include <kernel/net/netif.hpp>
 #include <kernel/syscall.hpp>
 #include <stdint.h>
 #include <uapi/kernel/syscalls.h>
@@ -265,8 +266,15 @@ static long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a
     case SYS_GETPEERNAME:
         return kernel::net::socket_manager::sys_getpeername(static_cast<int>(a1), reinterpret_cast<void*>(a2),
                                                             reinterpret_cast<uint32_t*>(a3));
+    case SYS_WAITPID:
+        return kernel::scheduler::scheduler::sys_waitpid(static_cast<int>(a1), reinterpret_cast<int*>(a2),
+                                                         static_cast<int>(a3));
+    case SYS_NET_INFO:
+        return kernel::net::net_get_info(reinterpret_cast<rucux_net_info*>(a1));
+    case SYS_TOP:
+        return kernel::scheduler::scheduler::sys_top(reinterpret_cast<void*>(a1), static_cast<size_t>(a2));
     case SYS_EXIT:
-        kernel::scheduler::scheduler::exit();
+        kernel::scheduler::scheduler::exit(static_cast<int>(a1));
         return 0;
     case SYS_IPC_CALL:
         return kernel::ipc::sys_ipc_call(static_cast<uint32_t>(a1), reinterpret_cast<kernel::ipc::fast_msg*>(a2));

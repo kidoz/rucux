@@ -135,6 +135,20 @@ TEST(socket_address_respects_short_capacity) {
     ASSERT_EQ(pages[2], 0xA5);
     ASSERT_EQ(*reinterpret_cast<uint32_t*>(pages + 64), 16U);
 }
+TEST(waitpid_status_is_copied_back) {
+    reset();
+    auto handler = +[](long, long pid, long status, long, long, long, long) -> long {
+        *reinterpret_cast<int*>(status) = 7 << 8;
+        return pid;
+    };
+    ASSERT_EQ(kernel::checked_syscall(handler, SYS_WAITPID, 42, BASE, 0, 0, 0, 0), 42);
+    ASSERT_EQ(*reinterpret_cast<int*>(pages), 7 << 8);
+}
+TEST(waitpid_rejects_kernel_status_pointer) {
+    reset();
+    ASSERT_EQ(kernel::checked_syscall(reject_handler, SYS_WAITPID, -1, 0x4000, 0, 0, 0, 0), -14);
+    ASSERT(!invoked);
+}
 int main() {
     return rucux_test::run_all_tests("User access and syscall marshalling");
 }

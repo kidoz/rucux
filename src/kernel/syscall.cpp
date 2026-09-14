@@ -5,6 +5,7 @@
 #include <kernel/time.hpp>
 #include <knew.hpp>
 #include <lib/string.hpp>
+#include <uapi/kernel/net.h>
 #include <uapi/kernel/stat.h>
 #include <uapi/kernel/syscalls.h>
 
@@ -96,6 +97,15 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
         if (number == SYS_STAT) ok = a.marshal(1, sizeof(struct stat), OUTPUT);
         break;
     }
+    case SYS_WAITPID:
+        ok = a.marshal(1, sizeof(int), OUTPUT, true);
+        break;
+    case SYS_NET_INFO:
+        ok = a.marshal(0, sizeof(rucux_net_info), OUTPUT);
+        break;
+    case SYS_TOP:
+        ok = a.array(0, a2, 1, OUTPUT);
+        break;
     case SYS_FSTAT:
         ok = a.marshal(1, sizeof(struct stat), OUTPUT);
         break;
@@ -243,6 +253,7 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
         if (count > a.buffers[1].size) return -5;
         a.buffers[1].output_size = count;
     }
+    if (number == SYS_WAITPID && result == 0) a.buffers[1].output_size = 0;
     if (number == SYS_GETSOCKOPT) {
         size_t count = *reinterpret_cast<uint32_t*>(a.buffers[4].data);
         if (count < a.buffers[3].output_size) a.buffers[3].output_size = count;

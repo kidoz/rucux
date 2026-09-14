@@ -66,3 +66,6 @@
 #define SYS_GUI_SESSION 59
 #define SYS_UNIX_IPC 60
 #define SYS_POWER_CTL 61
+
+#define SYS_WAITPID 62
+#define SYS_NET_INFO 63
