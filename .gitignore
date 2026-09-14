@@ -13,6 +13,14 @@ out/
 vars.fd
 symbols.txt
 
+# Port packaging output (tools/package_port.py --dest)
+packages/
+*.rpkg
+
+# Python tooling caches
+__pycache__/
+*.py[cod]
+
 # IDE
 .idea/
 .vscode/
@@ -33,3 +41,4 @@ symbols.txt
 # OS artifacts
 Thumbs.db
 sysroot/
+
