@@ -93,8 +93,8 @@ class Peer:
                 return
         raise RuntimeError("missing ARP reply")
 
-    def transport(self, protocol: int) -> bytes:
-        deadline = time.monotonic() + 3
+    def transport(self, protocol: int, timeout: float = 3) -> bytes:
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             frame = self.receive(max(0.01, deadline - time.monotonic()))
             if frame[12:14] != b"\x08\x00":
@@ -149,28 +149,59 @@ class Peer:
             return
         raise AssertionError(f"malformed packet produced response: {frame.hex()}")
 
-    def tcp_echo(self, payload: bytes, port: int = 40001, loss: bool = False) -> None:
+    def tcp_echo(
+        self,
+        payload: bytes,
+        port: int = 40001,
+        loss: bool = False,
+        mss: int | None = None,
+        stalled_check: Callable[[], None] | None = None,
+        reorder: bool = False,
+    ) -> None:
         sequence = 10000
         received_sequence = 0
+        window = 0 if stalled_check else 65535
+        peer_mss = min(mss, 1460) if mss else 536
 
-        def send(flags: int, data: bytes = b"") -> None:
+        def send(flags: int, data: bytes = b"", *, sequence_override: int | None = None) -> None:
             nonlocal sequence
+            options = struct.pack("!BBH", 2, 4, mss) if flags & 2 and mss else b""
             segment = (
-                struct.pack("!HHIIBBHHH", port, 19092, sequence, received_sequence, 5 << 4, flags, 65535, 0, 0) + data
+                struct.pack(
+                    "!HHIIBBHHH",
+                    port,
+                    19092,
+                    sequence if sequence_override is None else sequence_override,
+                    received_sequence,
+                    (5 + len(options) // 4) << 4,
+                    flags,
+                    window,
+                    0,
+                    0,
+                )
+                + options
+                + data
             )
             pseudo = PEER_IP + GUEST_IP + struct.pack("!BBH", 0, 6, len(segment))
             segment = segment[:16] + struct.pack("!H", checksum(pseudo + segment)) + segment[18:]
             self.send(0x0800, ip_packet(6, segment))
-            sequence += len(data) + bool(flags & 2) + bool(flags & 1)
+            if sequence_override is None:
+                sequence += len(data) + bool(flags & 2) + bool(flags & 1)
 
         def receive() -> tuple[int, int, int, bytes]:
-            segment = self.transport(6)
+            segment = self.transport(6, timeout=20)
             pseudo = GUEST_IP + PEER_IP + struct.pack("!BBH", 0, 6, len(segment))
             assert checksum(pseudo + segment) == 0, "invalid TCP checksum"
             source, dest, seq, ack, offset, flags, _, _, _ = struct.unpack("!HHIIBBHHH", segment[:20])
             assert (source, dest) == (19092, port) and not flags & 4, "unexpected TCP reset/endpoint"
             assert ack <= sequence
-            return seq, ack, flags, segment[(offset >> 4) * 4 :]
+            header_length = (offset >> 4) * 4
+            assert 20 <= header_length <= len(segment), "invalid TCP output header length"
+            if flags & 2:
+                assert segment[20:header_length] == b"\x02\x04\x05\xb4", "missing local MSS advertisement"
+            data = segment[header_length:]
+            assert len(data) <= peer_mss, "guest exceeded negotiated/default MSS"
+            return seq, ack, flags, data
 
         send(2)
         seq, ack, flags, _ = receive()
@@ -189,12 +220,39 @@ class Peer:
         dropped_data = dropped_ack = False
         for start in range(0, len(payload), 512):
             chunk = payload[start : start + 512]
-            send(24, chunk)
-            deadline = time.monotonic() + 3
+            if reorder:
+                # Deliver the suffix first; it must be dropped and ACKed at the gap.
+                middle = len(chunk) // 2
+                send(24, chunk[middle:], sequence_override=sequence + middle)
+                _, ack, flags, data = receive()
+                assert ack == sequence and not data and flags == 16, "out-of-order data accepted"
+                send(24, chunk[:middle])
+                send(24, chunk[middle:])
+            else:
+                send(24, chunk)
+            if stalled_check and start == 0:
+                began = time.monotonic()
+                probes = 0
+                while probes < 6:
+                    seq, ack, flags, data = receive()
+                    assert not data and flags == 16, "data sent through a closed peer window"
+                    assert seq in (received_sequence, received_sequence - 1)
+                    if seq == received_sequence - 1:
+                        probes += 1
+                        assert ack == sequence, "probe lost receive progress"
+                        if probes in (3, 5):
+                            stalled_check()  # Serial remains usable while netecho waits for POLLOUT.
+                        if probes == 5:
+                            window = 128  # Simulate losing the unsolicited window update.
+                        else:
+                            send(16)  # The sixth probe recovers that lost update.
+                assert time.monotonic() - began >= 10, "persist probes did not back off"
+            deadline = time.monotonic() + 25
             while len(echo) < start + len(chunk):
                 assert time.monotonic() < deadline, "TCP data timeout"
                 seq, _, flags, data = receive()
                 assert seq == received_sequence and not flags & 1
+                assert len(data) <= window, "guest exceeded reopened peer window"
                 if data:
                     if loss and not dropped_data:
                         dropped_data = True
@@ -211,7 +269,7 @@ class Peer:
                     send(16)
         assert echo == payload, "TCP stream mismatch"
         send(17)  # Half-close: server reads EOF and responds with FIN.
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             seq, ack, flags, data = receive()
             assert seq == received_sequence and not data
@@ -248,8 +306,15 @@ def verify(peer: Peer, check: Callable[[str, str], None], wait_for: WaitFor) -> 
             peer.udp(f"cycle-{cycle}".encode())
     peer.tcp_echo(b"loss-recovery-" * 80, loss=True)
     check("echo recoveryalive\r", "\nrecoveryalive\n")
+    peer.tcp_echo(bytes(i % 251 for i in range(8192)), mss=256, reorder=True)
+    peer.tcp_echo(
+        bytes(i % 251 for i in range(65536)),
+        mss=256,
+        stalled_check=lambda: check("echo windowalive\r", "\nwindowalive\n"),
+    )
+    check("echo flowalive\r", "\nflowalive\n")
     peer.udp(b"quit")
-    wait_for("netecho: stopped TCP=33 UDP=12")
+    wait_for("netecho: stopped TCP=35 UDP=12")
     check("echo afterpeer\r", "\nafterpeer\n")
     # Rebind both server ports after teardown and exercise a second process.
     check("start /bin/netecho\r", "netecho: ready")
