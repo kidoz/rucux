@@ -1,0 +1,17 @@
+name: server-qemu-amd64
+board: qemu-amd64
+services:
+  - init
+  - console
+  - kbd
+programs:
+  - sh
+  - ls
+  - cat
+  - echo
+  - terminal_smoke
+  - netcheck
+  - netstat
+ports: []
+images:
+  - uefi-disk
