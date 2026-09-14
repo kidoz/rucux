@@ -38,7 +38,7 @@ int main() {
             while (true) {
                 char data[1024];
                 pollfd input{client, POLLIN, 0};
-                if (poll(&input, 1, 5000) <= 0) {
+                if (poll(&input, 1, 30000) <= 0) {
                     close(client);
                     return 6;
                 }
@@ -52,7 +52,7 @@ int main() {
                 long sent = 0;
                 while (sent < n) {
                     pollfd output{client, POLLOUT, 0};
-                    if (poll(&output, 1, 5000) <= 0) {
+                    if (poll(&output, 1, 30000) <= 0) {
                         close(client);
                         return 8;
                     }
