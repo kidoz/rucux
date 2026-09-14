@@ -12,6 +12,7 @@ programs:
   - terminal_smoke
   - netcheck
   - netstat
+  - netecho
 ports: []
 images:
   - uefi-disk
