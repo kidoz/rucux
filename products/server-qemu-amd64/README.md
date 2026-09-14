@@ -24,6 +24,19 @@ The test creates a 48 MiB FAT image and a writable firmware-variable copy inside
 
 Add `--network-peer` instead of `--isolated-nic` to exercise actual Ethernet traffic. The test passes frames between QEMU and a deterministic Python peer over an inherited Unix socket pair. It uses no host IP socket, TAP interface, bridge, or external network. It verifies ARP, malformed IPv4/UDP/TCP rejection, UDP payloads from 0 to 1472 bytes, 32 TCP connections carrying 2048 bytes each, FIN/ACK teardown, reconnection using the same peer port, and restarting the service. It also verifies delivery of the first UDP packet after a lost ARP request and deliberately loses TCP SYN/ACK, handshake ACK, data, data ACK, FIN, and final ACK packets to exercise retransmission. It negotiates a 256-byte MSS, delivers TCP segments out of order and retransmits the missing suffix, then transfers 64 KiB over a connection held at a zero receive window for six backoff probes. A lost window update is recovered by a probe; subsequent sends respect the reopened 128-byte window. Serial commands execute during traffic and while the reader is stalled. The packet capture is `builddir-server/network-peer.pcap`.
 
+Use `--tcp-interop` instead of either isolated NIC flag to exercise the server with an independent TCP implementation. This mode requires approval for **localhost network access**: it binds temporary TCP/UDP forwarding ports only on `127.0.0.1` and runs QEMU user networking with `restrict=on`. The guest has no external network access. The host socket API talks to libslirp, which terminates TCP and opens a separate TCP connection to rucux. This validates interoperability with libslirp, not a direct wire connection to the host kernel or a Linux machine.
+
+```sh
+python3 -B tools/test_console_smoke.py \
+  --build-dir builddir-server \
+  --bootloader builddir-server/BOOTX64.EFI \
+  --uefi-code /path/to/edk2-x86_64-code.fd \
+  --uefi-vars /path/to/edk2-i386-vars.fd \
+  --tcp-interop
+```
+
+The interoperability test checks 27 TCP sessions, empty and short streams, transfers up to 2 MiB, concurrent reads/writes, an eight-second delayed reader with a small host receive buffer, half-close/EOF, recovery after an established client reset, and service restart. The reset test waits for guest echo data before aborting and requires a guest-side RST in the capture. UDP `quit` requests are control messages whose delivery is confirmed through the serial stopped counters; this mode does not claim host-side UDP reply interoperability. It issues serial commands during traffic. It verifies guest-side TCP checksums and MSS limits from `tcp-interop.pcap`, and reports observed zero-window advertisements. `tcp-interop-console.log` preserves the serial trace. The original `--network-peer` test remains the deterministic loss/reordering/zero-window test and needs no host IP socket.
+
 The real NIC path is E1000 PCI INTx receive interrupts and descriptor DMA. The firmware/PIC route is exercised by the smoke test; the IOAPIC route is build-checked only.
 
 For an interactive session after generating the image:
@@ -55,7 +68,7 @@ exit
 
 `run` accepts an absolute executable path and waits for its exit status. `start` launches a background program and returns its PID; the shell reaps finished children between commands. Neither command supports arguments or job control. Background programs inherit the console, so only programs that do not read terminal input should be started this way. `terminal_smoke` deliberately exits with status 7 after its checks. The serial shell returns after logout or Ctrl-D. Console status reflects init registration; it is not an independent service health probe.
 
-`netecho` is a diagnostic echo service on UDP port 19091 and TCP port 19092. TCP connections are served sequentially; a peer sends data, half-closes its stream, reads the echo, then closes. A UDP datagram containing `quit` shuts down the service. It also exits after 30 seconds without service activity, readable client data, or client write readiness. It has no authentication and is intended only for the isolated test.
+`netecho` is a diagnostic echo service on UDP port 19091 and TCP port 19092. TCP connections are served sequentially; a peer sends data, half-closes its stream, reads the echo, then closes. A UDP datagram containing `quit` shuts down the service. It exits after 30 seconds without service activity. A client read/write failure or 30-second client readiness timeout closes that client, reports the failure, and returns to accepting connections; it does not terminate the service. The stopped TCP counter includes failed accepted clients. It has no authentication and is intended only for the isolated test.
 
 Hosted regression checks:
 
@@ -86,4 +99,4 @@ A zero peer window suspends loss retries. Empty ACK probes use the old sequence 
 
 ARP queues at most four packets for each of eight unresolved neighbors, sends up to three requests one second apart, and discards unresolved queues after three seconds. Cache entries are scoped to the interface; dynamically learned entries expire after 60 seconds. Queue/ring exhaustion drops packets. TCP can recover a dropped frame within its retry budget; UDP remains best effort. ICMP, fragmentation/reassembly, DHCP and DNS are unavailable. Testing covers a 1500-byte-MTU Ethernet link with deterministic packet loss; it does not establish general Internet TCP compatibility. Concurrent close/read on shared sockets and socket operations across multiple CPUs remain unvalidated.
 
-The next milestones are interoperability with an independent TCP stack, persistent configuration/logging, and authenticated remote administration. Multi-CPU server operation and physical hardware remain outside this product's validated scope.
+The localhost interoperability mode exercises libslirp independently of the deterministic packet peer. Direct Linux/BSD guest-to-guest interoperability and broader TCP behavior remain unvalidated. The next milestones are persistent configuration/logging and authenticated remote administration. Multi-CPU server operation and physical hardware remain outside this product's validated scope.
