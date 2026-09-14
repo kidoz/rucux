@@ -2,6 +2,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <uapi/kernel/initd.h>
 #include <uapi/kernel/syscalls.h>
 #include <uapi/kernel/top.h>
@@ -126,7 +128,14 @@ int main(int argc, char** argv) {
         fflush(stdout);
 
         long n = syscall(SYS_READ, 0, (long)buf, sizeof(buf) - 1);
-        if (n <= 0) continue;
+        if (n == 0) {
+            printf("logout\n");
+            return 0;
+        }
+        if (n < 0) {
+            printf("sh: terminal read failed\n");
+            return 1;
+        }
 
         buf[n] = '\0';
 
@@ -140,13 +149,39 @@ int main(int argc, char** argv) {
 
         if (buf[0] == '\0') continue;
 
-        if (strncmp(buf, "help", 4) == 0) {
+        if (strcmp(buf, "exit") == 0) {
+            printf("logout\n");
+            return 0;
+        } else if (strcmp(buf, "uptime") == 0) {
+            struct timespec now{};
+            if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+                printf("uptime: %ld.%03ld seconds\n", now.tv_sec, now.tv_nsec / 1000000);
+            else
+                printf("uptime: clock unavailable\n");
+        } else if (strncmp(buf, "run ", 4) == 0) {
+            const char* path = buf + 4;
+            while (*path == ' ')
+                ++path;
+            long child = syscall(SYS_SPAWN, reinterpret_cast<long>(path));
+            if (child < 0)
+                printf("run: cannot start %s\n", path);
+            else {
+                int status = 0;
+                if (waitpid(child, &status, 0) < 0)
+                    printf("run: wait failed\n");
+                else
+                    printf("run: exit status %d\n", WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status));
+            }
+        } else if (strncmp(buf, "help", 4) == 0) {
             printf("Built-in commands:\n");
             printf("  help     - show this message\n");
             printf("  ls <dir> - list directory contents\n");
             printf("  cat <f>  - print file contents\n");
             printf("  echo <m> - print message\n");
             printf("  top      - show processes\n");
+            printf("  uptime   - show elapsed boot time\n");
+            printf("  run <absolute-path> - run a program and wait (no arguments yet)\n");
+            printf("  exit     - close the shell\n");
             printf("  service <start|stop|status> <name>\n");
         } else if (strncmp(buf, "ls", 2) == 0) {
             const char* path = buf + 2;
