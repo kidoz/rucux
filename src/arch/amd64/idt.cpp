@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 #include <arch/amd64/apic.hpp>
+#include <arch/amd64/e1000.hpp>
 #include <arch/amd64/idt.hpp>
 #include <arch/amd64/io.hpp>
 #include <arch/amd64/pic.hpp>
 #include <arch/amd64/uart.hpp>
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/memory/vmm.hpp>
+#include <kernel/net/arp.hpp>
+#include <kernel/net/tcp.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/time.hpp>
@@ -38,7 +41,14 @@ extern "C" void irq0_entry();
 extern "C" void irq0_handler() noexcept {
     do_eoi(0);
     kernel::cpu::this_cpu()->ticks++;
-    if (kernel::cpu::this_cpu()->cpu_id == 0) kernel::time_manager::tick();
+    if (kernel::cpu::this_cpu()->cpu_id == 0) {
+        kernel::time_manager::tick();
+        if (kernel::cpu::this_cpu()->ticks % 100 == 0) {
+            auto now = kernel::time_manager::get_ticks();
+            kernel::net::arp_tick(now);
+            kernel::net::tcp_tick(now);
+        }
+    }
     kernel::scheduler::scheduler::schedule();
 }
 
@@ -55,6 +65,14 @@ extern "C" void irq4_handler() noexcept {
     for (unsigned i = 0; i < 256 && (inb(0x3FD) & 1); ++i)
         kernel::vfs::tty::feed_input(static_cast<char>(inb(0x3F8)));
     do_eoi(4);
+    kernel::scheduler::scheduler::schedule();
+}
+
+static uint8_t g_nic_irq;
+extern "C" void nic_irq_entry();
+extern "C" void nic_irq_handler() noexcept {
+    e1000::irq_handler();
+    do_eoi(g_nic_irq);
     kernel::scheduler::scheduler::schedule();
 }
 
@@ -157,6 +175,22 @@ static void set_descriptor(uint8_t vector, void* handler, uint8_t flags) noexcep
     g_idt[vector].offset_mid = (addr >> 16) & 0xFFFF;
     g_idt[vector].offset_high = (addr >> 32) & 0xFFFFFFFF;
     g_idt[vector].reserved = 0;
+}
+
+void idt_register_nic_irq(uint8_t irq) noexcept {
+    g_nic_irq = irq;
+    set_descriptor(0x20 + irq, reinterpret_cast<void*>(nic_irq_entry), 0x8E);
+    if (g_apic_mode) {
+        ioapic::route_irq(irq, 0x20 + irq, lapic::id());
+        // PCI INTx is active-low, level-triggered.
+        auto reg = static_cast<uint8_t>(0x10 + irq * 2);
+        ioapic::write(reg, ioapic::read(reg) | (1U << 13) | (1U << 15));
+    } else {
+        auto port = static_cast<uint16_t>(0x4D0 + irq / 8);
+        outb(port, inb(port) | (1U << (irq % 8))); // ELCR: PCI level trigger.
+        if (irq >= 8) pic::unmask(2);
+        pic::unmask(irq);
+    }
 }
 
 void idt_init() noexcept {

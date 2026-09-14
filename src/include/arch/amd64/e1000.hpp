@@ -16,8 +16,8 @@ public:
     static uint32_t read_reg(uint16_t reg) noexcept;
 
 private:
-    static void tx_init() noexcept;
-    static void rx_init() noexcept;
+    static bool tx_init() noexcept;
+    static bool rx_init() noexcept;
     static void link_up() noexcept;
     static void handle_rx() noexcept;
     static void transmit_packet(void* data, uint16_t len) noexcept;

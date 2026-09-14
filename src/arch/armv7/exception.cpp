@@ -3,6 +3,8 @@
 #include <arch/armv7/timer.hpp>
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/memory/vmm.hpp>
+#include <kernel/net/arp.hpp>
+#include <kernel/net/tcp.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/time.hpp>
@@ -74,7 +76,14 @@ extern "C" void irq_handler_arm() noexcept {
 
     if (irq_num == TIMER_VIRQ) {
         kernel::cpu::this_cpu()->ticks++;
-        if (kernel::cpu::this_cpu()->cpu_id == 0) kernel::time_manager::tick();
+        if (kernel::cpu::this_cpu()->cpu_id == 0) {
+            kernel::time_manager::tick();
+            auto ticks = kernel::time_manager::get_ticks();
+            if (ticks % 100 == 0) {
+                kernel::net::arp_tick(ticks);
+                kernel::net::tcp_tick(ticks);
+            }
+        }
         generic_timer::set_timer(generic_timer::get_frequency() / 1000);
         kernel::scheduler::scheduler::schedule();
     } else {

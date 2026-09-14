@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <arch/amd64/e1000.hpp>
+#include <arch/amd64/idt.hpp>
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/net/netbuf.hpp>
@@ -77,9 +78,11 @@ constexpr int NUM_RX_DESC = 32;
 constexpr int NUM_TX_DESC = 32;
 
 static uintptr_t g_mmio_base = 0;
-static rx_desc* g_rx_descs = nullptr;
-static tx_desc* g_tx_descs = nullptr;
-static kernel::net::netbuf* g_rx_bufs[NUM_RX_DESC] = {};
+static volatile rx_desc* g_rx_descs = nullptr;
+static volatile tx_desc* g_tx_descs = nullptr;
+static uint8_t* g_rx_bufs[NUM_RX_DESC] = {};
+static uint8_t* g_tx_bufs[NUM_TX_DESC] = {};
+static kernel::irq_spinlock g_tx_lock;
 static int g_rx_cur = 0;
 static int g_tx_cur = 0;
 static kernel::net::netif g_e1000_iface;
@@ -93,85 +96,94 @@ uint32_t e1000::read_reg(uint16_t r) noexcept {
 }
 
 // Read MAC from EEPROM
-static void read_mac(uint8_t mac[6]) noexcept {
+static bool read_mac(uint8_t mac[6]) noexcept {
     for (int i = 0; i < 3; ++i) {
         e1000::write_reg(reg::EERD, (1) | (static_cast<uint32_t>(i) << 8));
         uint32_t val;
-        while (!((val = e1000::read_reg(reg::EERD)) & (1 << 4)))
-            ;
+        unsigned tries = 100000;
+        do {
+            val = e1000::read_reg(reg::EERD);
+        } while (!(val & (1 << 4)) && --tries);
+        if (!tries) return false;
         mac[i * 2] = val >> 16;
         mac[i * 2 + 1] = val >> 24;
     }
+    return true;
 }
 
-void e1000::rx_init() noexcept {
-    // Allocate RX descriptors (page-aligned)
+bool e1000::rx_init() noexcept {
     auto* page = reinterpret_cast<uint8_t*>(kernel::memory::pmm::alloc_page());
+    if (!page) return false;
     lib::memset(page, 0, 4096);
-    g_rx_descs = reinterpret_cast<rx_desc*>(page);
-
+    g_rx_descs = reinterpret_cast<volatile rx_desc*>(page);
     for (int i = 0; i < NUM_RX_DESC; ++i) {
-        g_rx_bufs[i] = kernel::net::netbuf::alloc();
-        g_rx_descs[i].addr = reinterpret_cast<uint64_t>(g_rx_bufs[i]->data());
-        g_rx_descs[i].status = 0;
+        // Dedicated physical pages satisfy the NIC's 2048-byte DMA contract.
+        g_rx_bufs[i] = reinterpret_cast<uint8_t*>(kernel::memory::pmm::alloc_page());
+        if (!g_rx_bufs[i]) return false;
+        g_rx_descs[i].addr = reinterpret_cast<uintptr_t>(g_rx_bufs[i]);
     }
-
-    write_reg(reg::RDBAL, reinterpret_cast<uintptr_t>(g_rx_descs) & 0xFFFFFFFF);
-    write_reg(reg::RDBAH, 0);
+    write_reg(reg::RDBAL, reinterpret_cast<uintptr_t>(page));
+    write_reg(reg::RDBAH, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(page)) >> 32);
     write_reg(reg::RDLEN, NUM_RX_DESC * sizeof(rx_desc));
     write_reg(reg::RDH, 0);
     write_reg(reg::RDT, NUM_RX_DESC - 1);
-
-    write_reg(reg::RCTL, RCTL_EN | RCTL_BAM | RCTL_BSIZE | RCTL_SECRC);
+    return true;
 }
 
-void e1000::tx_init() noexcept {
+bool e1000::tx_init() noexcept {
     auto* page = reinterpret_cast<uint8_t*>(kernel::memory::pmm::alloc_page());
+    if (!page) return false;
     lib::memset(page, 0, 4096);
-    g_tx_descs = reinterpret_cast<tx_desc*>(page);
-
-    write_reg(reg::TDBAL, reinterpret_cast<uintptr_t>(g_tx_descs) & 0xFFFFFFFF);
-    write_reg(reg::TDBAH, 0);
+    g_tx_descs = reinterpret_cast<volatile tx_desc*>(page);
+    for (int i = 0; i < NUM_TX_DESC; ++i) {
+        g_tx_bufs[i] = reinterpret_cast<uint8_t*>(kernel::memory::pmm::alloc_page());
+        if (!g_tx_bufs[i]) return false;
+        g_tx_descs[i].addr = reinterpret_cast<uintptr_t>(g_tx_bufs[i]);
+        g_tx_descs[i].status = TX_DESC_STATUS_DD;
+    }
+    write_reg(reg::TDBAL, reinterpret_cast<uintptr_t>(page));
+    write_reg(reg::TDBAH, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(page)) >> 32);
     write_reg(reg::TDLEN, NUM_TX_DESC * sizeof(tx_desc));
     write_reg(reg::TDH, 0);
     write_reg(reg::TDT, 0);
-
     write_reg(reg::TCTL, TCTL_EN | TCTL_PSP | (0x10 << 4) | (0x40 << 12));
+    write_reg(0x0410, 10 | (8 << 10) | (6 << 20)); // Inter-packet gap for copper.
+    return true;
 }
 
-static void e1000_transmit(kernel::net::netif* iface, kernel::net::netbuf* buf) noexcept {
-    (void)iface;
+static void e1000_transmit(kernel::net::netif*, kernel::net::netbuf* buf) noexcept {
+    kernel::irq_lock_guard guard(g_tx_lock);
     int idx = g_tx_cur;
-
-    g_tx_descs[idx].addr = reinterpret_cast<uint64_t>(buf->data());
-    g_tx_descs[idx].length = static_cast<uint16_t>(buf->len());
-    g_tx_descs[idx].cmd = TX_CMD_EOP | TX_CMD_IFCS | TX_CMD_RS;
-    g_tx_descs[idx].status = 0;
-
-    g_tx_cur = (g_tx_cur + 1) % NUM_TX_DESC;
-    e1000::write_reg(reg::TDT, g_tx_cur);
-
-    // Wait for TX completion (simple synchronous for now)
-    while (!(g_tx_descs[idx].status & TX_DESC_STATUS_DD))
-        ;
-
+    if (buf->len() <= 1514 && (g_tx_descs[idx].status & TX_DESC_STATUS_DD)) {
+        lib::memcpy(g_tx_bufs[idx], buf->data(), buf->len());
+        g_tx_descs[idx].length = static_cast<uint16_t>(buf->len());
+        g_tx_descs[idx].cmd = TX_CMD_EOP | TX_CMD_IFCS | TX_CMD_RS;
+        g_tx_descs[idx].status = 0;
+        // x86 coherent DMA: publish data and descriptor before the MMIO doorbell.
+        asm volatile("sfence" ::: "memory");
+        g_tx_cur = (g_tx_cur + 1) % NUM_TX_DESC;
+        e1000::write_reg(reg::TDT, g_tx_cur);
+    }
+    // Dedicated TX pages remain owned by the driver until descriptor completion.
+    // A full ring drops the packet without spinning or freeing in-flight DMA.
     kernel::net::netbuf::free(buf);
 }
 
 void e1000::handle_rx() noexcept {
-    while (g_rx_descs[g_rx_cur].status & RX_DESC_STATUS_DD) {
-        uint16_t len = g_rx_descs[g_rx_cur].length;
-        auto* buf = g_rx_bufs[g_rx_cur];
-        buf->set_len(len);
-
-        // Deliver to network stack
-        kernel::net::netif_input(&g_e1000_iface, buf);
-
-        // Allocate new buffer for this descriptor
-        g_rx_bufs[g_rx_cur] = kernel::net::netbuf::alloc();
-        g_rx_descs[g_rx_cur].addr = reinterpret_cast<uint64_t>(g_rx_bufs[g_rx_cur]->data());
-        g_rx_descs[g_rx_cur].status = 0;
-
+    for (int budget = 0; budget < NUM_RX_DESC; ++budget) {
+        auto& descriptor = g_rx_descs[g_rx_cur];
+        if (!(descriptor.status & RX_DESC_STATUS_DD)) break;
+        asm volatile("lfence" ::: "memory"); // Consume DMA completion before payload.
+        uint16_t len = descriptor.length;
+        if ((descriptor.status & 2) && !descriptor.errors && len >= 14 && len <= 1514) {
+            auto* buf = kernel::net::netbuf::alloc();
+            if (buf) {
+                lib::memcpy(buf->put(len), g_rx_bufs[g_rx_cur], len);
+                kernel::net::netif_input(&g_e1000_iface, buf);
+            }
+        }
+        descriptor.status = 0;
+        asm volatile("sfence" ::: "memory");
         int old_cur = g_rx_cur;
         g_rx_cur = (g_rx_cur + 1) % NUM_RX_DESC;
         write_reg(reg::RDT, old_cur);
@@ -196,12 +208,18 @@ bool e1000::init() noexcept {
         return false;
     }
 
+    if ((dev.bar0 & 7) || !dev.bar0 || dev.interrupt_line >= 16 || dev.interrupt_line < 3 || dev.interrupt_line == 4)
+        return false;
+    auto command = kernel::pci::read_config_32(dev.bus, dev.device, dev.function, 4) & 0xFFFF;
+    kernel::pci::write_config_32(dev.bus, dev.device, dev.function, 4, (command | 6) & ~(1U << 10));
+
     // Map MMIO region
     g_mmio_base = dev.bar0 & ~0xFUL;
     size_t mmio_size = 128 * 1024; // 128KB MMIO region
     for (size_t i = 0; i < mmio_size; i += 4096) {
         kernel::memory::vmm::map(g_mmio_base + i, g_mmio_base + i,
-                                 kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE);
+                                 kernel::memory::page_flags::PRESENT | kernel::memory::page_flags::WRITABLE |
+                                     static_cast<kernel::memory::page_flags>(0x18)); // x86 PCD/PWT device mapping
     }
 
     // Reset
@@ -211,7 +229,8 @@ bool e1000::init() noexcept {
     write_reg(reg::CTRL, read_reg(reg::CTRL) & ~(1 << 26));
 
     // Read MAC address
-    read_mac(g_e1000_iface.mac.bytes);
+    write_reg(reg::IMC, 0xFFFFFFFF);
+    if (!read_mac(g_e1000_iface.mac.bytes)) return false;
     kernel::print("E1000: MAC {02x}:{02x}:{02x}:{02x}:{02x}:{02x}\n", g_e1000_iface.mac.bytes[0],
                   g_e1000_iface.mac.bytes[1], g_e1000_iface.mac.bytes[2], g_e1000_iface.mac.bytes[3],
                   g_e1000_iface.mac.bytes[4], g_e1000_iface.mac.bytes[5]);
@@ -220,11 +239,16 @@ bool e1000::init() noexcept {
     for (int i = 0; i < 128; i++)
         write_reg(reg::MTA + i * 4, 0);
 
-    // Enable interrupts (RX + link)
-    write_reg(reg::IMS, 0x84);
-
-    rx_init();
-    tx_init();
+    if (!rx_init() || !tx_init()) {
+        // Rings have not been enabled; release all partial boot allocations.
+        for (auto* page : g_rx_bufs)
+            if (page) kernel::memory::pmm::free_page(page);
+        for (auto* page : g_tx_bufs)
+            if (page) kernel::memory::pmm::free_page(page);
+        if (g_rx_descs) kernel::memory::pmm::free_page(const_cast<rx_desc*>(g_rx_descs));
+        if (g_tx_descs) kernel::memory::pmm::free_page(const_cast<tx_desc*>(g_tx_descs));
+        return false;
+    }
 
     // Register as network interface
     g_e1000_iface.name = "eth0";
@@ -236,7 +260,16 @@ bool e1000::init() noexcept {
     g_e1000_iface.ip.gateway = 0x0100000A; // 10.0.0.1
     kernel::net::netif_register(&g_e1000_iface);
 
-    kernel::print("E1000: initialized on PCI {}:{}\n", dev.bus, dev.device);
+    // Program the receive address and enable reception only after IRQ setup.
+    auto* mac = g_e1000_iface.mac.bytes;
+    write_reg(reg::RAL0, mac[0] | (mac[1] << 8) | (mac[2] << 16) | (static_cast<uint32_t>(mac[3]) << 24));
+    write_reg(reg::RAH0, mac[4] | (mac[5] << 8) | (1U << 31));
+    idt_register_nic_irq(dev.interrupt_line);
+    write_reg(reg::CTRL, read_reg(reg::CTRL) | (1 << 6)); // Set Link Up
+    write_reg(reg::RCTL, RCTL_EN | RCTL_BAM | RCTL_BSIZE | RCTL_SECRC);
+    read_reg(reg::ICR);
+    write_reg(reg::IMS, 0x84);
+    kernel::print("E1000: initialized on PCI {}:{} IRQ={}\n", dev.bus, dev.device, dev.interrupt_line);
     return true;
 }
 

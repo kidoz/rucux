@@ -19,6 +19,7 @@ struct idt_pointer {
     uint64_t offset;
 } __attribute__((packed));
 
+void idt_register_nic_irq(uint8_t irq) noexcept;
 void idt_init() noexcept;
 void idt_use_lapic_timer() noexcept;
 void idt_set_apic_mode(bool enabled) noexcept;
