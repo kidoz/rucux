@@ -124,6 +124,8 @@ int main(int argc, char** argv) {
 
     char buf[256];
     while (true) {
+        while (waitpid(-1, nullptr, WNOHANG) > 0) {
+        }
         printf("$ ");
         fflush(stdout);
 
@@ -158,6 +160,15 @@ int main(int argc, char** argv) {
                 printf("uptime: %ld.%03ld seconds\n", now.tv_sec, now.tv_nsec / 1000000);
             else
                 printf("uptime: clock unavailable\n");
+        } else if (strncmp(buf, "start ", 6) == 0) {
+            const char* path = buf + 6;
+            while (*path == ' ')
+                ++path;
+            long child = *path == '/' ? syscall(SYS_SPAWN, reinterpret_cast<long>(path)) : -1;
+            if (child < 0)
+                printf("start: cannot start %s\n", path);
+            else
+                printf("start: pid %ld\n", child);
         } else if (strncmp(buf, "run ", 4) == 0) {
             const char* path = buf + 4;
             while (*path == ' ')
@@ -181,6 +192,7 @@ int main(int argc, char** argv) {
             printf("  top      - show processes\n");
             printf("  uptime   - show elapsed boot time\n");
             printf("  run <absolute-path> - run a program and wait (no arguments yet)\n");
+            printf("  start <absolute-path> - start a background program (no arguments)\n");
             printf("  exit     - close the shell\n");
             printf("  service <start|stop|status> <name>\n");
         } else if (strncmp(buf, "ls", 2) == 0) {
