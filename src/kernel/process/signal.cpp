@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <kernel/process/credentials.hpp>
 #include <kernel/process/signal.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <lib/string.hpp>
@@ -61,6 +62,8 @@ int signal_manager::sys_kill(int pid, int sig) noexcept {
         target = scheduler::scheduler::get_thread_by_tid(static_cast<uint32_t>(pid));
 
     if (!target || target->state == scheduler::thread_state::TERMINATED) return -3; // ESRCH
+
+    if (!may_signal(t->creds, t->tid, target->creds, target->tid)) return -1;
 
     if (sig == 0) return 0; // Signal 0 = check permission only
 
