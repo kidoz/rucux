@@ -31,16 +31,26 @@ boot to check their exact length and contents independently.
    and append, then check the new size through another old handle. Check zero
    shrinking and later growth through those handles too, without an intervening
    read/write/fsync on the handle whose metadata is being queried.
+   Reset another preallocated file and append three records through two
+   O_APPEND handles, including after an explicit seek to zero. Verify writable
+   modes survive F_SETFL, read-only modes cannot be upgraded, and RAMFS can
+   toggle append behavior without losing its descriptor offset.
 2. Remount and verify both files, then truncate the rewritten file to zero and
-   fsync without a later write.
+   fsync without a later write. Verify the append records and add a boot-2 record
+   through a newly opened O_APPEND handle.
 3. Remount, verify zero EOF, and rewrite 700 bytes using the retained FAT chain.
+   Verify the earlier append records and append a boot-3 record. The host checks
+   exact append-file contents after every boot.
 
 Successful FAT32 shrinking persists directory EOF and keeps all allocated
 clusters. Growth via `ftruncate` returns `EOPNOTSUPP`; writes can reuse the
 retained capacity. Fsync reports device flush failures. RAMFS remains volatile.
 Stat/fstat and SEEK_END refresh FAT32 EOF; failed refreshes propagate through
-libc as -1/errno. The test uses sequential operations across separate opens;
-it does not establish atomic append or concurrent multi-CPU storage behavior.
+libc as -1/errno. Append positioning and writing share one filesystem reservation;
+partial writes remain possible within fixed allocated capacity. This QEMU test
+uses sequential operations across separate opens. Hosted tests exercise reentrant
+FAT32 contention and concurrent RAMFS appends; target multi-CPU storage and
+concurrent metadata queries remain unvalidated.
 This is clean shutdown/remount evidence under atomic sector and honest flush
 assumptions; it does not model torn sectors or a physical power cut. See
 [hosted crash tests](../../tests/README.md) for the interruption model.

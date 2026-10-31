@@ -12,6 +12,12 @@ namespace {
 constexpr const char* SHRINK = "/fat32/shrink.bin";
 constexpr const char* REWRITE = "/fat32/rewrite.bin";
 constexpr const char* STAGE = "/fat32/stage.bin";
+constexpr const char* APPEND = "/fat32/append.bin";
+constexpr const char* APPEND_FIRST = "first\nsecond\nthird\n";
+constexpr const char* APPEND_SECOND = "first\nsecond\nthird\nboot2\n";
+constexpr const char* APPEND_THIRD = "first\nsecond\nthird\nboot2\nboot3\n";
+constexpr int READ_WRITE_APPEND = static_cast<int>(static_cast<unsigned>(O_RDWR) | static_cast<unsigned>(O_APPEND));
+constexpr int WRITE_APPEND = static_cast<int>(static_cast<unsigned>(O_WRONLY) | static_cast<unsigned>(O_APPEND));
 constexpr size_t PAYLOAD_SIZE = 700;
 uint8_t payload[PAYLOAD_SIZE];
 
@@ -44,6 +50,11 @@ bool verify_ramfs() {
     for (unsigned i = 0; ok && i < 5; ++i)
         ok = bytes[i] == 0;
     ok = ok && bytes[5] == 'x';
+    ok = ok && fcntl(fd, F_SETFL, O_APPEND) == 0 && fcntl(fd, F_GETFL) == READ_WRITE_APPEND;
+    ok = ok && lseek(fd, 0, SEEK_SET) == 0 && write(fd, "A", 1) == 1 && lseek(fd, 0, SEEK_CUR) == 7;
+    ok = ok && fcntl(fd, F_SETFL, 0) == 0 && lseek(fd, 0, SEEK_SET) == 0 && write(fd, "B", 1) == 1;
+    ok = ok && lseek(fd, 0, SEEK_SET) == 0 && read(fd, bytes, sizeof(bytes)) == 7;
+    ok = ok && bytes[0] == 'B' && bytes[5] == 'x' && bytes[6] == 'A';
     close(fd);
     return ok;
 }
@@ -62,6 +73,9 @@ bool check_errors() {
     if (fd < 0) return false;
     errno = 0;
     bool ok = ftruncate(fd, 0) == -1 && errno == EINVAL;
+    ok = ok && fcntl(fd, F_SETFL, READ_WRITE_APPEND) == 0 && fcntl(fd, F_GETFL) == O_APPEND;
+    errno = 0;
+    ok = ok && write(fd, "x", 1) == -1 && errno == EBADF;
     close(fd);
     fd = open(SHRINK, O_RDWR);
     if (fd < 0) return false;
@@ -69,6 +83,18 @@ bool check_errors() {
     ok = ok && ftruncate(fd, -1) == -1 && errno == EINVAL;
     errno = 0;
     ok = ok && ftruncate(fd, 2048) == -1 && errno == EOPNOTSUPP;
+    close(fd);
+    return ok;
+}
+
+bool verify_append(const char* expected) {
+    int fd = open(APPEND, O_RDONLY);
+    if (fd < 0) return false;
+    const size_t size = strlen(expected);
+    char bytes[64];
+    struct stat info{};
+    bool ok = size < sizeof(bytes) && fstat(fd, &info) == 0 && info.st_size == static_cast<int64_t>(size);
+    ok = ok && read(fd, bytes, sizeof(bytes)) == static_cast<ssize_t>(size) && memcmp(bytes, expected, size) == 0;
     close(fd);
     return ok;
 }
@@ -121,12 +147,29 @@ int main() {
         close(fd);
         REQUIRE(verify_file(REWRITE, PAYLOAD_SIZE, false));
         REQUIRE(check_errors());
+        fd = open(APPEND, READ_WRITE_APPEND);
+        const int other = open(APPEND, READ_WRITE_APPEND);
+        REQUIRE(fd >= 0 && other >= 0 && ftruncate(fd, 0) == 0);
+        REQUIRE(write(fd, "first\n", 6) == 6);
+        REQUIRE(fcntl(other, F_SETFL, O_APPEND) == 0 && fcntl(other, F_GETFL) == READ_WRITE_APPEND);
+        REQUIRE(write(other, "second\n", 7) == 7);
+        REQUIRE(lseek(fd, 0, SEEK_SET) == 0 && write(fd, "third\n", 6) == 6);
+        REQUIRE(lseek(fd, 0, SEEK_CUR) == 19 && lseek(other, 0, SEEK_CUR) == 13);
+        REQUIRE(fsync(fd) == 0);
+        close(fd);
+        close(other);
+        REQUIRE(verify_append(APPEND_FIRST));
     } else if (stage == '1') {
         REQUIRE(verify_file(SHRINK, 37, true));
         REQUIRE(verify_file(REWRITE, PAYLOAD_SIZE, false));
         int fd = open(REWRITE, O_RDWR);
         REQUIRE(fd >= 0 && ftruncate(fd, 0) == 0 && fsync(fd) == 0);
         close(fd); // A second remount must see EOF zero without a later write.
+        REQUIRE(verify_append(APPEND_FIRST));
+        fd = open(APPEND, WRITE_APPEND);
+        REQUIRE(fd >= 0 && write(fd, "boot2\n", 6) == 6 && fsync(fd) == 0);
+        close(fd);
+        REQUIRE(verify_append(APPEND_SECOND));
     } else {
         REQUIRE(verify_file(SHRINK, 37, true));
         REQUIRE(verify_file(REWRITE, 0, false));
@@ -135,6 +178,11 @@ int main() {
         REQUIRE(write(fd, payload, PAYLOAD_SIZE) == static_cast<ssize_t>(PAYLOAD_SIZE) && fsync(fd) == 0);
         close(fd); // Rewriting after a zero-length remount requires retained capacity.
         REQUIRE(verify_file(REWRITE, PAYLOAD_SIZE, false));
+        REQUIRE(verify_append(APPEND_SECOND));
+        fd = open(APPEND, WRITE_APPEND);
+        REQUIRE(fd >= 0 && write(fd, "boot3\n", 6) == 6 && fsync(fd) == 0);
+        close(fd);
+        REQUIRE(verify_append(APPEND_THIRD));
     }
     ++stage;
     REQUIRE(lseek(stage_fd, 0, SEEK_SET) == 0 && write(stage_fd, &stage, 1) == 1 && fsync(stage_fd) == 0);

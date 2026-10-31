@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 #include "test_harness.hpp"
+#include <array>
+#include <atomic>
 #include <climits>
 #include <cstring>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/time.hpp>
 #include <kernel/vfs/ramfs.hpp>
 #include <kernel/vfs/vfs.hpp>
+#include <thread>
 #include <uapi/kernel/stat.h>
 
 namespace {
@@ -181,7 +184,7 @@ TEST(ramfs_does_not_expose_discarded_data_when_rewriting_after_zero_truncate) {
     ram_file("truncate-gap");
     ASSERT_EQ(vfs_manager::sys_ftruncate(1, 0), 0);
     descriptors[1].offset = 5;
-    ASSERT_EQ(vfs_manager::sys_write(1, "x", 1), 1);
+    ASSERT_EQ(vfs_manager::sys_write(1, "x", 1), 1L);
     descriptors[1].offset = 0;
     char bytes[8];
     ASSERT_EQ(vfs_manager::sys_read(1, bytes, sizeof(bytes)), 6);
@@ -290,6 +293,152 @@ TEST(vfs_seeks_preserve_width_and_reject_overflow_without_moving_the_offset) {
     ASSERT_EQ(vfs_manager::sys_lseek(1, LONG_MAX, 2), -75L);
     ASSERT_EQ(descriptors[1].offset, static_cast<size_t>(LONG_MAX));
 }
+TEST(vfs_writes_require_writable_descriptors_and_nonempty_buffers) {
+    reset();
+    static unsigned writes;
+    writes = 0;
+    ops.write = [](vfs_node*, size_t, size_t size, const void*) {
+        ++writes;
+        return size;
+    };
+    for (int mode : {0, 3}) {
+        descriptors[1].flags = mode;
+        ASSERT_EQ(vfs_manager::sys_write(1, "x", 1), -9L);
+        ASSERT_EQ(vfs_manager::sys_write(1, nullptr, 0), -9L);
+    }
+    for (int mode : {1, 2}) {
+        descriptors[1].flags = mode;
+        ASSERT_EQ(vfs_manager::sys_write(1, "x", 1), 1L);
+    }
+    ASSERT_EQ(writes, 2U);
+    ASSERT_EQ(vfs_manager::sys_write(-1, "x", 1), -9L);
+    ASSERT_EQ(vfs_manager::sys_write(1, nullptr, 1), -14L);
+    ASSERT_EQ(vfs_manager::sys_write(1, nullptr, 0), 0L);
+    ASSERT_EQ(writes, 2U);
+    ASSERT_EQ(descriptors[1].offset, 101UL);
+}
+
+TEST(vfs_append_dispatches_once_and_uses_the_acknowledged_end_offset) {
+    reset();
+    descriptors[1].flags |= 0x0400;
+    ops.append = [](vfs_node*, size_t, const void*, size_t& end) -> long {
+        end = 131;
+        return 3;
+    };
+    ASSERT_EQ(vfs_manager::sys_write(1, "hello", 5), 3L);
+    ASSERT_EQ(descriptors[1].offset, 131UL);
+    // Failed callbacks must not move the FD even if their output parameter changes.
+    ops.append = [](vfs_node*, size_t, const void*, size_t& end) -> long {
+        end = 999;
+        return -16;
+    };
+    ASSERT_EQ(vfs_manager::sys_write(1, "x", 1), -16L);
+    ASSERT_EQ(descriptors[1].offset, 131UL);
+    ops.append = nullptr;
+    ASSERT_EQ(vfs_manager::sys_write(1, "x", 1), -95L);
+    ASSERT_EQ(descriptors[1].offset, 131UL);
+}
+
+TEST(vfs_setfl_changes_status_flags_without_upgrading_access) {
+    reset();
+    descriptors[1].flags = 0;
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 4, 2 | 0x0400 | 0x0800), 0);
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 3, 0), 0x0400 | 0x0800);
+    ASSERT_EQ(vfs_manager::sys_write(1, "x", 1), -9L);
+    ASSERT_EQ(vfs_manager::sys_ftruncate(1, 0), -22);
+    descriptors[1].flags = 1 | 0x0040 | 0x0200;
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 4, 0x0400), 0);
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 3, 0), 1 | 0x0400);
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 4, 0), 0);
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 3, 0), 1);
+    ASSERT_EQ(vfs_manager::sys_fcntl(-1, 3, 0), -9);
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 999, 0), -22);
+}
+
+TEST(vfs_kernel_created_stream_descriptors_remain_writable) {
+    reset();
+    node.type = file_type::SOCKET;
+    ops.write = [](vfs_node*, size_t, size_t size, const void*) { return size; };
+    const int fd = vfs_manager::alloc_fd(&node);
+    ASSERT_EQ(fd, 0);
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), 1L);
+    ASSERT_EQ(vfs_manager::sys_fcntl(fd, 3, 0), 2);
+    ASSERT_EQ(vfs_manager::sys_fcntl(fd, 4, 0x0400), 0);
+    ASSERT_EQ(vfs_manager::sys_write(fd, "y", 1), 1L);
+    ops.write = [](vfs_node*, size_t, size_t, const void*) { return static_cast<size_t>(-5); };
+    ASSERT_EQ(vfs_manager::sys_write(fd, "z", 1), -5L);
+    ASSERT_EQ(descriptors[fd].offset, 2UL);
+    node.type = file_type::REGULAR;
+    const int regular = vfs_manager::alloc_fd(&node);
+    ASSERT_EQ(vfs_manager::sys_fcntl(regular, 3, 0), 0);
+    ASSERT_EQ(vfs_manager::sys_write(regular, "x", 1), -9L);
+}
+
+TEST(ramfs_append_uses_eof_after_seeks_shrinks_and_flag_changes) {
+    reset();
+    auto* file = ram_file("append-flags");
+    descriptors[2] = {file, 0, 2 | 0x0400};
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 4, 0x0400), 0);
+    ASSERT_EQ(vfs_manager::sys_write(1, "A", 1), 1L);
+    ASSERT_EQ(vfs_manager::sys_write(2, "B", 1), 1L);
+    ASSERT_EQ(vfs_manager::sys_lseek(1, 0, 0), 0L);
+    ASSERT_EQ(vfs_manager::sys_write(1, "C", 1), 1L);
+    char bytes[16]{};
+    ASSERT_EQ(file->ops->read(file, 0, sizeof(bytes), bytes), 11UL);
+    ASSERT(std::memcmp(bytes, "old-dataABC", 11) == 0);
+    ASSERT_EQ(vfs_manager::sys_ftruncate(1, 0), 0);
+    ASSERT_EQ(vfs_manager::sys_write(2, "Z", 1), 1L);
+    ASSERT_EQ(descriptors[2].offset, 1UL);
+    ASSERT_EQ(vfs_manager::sys_fcntl(1, 4, 0), 0);
+    ASSERT_EQ(vfs_manager::sys_write(1, "X", 1), 1L); // Disabling append restores the retained offset, 11.
+    ASSERT_EQ(file->ops->read(file, 0, sizeof(bytes), bytes), 12UL);
+    ASSERT_EQ(bytes[0], 'Z');
+    ASSERT_EQ(bytes[11], 'X');
+    size_t end = 123;
+    ASSERT_EQ(file->ops->append(file, SIZE_MAX, "x", end), -75L);
+    ASSERT_EQ(end, 123UL);
+}
+
+TEST(ramfs_concurrent_accepted_appends_keep_whole_records_without_overlap) {
+    reset();
+    auto* file = ram_file("append-concurrent");
+    constexpr unsigned WORKERS = 4, RECORDS = 32, RECORD_SIZE = 4;
+    std::array<std::thread, WORKERS> workers;
+    std::atomic<bool> failed{false};
+    for (unsigned worker = 0; worker < WORKERS; ++worker) {
+        workers[worker] = std::thread([&, worker] {
+            for (unsigned record = 0; record < RECORDS; ++record) {
+                const uint8_t bytes[] = {static_cast<uint8_t>(worker), static_cast<uint8_t>(record),
+                                         static_cast<uint8_t>(worker ^ record), 0xA5};
+                long result = -16;
+                size_t end = 0;
+                for (unsigned retry = 0; retry < 100000 && result == -16; ++retry) {
+                    result = file->ops->append(file, sizeof(bytes), bytes, end);
+                    if (result == -16) std::this_thread::yield();
+                }
+                if (result != RECORD_SIZE) {
+                    failed.store(true);
+                    return;
+                }
+            }
+        });
+    }
+    for (auto& worker : workers)
+        worker.join();
+    ASSERT(!failed.load());
+    std::array<uint8_t, WORKERS * RECORDS * RECORD_SIZE> contents{};
+    ASSERT_EQ(file->ops->read(file, 8, contents.size(), contents.data()), contents.size());
+    bool seen[WORKERS][RECORDS]{};
+    for (size_t offset = 0; offset < contents.size(); offset += RECORD_SIZE) {
+        const unsigned worker = contents[offset], record = contents[offset + 1];
+        ASSERT(worker < WORKERS && record < RECORDS);
+        ASSERT_EQ(contents[offset + 2], worker ^ record);
+        ASSERT_EQ(contents[offset + 3], 0xA5);
+        ASSERT(!seen[worker][record]);
+        seen[worker][record] = true;
+    }
+}
+
 int main() {
     return RUN_ALL_TESTS("VFS persistence callbacks and RAMFS EOF");
 }

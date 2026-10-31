@@ -94,6 +94,7 @@ T* allocate() noexcept {
 
 size_t fat32_read(vfs_node*, size_t, size_t, void*) noexcept;
 size_t fat32_write(vfs_node*, size_t, size_t, const void*) noexcept;
+long fat32_append(vfs_node*, size_t, const void*, size_t&) noexcept;
 int fat32_truncate(vfs_node*, size_t) noexcept;
 int fat32_fsync(vfs_node*) noexcept;
 int fat32_refresh_metadata(vfs_node*) noexcept;
@@ -130,6 +131,7 @@ vfs_node* make_node(fat32_info* info, uint32_t cluster, uint64_t capacity, uint3
         ops->write = fat32_write;
         ops->truncate = fat32_truncate;
         ops->refresh_metadata = fat32_refresh_metadata;
+        ops->append = fat32_append;
     }
     return node;
 }
@@ -226,6 +228,38 @@ size_t fat32_write(vfs_node* node, size_t offset, size_t size, const void* buffe
     if (!ata::write_sectors(internal->directory_lba, 1, directory)) return old_length - offset;
     node->length = offset + done;
     return done;
+}
+
+long fat32_append(vfs_node* node, size_t size, const void* buffer, size_t& end_offset) noexcept {
+    if (!node || node->type != file_type::REGULAR || !node->ptr) return -22;
+    if (!size) return 0;
+    if (!buffer) return -14;
+    if (size > static_cast<size_t>(__LONG_MAX__)) return -75;
+    operation_guard guard;
+    if (!guard.acquired) return -16;
+    uint8_t directory[SECTOR_SIZE];
+    uint32_t length;
+    const int result = read_file_entry(node, directory, length);
+    if (result < 0) return result;
+    auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
+    const size_t offset = length;
+    node->length = offset;
+    if (offset >= static_cast<size_t>(__LONG_MAX__)) return -75;
+    uint64_t capacity = internal->allocated_bytes;
+    if (capacity > UINT32_MAX) capacity = UINT32_MAX;
+    if (offset >= capacity) return -28;
+    auto available = capacity - offset;
+    const auto representable = static_cast<size_t>(__LONG_MAX__) - offset;
+    if (available > representable) available = representable;
+    if (size > available) size = static_cast<size_t>(available);
+    // Keep EOF selection, data writes, and directory publication in this guard.
+    const auto done = transfer(*internal, offset, size, const_cast<void*>(buffer), true);
+    if (!done) return -5;
+    write32(directory + internal->directory_offset + 28, static_cast<uint32_t>(offset + done));
+    if (!ata::write_sectors(internal->directory_lba, 1, directory)) return -5;
+    node->length = offset + done;
+    end_offset = node->length;
+    return static_cast<long>(done);
 }
 
 int fat32_refresh_metadata(vfs_node* node) noexcept {

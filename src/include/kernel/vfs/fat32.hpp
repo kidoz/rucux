@@ -13,7 +13,10 @@ namespace kernel::vfs::fat32 {
 // unacknowledged bytes. Durability assumes ordered atomic sectors and a device
 // that honors successful ATA cache flushes; torn sectors are not covered.
 // Operations reserve the device without waiting; contention returns 0/null via
-// the existing read/write callbacks; truncate/fsync return negative errno.
+// the existing read/write callbacks; append/truncate/fsync return negative errno.
+// Append selects disk EOF and publishes its acknowledged prefix under that same
+// reservation. Capacity exhaustion returns -ENOSPC; partial appends are allowed.
+// A failed append leaves the descriptor offset unchanged even if data persisted.
 // Truncate durably shrinks EOF while retaining the chain. Growth via truncate
 // returns -EOPNOTSUPP. Fsync explicitly checks device flush completion.
 // Metadata queries refresh cached EOF under the same nonwaiting reservation;

@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++23 -Wall -Wextra -g
 CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
 LDLIBS = -lpthread
 OBJDIR ?= ../build/host-tests
-TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync test_file_metadata
+TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write
 TESTS = $(addprefix $(OBJDIR)/,$(TEST_NAMES))
 LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
 LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
@@ -60,6 +60,10 @@ METADATA_RENAMES = -Dstat=rucux_stat -Dfstat=rucux_fstat -Dlseek=rucux_lseek -Ds
 $(OBJDIR)/metadata_%.o: ../libc/src/%.cpp | $(OBJDIR)
 	$(CXX) $(CXXFLAGS) -I../libc/include -I.. $(METADATA_RENAMES) -MMD -MP -c -o $@ $<
 $(OBJDIR)/test_file_metadata: $(OBJDIR)/test_file_metadata.o $(OBJDIR)/metadata_file_metadata.o $(OBJDIR)/metadata_lseek.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+$(OBJDIR)/libc_file_write.o: ../libc/src/file_write.cpp | $(OBJDIR)
+	$(CXX) $(CXXFLAGS) -I../libc/include -I.. -Dwrite=rucux_write -Dfcntl=rucux_fcntl -Dsyscall=rucux_test_syscall -D__errno_location=rucux_test_errno_location -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_file_write: $(OBJDIR)/test_file_write.o $(OBJDIR)/libc_file_write.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/test_buddy: $(OBJDIR)/test_buddy.o $(OBJDIR)/buddy.o
 	$(CXX) -o $@ $^ $(LDLIBS)

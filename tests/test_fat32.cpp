@@ -487,6 +487,92 @@ TEST(fat32_vfs_existing_handles_report_shrink_and_append_at_the_new_eof) {
     ASSERT_EQ(disk[Fixture::physical(2)], 'c');
 }
 
+TEST(fat32_append_handles_ignore_old_offsets_and_preserve_existing_contents) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int first = vfs_manager::sys_open("/journal.log", 2 | 0x0400);
+    const int second = vfs_manager::sys_open("/journal.log", 2 | 0x0400);
+    ASSERT(first >= 0 && second >= 0);
+    const auto before = disk;
+    ASSERT_EQ(vfs_manager::sys_write(first, "AB", 2), 2L);
+    ASSERT_EQ(vfs_manager::sys_write(second, "cd", 2), 2L);
+    ASSERT_EQ(vfs_manager::sys_lseek(first, 0, 0), 0L);
+    ASSERT_EQ(vfs_manager::sys_write(first, "!", 1), 1L);
+    ASSERT_EQ(vfs_manager::sys_lseek(first, 0, 1), 133L);
+    ASSERT_EQ(vfs_manager::sys_lseek(second, 0, 1), 132L);
+    struct stat info{};
+    ASSERT_EQ(vfs_manager::sys_fstat(second, &info), 0);
+    ASSERT_EQ(info.st_size, 133);
+    for (size_t i = 0; i < 128; ++i)
+        ASSERT_EQ(disk[Fixture::physical(i)], before[Fixture::physical(i)]);
+    const char expected[] = "ABcd!";
+    for (size_t i = 0; i < 5; ++i)
+        ASSERT_EQ(disk[Fixture::physical(128 + i)], expected[i]);
+}
+
+TEST(fat32_append_failures_do_not_advance_the_descriptor_offset) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2 | 0x0400);
+    ASSERT(fd >= 0);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 17, 0), 17L);
+    fail_read = ROOT;
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), -5L);
+    fail_write = ROOT + 2;
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), -5L);
+    fail_write = ROOT;
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), -5L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 17L);
+    ASSERT_EQ(vfs_manager::get_fd_node(fd)->length, 128UL);
+    ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 128U);
+}
+
+TEST(fat32_partial_append_publishes_only_the_acknowledged_prefix) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2 | 0x0400);
+    ASSERT(fd >= 0);
+    std::array<uint8_t, 700> data{};
+    fail_read = ROOT + 3;
+    ASSERT_EQ(vfs_manager::sys_write(fd, data.data(), data.size()), 384L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 512L);
+    ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 512U);
+    for (size_t i = 128; i < 512; ++i)
+        ASSERT_EQ(disk[Fixture::physical(i)], 0);
+}
+
+TEST(fat32_append_reports_capacity_and_preserves_offset_on_no_space) {
+    Fixture fixture;
+    put32(disk.data() + ROOT * SECTOR + 28, CAPACITY - 10);
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2 | 0x0400);
+    ASSERT(fd >= 0);
+    std::array<uint8_t, 20> data{};
+    ASSERT_EQ(vfs_manager::sys_write(fd, data.data(), data.size()), 10L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), static_cast<long>(CAPACITY));
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), -28L);
+    ASSERT_EQ(vfs_manager::sys_write(fd, nullptr, 0), 0L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), static_cast<long>(CAPACITY));
+    ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), CAPACITY);
+}
+
+TEST(fat32_reentrant_append_cannot_select_eof_inside_another_append) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int first = vfs_manager::sys_open("/journal.log", 2 | 0x0400);
+    const int second = vfs_manager::sys_open("/journal.log", 2 | 0x0400);
+    ASSERT_EQ(first, 0);
+    ASSERT_EQ(second, 1);
+    static long result;
+    on_read = [] { result = vfs_manager::sys_write(1, "B", 1); };
+    ASSERT_EQ(vfs_manager::sys_write(first, "A", 1), 1L);
+    ASSERT_EQ(result, -16L);
+    ASSERT_EQ(vfs_manager::sys_lseek(second, 0, 1), 0L);
+    ASSERT_EQ(vfs_manager::sys_write(second, "B", 1), 1L);
+    ASSERT_EQ(disk[Fixture::physical(128)], 'A');
+    ASSERT_EQ(disk[Fixture::physical(129)], 'B');
+}
+
 TEST(fat32_metadata_read_errors_leave_cached_size_output_and_offset_unchanged) {
     Fixture fixture;
     vfs_manager::set_root(fat32::mount(PARTITION));
@@ -643,9 +729,17 @@ size_t replay_case(unsigned code, unsigned depth, size_t cut, bool after) {
     }
 }
 
-size_t sync_crash_case(unsigned code, unsigned depth, size_t cut, bool after) {
+size_t sync_crash_case(unsigned code, unsigned depth, size_t cut, bool after, bool append = false) {
     Fixture fixture;
-    auto* file = Fixture::open();
+    vfs_node* file;
+    if (append) {
+        vfs_manager::set_root(fat32::mount(PARTITION));
+        ASSERT_EQ(vfs_manager::sys_open("/journal.log", 2 | 0x0400), 0);
+        ASSERT_EQ(vfs_manager::sys_open("/journal.log", 2 | 0x0400), 1);
+        file = vfs_manager::get_fd_node(0);
+    } else {
+        file = Fixture::open();
+    }
     cut_at = cut;
     cut_after = after;
     auto digits = code;
@@ -653,16 +747,26 @@ size_t sync_crash_case(unsigned code, unsigned depth, size_t cut, bool after) {
         const auto kind = digits % 6;
         digits /= 6;
         const auto before = disk;
-        const size_t previous_length = file->length;
+        const size_t previous_length = get32(disk.data() + ROOT * SECTOR + 28);
         if (kind < 3) {
             const size_t boundary = kind == 0 ? 32 : 500;
-            const size_t offset =
-                kind == 1 ? previous_length : (previous_length < boundary ? previous_length : boundary);
+            const size_t offset = (kind == 1 || (append && kind == 0))
+                                      ? previous_length
+                                      : (previous_length < boundary ? previous_length : boundary);
             const size_t wanted = kind == 0 ? 64 : kind == 1 ? 700 : 900;
             std::array<uint8_t, 900> data;
             for (size_t i = 0; i < data.size(); ++i)
                 data[i] = static_cast<uint8_t>(i * 29 + operation * 47 + 101);
-            const auto written = file->ops->write(file, offset, wanted, data.data());
+            size_t written;
+            if (append && kind < 2) {
+                const auto old_offset = descriptors[kind].offset;
+                const auto result = vfs_manager::sys_write(static_cast<int>(kind), data.data(), wanted);
+                written = result > 0 ? static_cast<size_t>(result) : 0;
+                if (result < 0) ASSERT_EQ(result, offline ? -5L : -28L);
+                ASSERT_EQ(descriptors[kind].offset, written ? previous_length + written : old_offset);
+            } else {
+                written = file->ops->write(file, offset, wanted, data.data());
+            }
             check_interrupted(before, previous_length, offset, data.data(), wanted, written);
             if (!offline) ASSERT_EQ(written, wanted < CAPACITY - offset ? wanted : CAPACITY - offset);
         } else if (kind == 5) {
@@ -698,13 +802,14 @@ size_t sync_crash_case(unsigned code, unsigned depth, size_t cut, bool after) {
     return attempts;
 }
 
-size_t sync_replay_case(unsigned code, unsigned depth, size_t cut, bool after) {
+size_t sync_replay_case(unsigned code, unsigned depth, size_t cut, bool after, bool append = false) {
     try {
-        return sync_crash_case(code, depth, cut, after);
+        return sync_crash_case(code, depth, cut, after, append);
     } catch (const std::exception& error) {
-        throw rucux_test::AssertionFailure(std::string(error.what()) + "\nReplay: test_fat32 --sync-crash " +
-                                           std::to_string(code) + " " + std::to_string(depth) + " " +
-                                           std::to_string(cut) + (after ? " after" : " before"));
+        throw rucux_test::AssertionFailure(std::string(error.what()) + "\nReplay: test_fat32 " +
+                                           (append ? "--append-crash " : "--sync-crash ") + std::to_string(code) + " " +
+                                           std::to_string(depth) + " " + std::to_string(cut) +
+                                           (after ? " after" : " before"));
     }
 }
 } // namespace
@@ -745,9 +850,29 @@ TEST(fat32_truncate_write_fsync_crash_campaign) {
     std::cout << "FAT32 sync crash campaign: " << workloads << " workloads, " << cuts << " interrupted executions\n";
 }
 
+TEST(fat32_append_truncate_fsync_crash_campaign) {
+    size_t workloads = 0, cuts = 0;
+    unsigned combinations = 1;
+    for (unsigned depth = 1; depth <= 3; ++depth) {
+        combinations *= 6;
+        for (unsigned code = 0; code < combinations; ++code) {
+            const auto events = sync_replay_case(code, depth, SIZE_MAX, false, true);
+            ++workloads;
+            for (size_t cut = 0; cut < events; ++cut) {
+                sync_replay_case(code, depth, cut, false, true);
+                sync_replay_case(code, depth, cut, true, true);
+                cuts += 2;
+            }
+        }
+    }
+    std::cout << "FAT32 append crash campaign: " << workloads << " workloads, " << cuts << " interrupted executions\n";
+}
+
 int main(int argc, char** argv) {
-    if (argc == 6 && (std::strcmp(argv[1], "--crash") == 0 || std::strcmp(argv[1], "--sync-crash") == 0)) {
-        const bool sync = std::strcmp(argv[1], "--sync-crash") == 0;
+    if (argc == 6 && (std::strcmp(argv[1], "--crash") == 0 || std::strcmp(argv[1], "--sync-crash") == 0 ||
+                      std::strcmp(argv[1], "--append-crash") == 0)) {
+        const bool sync = std::strcmp(argv[1], "--crash") != 0;
+        const bool append = std::strcmp(argv[1], "--append-crash") == 0;
         char* ends[3]{};
         errno = 0;
         const auto code = std::strtoul(argv[2], &ends[0], 10);
@@ -765,7 +890,7 @@ int main(int argc, char** argv) {
         try {
             if (sync)
                 sync_replay_case(static_cast<unsigned>(code), static_cast<unsigned>(depth), cut,
-                                 std::strcmp(argv[5], "after") == 0);
+                                 std::strcmp(argv[5], "after") == 0, append);
             else
                 replay_case(static_cast<unsigned>(code), static_cast<unsigned>(depth), cut,
                             std::strcmp(argv[5], "after") == 0);
@@ -777,7 +902,7 @@ int main(int argc, char** argv) {
         }
     }
     if (argc != 1) {
-        std::cerr << "Usage: test_fat32 [--crash|--sync-crash CODE DEPTH CUT before|after]\n";
+        std::cerr << "Usage: test_fat32 [--crash|--sync-crash|--append-crash CODE DEPTH CUT before|after]\n";
         return 2;
     }
     return RUN_ALL_TESTS("FAT32 interrupted writes");

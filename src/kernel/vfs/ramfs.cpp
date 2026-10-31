@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/print.hpp>
+#include <kernel/sync/atomic.hpp>
 #include <kernel/vfs/ramfs.hpp>
 #include <knew.hpp>
 #include <lib/string.hpp>
@@ -12,6 +13,23 @@ struct ramfs_node_internal {
     size_t size;
     ramfs_node_internal* next;        // Sibling
     ramfs_node_internal* first_child; // For directories
+    atomic<bool> busy{false};
+};
+
+// Reserve without spinning or sleeping across allocation or file data access.
+struct ramfs_operation_guard {
+    ramfs_node_internal* internal;
+    bool acquired;
+    explicit ramfs_operation_guard(vfs_node* node) noexcept
+        : internal(reinterpret_cast<ramfs_node_internal*>(node->ptr)) {
+        bool expected = false;
+        acquired = internal->busy.compare_exchange_strong(expected, true, acquire, relaxed);
+    }
+    ~ramfs_operation_guard() noexcept {
+        if (acquired) internal->busy.store(false, release);
+    }
+    ramfs_operation_guard(const ramfs_operation_guard&) = delete;
+    ramfs_operation_guard& operator=(const ramfs_operation_guard&) = delete;
 };
 
 static vfs_ops g_ramfs_ops = {.read = ramfs::read,
@@ -24,7 +42,8 @@ static vfs_ops g_ramfs_ops = {.read = ramfs::read,
                               .finddir = ramfs::finddir,
                               .mmap = nullptr,
                               .fsync = ramfs::fsync,
-                              .poll = nullptr};
+                              .poll = nullptr,
+                              .append = ramfs::append};
 
 static char* kstrdup(const char* s) noexcept {
     size_t len = 0;
@@ -116,6 +135,9 @@ void ramfs::attach_node(vfs_node* parent, vfs_node* child) noexcept {
 }
 
 size_t ramfs::read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept {
+    if (!node || !node->ptr || (!buffer && size)) return 0;
+    ramfs_operation_guard guard(node);
+    if (!guard.acquired) return 0;
     ramfs_node_internal* internal = reinterpret_cast<ramfs_node_internal*>(node->ptr);
     if (!internal->data || offset >= node->length) return 0;
     if (size > node->length - offset) size = node->length - offset;
@@ -123,7 +145,8 @@ size_t ramfs::read(vfs_node* node, size_t offset, size_t size, void* buffer) noe
     return size;
 }
 
-size_t ramfs::write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
+// Caller owns the node reservation, including allocation and EOF publication.
+static size_t write_data(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
     if (!node || (!buffer && size != 0) || size > SIZE_MAX - offset) return 0;
     if (size == 0) return 0;
 
@@ -149,8 +172,31 @@ size_t ramfs::write(vfs_node* node, size_t offset, size_t size, const void* buff
     return size;
 }
 
+size_t ramfs::write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
+    if (!node || !node->ptr) return 0;
+    ramfs_operation_guard guard(node);
+    if (!guard.acquired) return 0;
+    return write_data(node, offset, size, buffer);
+}
+
+long ramfs::append(vfs_node* node, size_t size, const void* buffer, size_t& end_offset) noexcept {
+    if (!node || node->type != file_type::REGULAR || !node->ptr) return -22;
+    if (!size) return 0;
+    if (!buffer) return -14;
+    ramfs_operation_guard guard(node);
+    if (!guard.acquired) return -16;
+    if (node->length > static_cast<size_t>(__LONG_MAX__) || size > static_cast<size_t>(__LONG_MAX__) - node->length)
+        return -75;
+    const auto done = write_data(node, node->length, size, buffer);
+    if (!done) return -12;
+    end_offset = node->length;
+    return static_cast<long>(done);
+}
+
 int ramfs::truncate(vfs_node* node, size_t length) noexcept {
-    if (!node || node->type != file_type::REGULAR) return -22;
+    if (!node || node->type != file_type::REGULAR || !node->ptr) return -22;
+    ramfs_operation_guard guard(node);
+    if (!guard.acquired) return -16;
     if (length > node->length) return -95;
     node->length = length;
     return 0;
@@ -158,7 +204,9 @@ int ramfs::truncate(vfs_node* node, size_t length) noexcept {
 
 int ramfs::fsync(vfs_node* node) noexcept {
     // RAMFS has no backing device or delayed writeback; it remains volatile.
-    return node && (node->type == file_type::REGULAR || node->type == file_type::DIRECTORY) ? 0 : -22;
+    if (!node || !node->ptr || (node->type != file_type::REGULAR && node->type != file_type::DIRECTORY)) return -22;
+    ramfs_operation_guard guard(node);
+    return guard.acquired ? 0 : -16;
 }
 
 vfs_node* ramfs::readdir(vfs_node* node, size_t index) noexcept {

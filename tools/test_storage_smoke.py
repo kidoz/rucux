@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Check FAT32 truncate/write/fsync through libc over three isolated QEMU boots."""
+"""Check FAT32 truncate/append/write/fsync through libc over three isolated QEMU boots."""
 
 from __future__ import annotations
 
@@ -58,7 +58,12 @@ def main() -> int:
     run(["mcopy", "-i", str(image), str(args.bootloader), "::/EFI/BOOT/BOOTX64.EFI"])
     run(["mcopy", "-i", str(image), str(kernel), "::/kernel.elf"])
     seed = bytes((i * 13 + 17) % 256 for i in range(2048))
-    for name, contents in (("shrink.bin", seed[:1024]), ("rewrite.bin", seed), ("stage.bin", b"0")):
+    for name, contents in (
+        ("shrink.bin", seed[:1024]),
+        ("rewrite.bin", seed),
+        ("append.bin", seed),
+        ("stage.bin", b"0"),
+    ):
         source = work / name
         source.write_bytes(contents)
         run(["mcopy", "-i", str(image), str(source), f"::/{name}"])
@@ -113,6 +118,11 @@ def main() -> int:
             raise RuntimeError(f"stage {stage}: rewrite contents or EOF did not persist")
         if extract(image, work, "stage.bin", stage) != str(stage).encode():
             raise RuntimeError(f"stage {stage}: checkpoint did not persist")
+        expected_append = (
+            b"first\nsecond\nthird\n" + (b"boot2\n" if stage >= 2 else b"") + (b"boot3\n" if stage == 3 else b"")
+        )
+        if extract(image, work, "append.bin", stage) != expected_append:
+            raise RuntimeError(f"stage {stage}: append records were overwritten or did not persist")
         print(f"storage-smoke: stage {stage} PASS", flush=True)
     print(f"storage-smoke: PASS (3 boots, no host network); artifacts: {work}")
     return 0

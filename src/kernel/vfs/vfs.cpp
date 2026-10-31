@@ -9,6 +9,12 @@
 
 namespace kernel::vfs {
 
+// Existing libc/fcntl.h flag values; no syscall or flag ABI changes.
+constexpr int ACCESS_MODE = 3;
+constexpr int APPEND = 0x0400;
+constexpr int NONBLOCK = 0x0800;
+constexpr int SETTABLE_FLAGS = APPEND | NONBLOCK;
+
 static vfs_node* g_root = nullptr;
 
 void vfs_manager::init() noexcept {
@@ -58,6 +64,8 @@ static fd_t* get_fd(scheduler::thread* t, int fd) {
 int vfs_manager::alloc_fd(vfs_node* node) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     if (!t) return -1;
+    // Socket/accept create duplex streams; sys_open replaces the default mode.
+    const int flags = node && node->type == file_type::SOCKET ? 2 : 0;
 
     if (!t->fd_table) t->ensure_fd_capacity(scheduler::thread::INITIAL_FDS);
 
@@ -65,7 +73,7 @@ int vfs_manager::alloc_fd(vfs_node* node) noexcept {
         if (t->fd_table[i].node == nullptr) {
             t->fd_table[i].node = node;
             t->fd_table[i].offset = 0;
-            t->fd_table[i].flags = 0;
+            t->fd_table[i].flags = flags;
             return static_cast<int>(i);
         }
     }
@@ -75,7 +83,7 @@ int vfs_manager::alloc_fd(vfs_node* node) noexcept {
         if (old < t->fd_count) {
             t->fd_table[old].node = node;
             t->fd_table[old].offset = 0;
-            t->fd_table[old].flags = 0;
+            t->fd_table[old].flags = flags;
             return static_cast<int>(old);
         }
     }
@@ -123,16 +131,31 @@ int vfs_manager::sys_read(int fd, void* buffer, size_t size) noexcept {
     return bytes_read;
 }
 
-int vfs_manager::sys_write(int fd, const void* buffer, size_t size) noexcept {
+long vfs_manager::sys_write(int fd, const void* buffer, size_t size) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);
-    if (!fdesc || !fdesc->node) return -1;
+    if (!fdesc || !fdesc->node) return -9;
+    const int access = fdesc->flags & ACCESS_MODE;
+    if (access != 1 && access != 2) return -9;
 
     vfs_node* node = static_cast<vfs_node*>(fdesc->node);
-    if (!node->ops || !node->ops->write) return -1;
+    if (node->type == file_type::DIRECTORY) return -21;
+    if (!size) return 0;
+    if (!buffer) return -14;
+    if (size > static_cast<size_t>(__LONG_MAX__)) return -75;
+    if (node->type == file_type::REGULAR && (fdesc->flags & APPEND)) {
+        if (!node->ops || !node->ops->append) return -95;
+        size_t end_offset = fdesc->offset;
+        const long written = node->ops->append(node, size, buffer, end_offset);
+        if (written > 0) fdesc->offset = end_offset;
+        return written;
+    }
+    if (!node->ops || !node->ops->write) return -22;
+    if (size > SIZE_MAX - fdesc->offset) return -75;
 
-    int bytes_written = node->ops->write(node, fdesc->offset, size, buffer);
-    if (bytes_written > 0) fdesc->offset += bytes_written;
+    // Legacy stream callbacks encode negative results in their size_t return.
+    const long bytes_written = static_cast<long>(node->ops->write(node, fdesc->offset, size, buffer));
+    if (bytes_written > 0) fdesc->offset += static_cast<size_t>(bytes_written);
     return bytes_written;
 }
 
@@ -274,7 +297,7 @@ int vfs_manager::sys_ftruncate(int fd, long length) noexcept {
     if (!fdesc || !fdesc->node) return -9;
     if (length < 0) return -22;
     // O_ACCMODE: 0=read-only, 1=write-only, 2=read/write.
-    const int access = fdesc->flags & 3;
+    const int access = fdesc->flags & ACCESS_MODE;
     if (access != 1 && access != 2) return -22;
     auto* node = static_cast<vfs_node*>(fdesc->node);
     if (node->type == file_type::DIRECTORY) return -21;
@@ -295,14 +318,14 @@ int vfs_manager::sys_fsync(int fd) noexcept {
 int vfs_manager::sys_fcntl(int fd, int cmd, long arg) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);
-    if (!fdesc || !fdesc->node) return -1;
+    if (!fdesc || !fdesc->node) return -9;
 
-    if (cmd == 3) return fdesc->flags; // F_GETFL
+    if (cmd == 3) return fdesc->flags & (ACCESS_MODE | SETTABLE_FLAGS); // F_GETFL
     if (cmd == 4) {
-        fdesc->flags = static_cast<int>(arg);
+        fdesc->flags = (fdesc->flags & ~SETTABLE_FLAGS) | (static_cast<int>(arg) & SETTABLE_FLAGS);
         return 0;
     } // F_SETFL
-    return -1;
+    return -22;
 }
 
 // POSIX poll event flags

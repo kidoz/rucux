@@ -76,14 +76,16 @@ verification, snapshot-based execution, NIC/DMA testing, or SMP socket validatio
 ## FAT32 crash consistency and ATA completion
 
 ```sh
-make -C tests test_fat32 test_ata test_vfs test_file_sync test_file_metadata
+make -C tests test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write
 build/host-tests/test_fat32
 build/host-tests/test_ata
 build/host-tests/test_vfs
 build/host-tests/test_file_sync
 build/host-tests/test_file_metadata
+build/host-tests/test_file_write
 build/host-tests/test_fat32 --crash 1 1 1 before
 build/host-tests/test_fat32 --sync-crash 1 1 0 before
+build/host-tests/test_fat32 --append-crash 1 1 0 after
 ```
 
 The FAT32 suite links the production filesystem to an in-memory ATA adapter.
@@ -119,6 +121,15 @@ not change the modeled image; the underlying write adapter already represents
 ordered durable sector writes. Truncation may change only the directory EOF,
 and each remount must expose the expected bytes without changing the FAT chain.
 
+The append campaign adds 258 workloads and 2854 interruptions through production
+VFS with two separately opened O_APPEND handles. `--append-crash` also uses
+base 6: append 64 bytes through the first handle, append 700 through the second,
+write 900 at the lesser of EOF and offset 500, truncate to zero, truncate to half,
+and fsync. The same before/after-sector and EOF oracles apply; descriptor offsets
+must move to the acknowledged append end on success and remain unchanged on
+failure. Failed writes can still persist unacknowledged data. Named tests cover
+stale offsets, partial appends, no space and reentrant append contention.
+
 The VFS suite links production VFS/RAMFS and checks callback dispatch, errors,
 access/type validation, unchanged descriptor offsets, and cleared gaps after
 shrinking RAMFS. Metadata checks cover refreshed stat/fstat/SEEK_END results,
@@ -131,6 +142,21 @@ entries and reservation contention must preserve cached size and caller output.
 `test_file_sync` and `test_file_metadata` compile the actual custom-libc wrappers
 with only raw syscalls and errno storage replaced. They check argument forwarding,
 full-width seek results and -1/errno translation, rather than calling host libc.
+`test_file_write` links the real write/fcntl wrappers and checks short results,
+storage errors, F_GETFL without a variadic argument, and F_SETFL int forwarding.
+VFS tests reject writes through read-only descriptors and verify that F_SETFL
+cannot change access modes. Socket-created descriptors remain duplex.
+
+RAMFS uses a per-file nonwaiting reservation around read/write/truncate/append.
+Its hosted concurrent-append test checks all 128 records from four writers for
+intact contents and uniqueness. Run the VFS suite under ThreadSanitizer with:
+
+```sh
+make -C tests OBJDIR=../build/host-tests/append-tsan \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=thread' \
+  LDLIBS='-lpthread -fsanitize=thread' test_vfs
+build/host-tests/append-tsan/test_vfs
+```
 
 The ATA suite links `src/arch/amd64/ata.cpp` against the simulated port interface
 in `tests/support/arch/amd64/io.hpp`. It checks transfer/flush errors, device
@@ -141,12 +167,13 @@ Run these suites under ASan/UBSan with:
 make -C tests OBJDIR=../build/host-tests/fat32-sanitized \
   CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=address,undefined' \
   LDLIBS='-lpthread -fsanitize=address,undefined' \
-  test_fat32 test_ata test_vfs test_file_sync test_file_metadata
+  test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write
 build/host-tests/fat32-sanitized/test_fat32
 build/host-tests/fat32-sanitized/test_ata
 build/host-tests/fat32-sanitized/test_vfs
 build/host-tests/fat32-sanitized/test_file_sync
 build/host-tests/fat32-sanitized/test_file_metadata
+build/host-tests/fat32-sanitized/test_file_write
 ```
 
 These tests assume ordered, atomic 512-byte sectors and a device honoring flush
@@ -156,13 +183,18 @@ cluster allocation, sparse writes, or full POSIX filesystem semantics.
 FAT32 truncation now durably shrinks EOF while retaining its allocated chain;
 truncate growth returns `EOPNOTSUPP`. Fsync explicitly checks ATA flush completion.
 RAMFS supports logical shrinking and volatile-memory fsync. FAT32 contention
-returns `EBUSY` for truncate/fsync/metadata refresh and 0/null for
+returns `EBUSY` for append/truncate/fsync/metadata refresh and 0/null for
 read/write/lookup; operations do not wait. Stat/fstat and SEEK_END refresh EOF
 before using it; seeking from start/current position needs no metadata I/O.
-Refresh failures preserve stat buffers and descriptor offsets. Separate opens
-are checked sequentially; atomic append, concurrent multi-CPU storage, and
-physical power loss remain outside this evidence. The legacy lookup interface
-still collapses lookup failures into a missing-path result.
+Refresh failures preserve stat buffers and descriptor offsets. O_APPEND selects
+EOF and writes under one filesystem reservation, independent of the FD offset.
+Full allocated FAT32 capacity returns `ENOSPC`; an append can acknowledge a
+short prefix. Missing regular-file append support returns `EOPNOTSUPP`.
+RAMFS remains volatile; busy signed callbacks return `EBUSY` and legacy
+read/write callbacks return zero. Hosted reservations do not prove target SMP
+storage, concurrent metadata queries, or physical power-loss behavior. Whole
+writes are not crash-atomic. The legacy lookup interface still collapses lookup
+failures into a missing-path result.
 
 For real libc/kernel and clean shutdown/remount coverage, see the three-boot
 [storage smoke product](../products/smoke-storage-qemu-amd64/README.md).

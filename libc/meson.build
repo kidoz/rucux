@@ -23,6 +23,7 @@ libc_sources = files(
     'src/unistd_stubs.cpp',
     'src/file_sync.cpp',
     'src/file_metadata.cpp',
+    'src/file_write.cpp',
     'src/std_files.cpp',
     'src/stdlib.cpp',
     'src/ctype.cpp',

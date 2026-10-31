@@ -21,10 +21,6 @@ ssize_t read(int fd, void* buf, size_t count) {
     return (ssize_t)__syscall(SYS_READ, (long)fd, (long)buf, (long)count);
 }
 
-ssize_t write(int fd, const void* buf, size_t count) {
-    return (ssize_t)__syscall(SYS_WRITE, (long)fd, (long)buf, (long)count);
-}
-
 int close(int fd) {
     return (int)__syscall(SYS_CLOSE, (long)fd);
 }

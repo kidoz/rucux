@@ -26,6 +26,9 @@ struct vfs_ops {
     // Optional for filesystems with externally mutable cached attributes.
     // Return 0 or negative errno; leave cached attributes unchanged on failure.
     int (*refresh_metadata)(vfs_node* node) = nullptr;
+    // Select EOF and write within one filesystem reservation. Return bytes or
+    // negative errno; set end_offset only for a positive acknowledged prefix.
+    long (*append)(vfs_node* node, size_t size, const void* buffer, size_t& end_offset) = nullptr;
 };
 
 struct vfs_node {
@@ -64,7 +67,7 @@ public:
     // POSIX Syscalls
     static int sys_open(const char* path, int flags) noexcept;
     static int sys_read(int fd, void* buffer, size_t size) noexcept;
-    static int sys_write(int fd, const void* buffer, size_t size) noexcept;
+    static long sys_write(int fd, const void* buffer, size_t size) noexcept;
     static int sys_close(int fd) noexcept;
     static int sys_ioctl(int fd, unsigned long request, void* argp) noexcept;
     static int sys_getdents(int fd, void* dirp, size_t count) noexcept;
