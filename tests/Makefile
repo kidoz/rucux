@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++23 -Wall -Wextra -g
 CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
 LDLIBS = -lpthread
 OBJDIR ?= ../build/host-tests
-TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata
+TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync
 TESTS = $(addprefix $(OBJDIR)/,$(TEST_NAMES))
 LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
 LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
@@ -45,6 +45,16 @@ $(OBJDIR)/test_fat32: $(OBJDIR)/test_fat32.o $(OBJDIR)/fat32.o
 $(OBJDIR)/ata.o: ../src/arch/amd64/ata.cpp | $(OBJDIR)
 	$(CXX) -Isupport $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 $(OBJDIR)/test_ata: $(OBJDIR)/test_ata.o $(OBJDIR)/ata.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+$(OBJDIR)/vfs.o: ../src/kernel/vfs/vfs.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/ramfs.o: ../src/kernel/vfs/ramfs.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_vfs: $(OBJDIR)/test_vfs.o $(OBJDIR)/vfs.o $(OBJDIR)/ramfs.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+$(OBJDIR)/libc_file_sync.o: ../libc/src/file_sync.cpp | $(OBJDIR)
+	$(CXX) $(CXXFLAGS) -I../libc/include -I.. -Dfsync=rucux_fsync -Dftruncate=rucux_ftruncate -Dsyscall=rucux_test_syscall -D__errno_location=rucux_test_errno_location -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_file_sync: $(OBJDIR)/test_file_sync.o $(OBJDIR)/libc_file_sync.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/test_buddy: $(OBJDIR)/test_buddy.o $(OBJDIR)/buddy.o
 	$(CXX) -o $@ $^ $(LDLIBS)

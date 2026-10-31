@@ -20,6 +20,9 @@ void* allocations[64]{};
 size_t allocation_count;
 size_t allocation_limit = SIZE_MAX;
 size_t write_attempts;
+size_t event_attempts;
+size_t flush_attempts;
+bool fail_flush;
 size_t cut_at = SIZE_MAX;
 bool cut_after;
 bool offline;
@@ -48,6 +51,8 @@ void reset_volatile() {
     allocation_count = 0;
     allocation_limit = SIZE_MAX;
     write_attempts = 0;
+    event_attempts = flush_attempts = 0;
+    fail_flush = false;
     cut_at = SIZE_MAX;
     cut_after = offline = invalid_io = false;
     fail_read = fail_write = UINT32_MAX;
@@ -162,10 +167,17 @@ bool write_sectors(uint32_t lba, uint8_t count, const void* buffer) noexcept {
         fail_write = UINT32_MAX;
         return false;
     }
-    const bool interrupted = write_attempts++ == cut_at;
+    ++write_attempts;
+    const bool interrupted = event_attempts++ == cut_at;
     if (!interrupted || cut_after) std::memcpy(disk.data() + lba * SECTOR, buffer, SECTOR);
     if (interrupted) offline = true;
     return !offline;
+}
+bool flush() noexcept {
+    if (offline) return false;
+    ++flush_attempts;
+    if (event_attempts++ == cut_at) offline = true;
+    return !offline && !fail_flush;
 }
 } // namespace vfs::ata
 } // namespace kernel
@@ -317,7 +329,7 @@ TEST(fat32_rejects_cyclic_out_of_range_and_unreadable_chains) {
     ASSERT_EQ(allocation_count, 0UL);
 }
 
-TEST(fat32_refreshes_stale_handles_and_preserves_logical_reset_behavior) {
+TEST(fat32_refreshes_stale_handles_and_persists_reset_before_rewriting) {
     Fixture fixture;
     auto* first = Fixture::open();
     auto* second = Fixture::open();
@@ -326,7 +338,8 @@ TEST(fat32_refreshes_stale_handles_and_preserves_logical_reset_behavior) {
     ASSERT_EQ(second->ops->write(second, 0, 16, buffer.data()), 16UL);
     ASSERT_EQ(second->length, 828UL);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 828U);
-    second->length = 0; // Existing VFS ftruncate changes the logical vnode length.
+    ASSERT_EQ(second->ops->truncate(second, 0), 0);
+    ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 0U);
     ASSERT_EQ(second->ops->write(second, 0, 5, buffer.data()), 5UL);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 5U);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 60), 512U);
@@ -359,6 +372,84 @@ TEST(fat32_allocation_failures_release_partial_nodes) {
         ASSERT(!root->ops->finddir(root, "journal.log"));
         ASSERT_EQ(allocation_count, baseline);
     }
+}
+
+TEST(fat32_shrink_is_durable_without_a_later_write_and_retains_allocated_capacity) {
+    Fixture fixture;
+    auto* file = Fixture::open();
+    auto expected = disk;
+    put32(expected.data() + ROOT * SECTOR + 28, 37);
+    ASSERT_EQ(file->ops->truncate(file, 37), 0);
+    ASSERT_EQ(file->length, 37UL);
+    ASSERT(disk == expected); // No data sector, FAT entry, or neighboring entry changed.
+    ASSERT_EQ(file->ops->fsync(file), 0);
+    ASSERT_EQ(flush_attempts, 1UL);
+    reset_volatile();
+    file = Fixture::open();
+    ASSERT_EQ(file->length, 37UL);
+    ASSERT_EQ(file->ops->truncate(file, 0), 0);
+    reset_volatile();
+    file = Fixture::open();
+    ASSERT_EQ(file->length, 0UL);
+    std::array<uint8_t, CAPACITY> bytes{};
+    ASSERT_EQ(file->ops->write(file, 0, bytes.size(), bytes.data()), bytes.size());
+    ASSERT_EQ(file->length, CAPACITY);
+}
+
+TEST(fat32_failed_metadata_updates_do_not_acknowledge_shrinking) {
+    Fixture fixture;
+    auto* file = Fixture::open();
+    fail_read = ROOT;
+    ASSERT_EQ(file->ops->truncate(file, 37), -5);
+    ASSERT_EQ(file->length, 128UL);
+    fail_write = ROOT;
+    ASSERT_EQ(file->ops->truncate(file, 37), -5);
+    ASSERT_EQ(file->length, 128UL);
+    ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 128U);
+    ASSERT_EQ(file->ops->truncate(file, 129), -95);
+    ASSERT_EQ(file->ops->truncate(file, SIZE_MAX), -95);
+    ASSERT_EQ(file->length, 128UL);
+}
+
+TEST(fat32_flush_failures_reach_the_caller) {
+    Fixture fixture;
+    auto* file = Fixture::open();
+    fail_flush = true;
+    ASSERT_EQ(file->ops->fsync(file), -5);
+    ASSERT_EQ(file->ops->truncate(file, 128), -5); // Even a no-op checks flush completion.
+    ASSERT_EQ(file->length, 128UL);
+    fail_flush = false;
+    ASSERT_EQ(file->ops->fsync(file), 0);
+    fail_read = ROOT;
+    ASSERT_EQ(file->ops->fsync(file), -5);
+}
+
+TEST(fat32_stale_readers_and_writers_observe_a_durable_shrink) {
+    Fixture fixture;
+    auto* first = Fixture::open();
+    auto* stale = Fixture::open();
+    ASSERT_EQ(first->ops->truncate(first, 37), 0);
+    char bytes[256]{};
+    ASSERT_EQ(stale->ops->read(stale, 0, sizeof(bytes), bytes), 37UL);
+    ASSERT_EQ(stale->ops->truncate(stale, 100), -95);
+    ASSERT_EQ(stale->ops->write(stale, 38, 1, "x"), 0UL); // A stale EOF cannot permit a gap.
+    ASSERT_EQ(stale->ops->write(stale, 37, 1, "x"), 1UL);
+    ASSERT_EQ(first->ops->fsync(first), 0);
+    ASSERT_EQ(first->length, 38UL);
+}
+
+TEST(fat32_sync_and_truncate_report_contention_without_waiting) {
+    Fixture fixture;
+    reentrant_file = Fixture::open();
+    static int sync_result, truncate_result;
+    on_read = [] {
+        sync_result = reentrant_file->ops->fsync(reentrant_file);
+        truncate_result = reentrant_file->ops->truncate(reentrant_file, 0);
+    };
+    ASSERT_EQ(reentrant_file->ops->write(reentrant_file, 0, 1, "x"), 1UL);
+    ASSERT_EQ(sync_result, -16);
+    ASSERT_EQ(truncate_result, -16);
+    ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 128U);
 }
 
 namespace {
@@ -435,6 +526,71 @@ size_t replay_case(unsigned code, unsigned depth, size_t cut, bool after) {
                                            std::to_string(cut) + (after ? " after" : " before"));
     }
 }
+
+size_t sync_crash_case(unsigned code, unsigned depth, size_t cut, bool after) {
+    Fixture fixture;
+    auto* file = Fixture::open();
+    cut_at = cut;
+    cut_after = after;
+    auto digits = code;
+    for (unsigned operation = 0; operation < depth; ++operation) {
+        const auto kind = digits % 6;
+        digits /= 6;
+        const auto before = disk;
+        const size_t previous_length = file->length;
+        if (kind < 3) {
+            const size_t boundary = kind == 0 ? 32 : 500;
+            const size_t offset =
+                kind == 1 ? previous_length : (previous_length < boundary ? previous_length : boundary);
+            const size_t wanted = kind == 0 ? 64 : kind == 1 ? 700 : 900;
+            std::array<uint8_t, 900> data;
+            for (size_t i = 0; i < data.size(); ++i)
+                data[i] = static_cast<uint8_t>(i * 29 + operation * 47 + 101);
+            const auto written = file->ops->write(file, offset, wanted, data.data());
+            check_interrupted(before, previous_length, offset, data.data(), wanted, written);
+            if (!offline) ASSERT_EQ(written, wanted < CAPACITY - offset ? wanted : CAPACITY - offset);
+        } else if (kind == 5) {
+            const int result = file->ops->fsync(file);
+            ASSERT_EQ(result, offline ? -5 : 0);
+            ASSERT(disk == before);
+        } else {
+            const size_t length = kind == 3 ? 0 : previous_length / 2;
+            const int result = file->ops->truncate(file, length);
+            auto resized = before;
+            put32(resized.data() + ROOT * SECTOR + 28, static_cast<uint32_t>(length));
+            ASSERT(disk == before || disk == resized);
+            ASSERT_EQ(result, offline ? -5 : 0);
+            if (!result) {
+                ASSERT(disk == resized);
+                ASSERT_EQ(file->length, length);
+            } else {
+                ASSERT_EQ(file->length, previous_length);
+            }
+        }
+        if (offline) break;
+    }
+    ASSERT(!invalid_io);
+    const auto attempts = event_attempts;
+    const auto length = get32(disk.data() + ROOT * SECTOR + 28);
+    reset_volatile();
+    file = Fixture::open();
+    ASSERT_EQ(file->length, static_cast<size_t>(length));
+    std::array<uint8_t, CAPACITY> bytes{};
+    ASSERT_EQ(file->ops->read(file, 0, bytes.size(), bytes.data()), static_cast<size_t>(length));
+    for (size_t i = 0; i < length; ++i)
+        ASSERT_EQ(bytes[i], disk[Fixture::physical(i)]);
+    return attempts;
+}
+
+size_t sync_replay_case(unsigned code, unsigned depth, size_t cut, bool after) {
+    try {
+        return sync_crash_case(code, depth, cut, after);
+    } catch (const std::exception& error) {
+        throw rucux_test::AssertionFailure(std::string(error.what()) + "\nReplay: test_fat32 --sync-crash " +
+                                           std::to_string(code) + " " + std::to_string(depth) + " " +
+                                           std::to_string(cut) + (after ? " after" : " before"));
+    }
+}
 } // namespace
 
 TEST(fat32_bounded_crash_campaign) {
@@ -455,23 +611,48 @@ TEST(fat32_bounded_crash_campaign) {
     std::cout << "FAT32 crash campaign: " << workloads << " workloads, " << cuts << " interrupted executions\n";
 }
 
+TEST(fat32_truncate_write_fsync_crash_campaign) {
+    size_t workloads = 0, cuts = 0;
+    unsigned combinations = 1;
+    for (unsigned depth = 1; depth <= 3; ++depth) {
+        combinations *= 6;
+        for (unsigned code = 0; code < combinations; ++code) {
+            const auto events = sync_replay_case(code, depth, SIZE_MAX, false);
+            ++workloads;
+            for (size_t cut = 0; cut < events; ++cut) {
+                sync_replay_case(code, depth, cut, false);
+                sync_replay_case(code, depth, cut, true);
+                cuts += 2;
+            }
+        }
+    }
+    std::cout << "FAT32 sync crash campaign: " << workloads << " workloads, " << cuts << " interrupted executions\n";
+}
+
 int main(int argc, char** argv) {
-    if (argc == 6 && std::strcmp(argv[1], "--crash") == 0) {
+    if (argc == 6 && (std::strcmp(argv[1], "--crash") == 0 || std::strcmp(argv[1], "--sync-crash") == 0)) {
+        const bool sync = std::strcmp(argv[1], "--sync-crash") == 0;
         char* ends[3]{};
         errno = 0;
         const auto code = std::strtoul(argv[2], &ends[0], 10);
         const auto depth = std::strtoul(argv[3], &ends[1], 10);
         const auto cut = std::strtoul(argv[4], &ends[2], 10);
+        unsigned combinations = 1;
+        if (depth >= 1 && depth <= 3)
+            for (unsigned i = 0; i < depth; ++i)
+                combinations *= sync ? 6 : 3;
         if (errno == ERANGE || argv[2][0] < '0' || argv[2][0] > '9' || argv[3][0] < '0' || argv[3][0] > '9' ||
             argv[4][0] < '0' || argv[4][0] > '9' || *ends[0] || *ends[1] || *ends[2] || depth < 1 || depth > 3 ||
-            code >= (depth == 1   ? 3UL
-                     : depth == 2 ? 9UL
-                                  : 27UL) ||
-            (cut > 32 && cut != SIZE_MAX) || (std::strcmp(argv[5], "before") && std::strcmp(argv[5], "after")))
+            code >= combinations || (cut > 32 && cut != SIZE_MAX) ||
+            (std::strcmp(argv[5], "before") && std::strcmp(argv[5], "after")))
             return 2;
         try {
-            replay_case(static_cast<unsigned>(code), static_cast<unsigned>(depth), cut,
-                        std::strcmp(argv[5], "after") == 0);
+            if (sync)
+                sync_replay_case(static_cast<unsigned>(code), static_cast<unsigned>(depth), cut,
+                                 std::strcmp(argv[5], "after") == 0);
+            else
+                replay_case(static_cast<unsigned>(code), static_cast<unsigned>(depth), cut,
+                            std::strcmp(argv[5], "after") == 0);
             std::cout << "FAT32 crash replay: PASS\n";
             return 0;
         } catch (const std::exception& error) {
@@ -480,7 +661,7 @@ int main(int argc, char** argv) {
         }
     }
     if (argc != 1) {
-        std::cerr << "Usage: test_fat32 [--crash CODE DEPTH CUT before|after]\n";
+        std::cerr << "Usage: test_fat32 [--crash|--sync-crash CODE DEPTH CUT before|after]\n";
         return 2;
     }
     return RUN_ALL_TESTS("FAT32 interrupted writes");

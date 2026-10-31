@@ -16,12 +16,14 @@ struct ramfs_node_internal {
 
 static vfs_ops g_ramfs_ops = {.read = ramfs::read,
                               .write = ramfs::write,
+                              .truncate = ramfs::truncate,
                               .open = nullptr,
                               .close = nullptr,
                               .ioctl = nullptr,
                               .readdir = ramfs::readdir,
                               .finddir = ramfs::finddir,
                               .mmap = nullptr,
+                              .fsync = ramfs::fsync,
                               .poll = nullptr};
 
 static char* kstrdup(const char* s) noexcept {
@@ -115,8 +117,8 @@ void ramfs::attach_node(vfs_node* parent, vfs_node* child) noexcept {
 
 size_t ramfs::read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept {
     ramfs_node_internal* internal = reinterpret_cast<ramfs_node_internal*>(node->ptr);
-    if (!internal->data || offset >= internal->size) return 0;
-    if (offset + size > internal->size) size = internal->size - offset;
+    if (!internal->data || offset >= node->length) return 0;
+    if (size > node->length - offset) size = node->length - offset;
     lib::memcpy(buffer, internal->data + offset, size);
     return size;
 }
@@ -139,9 +141,24 @@ size_t ramfs::write(vfs_node* node, size_t offset, size_t size, const void* buff
         internal->size = required;
     }
 
+    // Capacity may exceed EOF after a shrink. Never expose discarded bytes
+    // when a later write creates a gap within that retained allocation.
+    if (offset > node->length) lib::memset(internal->data + node->length, 0, offset - node->length);
     lib::memcpy(internal->data + offset, buffer, size);
     if (required > node->length) node->length = required;
     return size;
+}
+
+int ramfs::truncate(vfs_node* node, size_t length) noexcept {
+    if (!node || node->type != file_type::REGULAR) return -22;
+    if (length > node->length) return -95;
+    node->length = length;
+    return 0;
+}
+
+int ramfs::fsync(vfs_node* node) noexcept {
+    // RAMFS has no backing device or delayed writeback; it remains volatile.
+    return node && (node->type == file_type::REGULAR || node->type == file_type::DIRECTORY) ? 0 : -22;
 }
 
 vfs_node* ramfs::readdir(vfs_node* node, size_t index) noexcept {

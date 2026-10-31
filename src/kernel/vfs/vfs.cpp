@@ -251,19 +251,25 @@ int vfs_manager::sys_fstat(int fd, void* statbuf) noexcept {
 int vfs_manager::sys_ftruncate(int fd, long length) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);
-    if (!fdesc || !fdesc->node) return -1;
-
-    vfs_node* node = static_cast<vfs_node*>(fdesc->node);
-    if (length < 0) return -1;
-    if (static_cast<size_t>(length) < node->length) node->length = static_cast<size_t>(length);
-    return 0;
+    if (!fdesc || !fdesc->node) return -9;
+    if (length < 0) return -22;
+    // O_ACCMODE: 0=read-only, 1=write-only, 2=read/write.
+    const int access = fdesc->flags & 3;
+    if (access != 1 && access != 2) return -22;
+    auto* node = static_cast<vfs_node*>(fdesc->node);
+    if (node->type == file_type::DIRECTORY) return -21;
+    if (node->type != file_type::REGULAR) return -22;
+    if (!node->ops || !node->ops->truncate) return -95;
+    return node->ops->truncate(node, static_cast<size_t>(length));
 }
 
 int vfs_manager::sys_fsync(int fd) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);
-    if (!fdesc || !fdesc->node) return -1;
-    return 0;
+    if (!fdesc || !fdesc->node) return -9;
+    auto* node = static_cast<vfs_node*>(fdesc->node);
+    if (!node->ops || !node->ops->fsync) return -22;
+    return node->ops->fsync(node);
 }
 
 int vfs_manager::sys_fcntl(int fd, int cmd, long arg) noexcept {

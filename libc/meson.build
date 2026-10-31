@@ -21,6 +21,7 @@ libc_sources = files(
     'src/memchr.cpp',
     'src/exit.cpp',
     'src/unistd_stubs.cpp',
+    'src/file_sync.cpp',
     'src/std_files.cpp',
     'src/stdlib.cpp',
     'src/ctype.cpp',

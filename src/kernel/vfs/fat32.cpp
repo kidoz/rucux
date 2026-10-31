@@ -21,7 +21,6 @@ struct fat32_info {
 struct fat32_node_internal {
     fat32_info* info;
     uint64_t allocated_bytes;
-    size_t observed_length;
     uint32_t start_cluster;
     uint32_t directory_lba;
     uint16_t directory_offset;
@@ -95,6 +94,9 @@ T* allocate() noexcept {
 
 size_t fat32_read(vfs_node*, size_t, size_t, void*) noexcept;
 size_t fat32_write(vfs_node*, size_t, size_t, const void*) noexcept;
+int fat32_truncate(vfs_node*, size_t) noexcept;
+int fat32_fsync(vfs_node*) noexcept;
+int read_file_entry(vfs_node*, uint8_t (&)[SECTOR_SIZE], uint32_t&) noexcept;
 vfs_node* fat32_finddir(vfs_node*, const char*) noexcept;
 
 vfs_node* make_node(fat32_info* info, uint32_t cluster, uint64_t capacity, uint32_t length, file_type type,
@@ -118,12 +120,14 @@ vfs_node* make_node(fat32_info* info, uint32_t cluster, uint64_t capacity, uint3
     node->type = type;
     node->ops = ops;
     node->ptr = reinterpret_cast<vfs_node*>(internal);
-    *internal = {info, capacity, length, cluster, directory_lba, directory_offset};
+    *internal = {info, capacity, cluster, directory_lba, directory_offset};
+    ops->fsync = fat32_fsync;
     if (type == file_type::DIRECTORY) {
         ops->finddir = fat32_finddir;
     } else {
         ops->read = fat32_read;
         ops->write = fat32_write;
+        ops->truncate = fat32_truncate;
     }
     return node;
 }
@@ -169,9 +173,31 @@ size_t fat32_read(vfs_node* node, size_t offset, size_t size, void* buffer) noex
     operation_guard guard;
     if (!guard.acquired || !node || node->type != file_type::REGULAR || (!buffer && size) || !node->ptr) return 0;
     auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
+    // Another open may have shrunk this file since the vnode was created.
+    uint8_t directory[SECTOR_SIZE];
+    uint32_t length;
+    if (read_file_entry(node, directory, length) < 0) return 0;
+    node->length = length;
     if (offset >= node->length || node->length > internal->allocated_bytes) return 0;
     if (size > node->length - offset) size = node->length - offset;
     return transfer(*internal, offset, size, buffer, false);
+}
+
+// Caller holds the filesystem reservation. Disk EOF is authoritative across opens.
+int read_file_entry(vfs_node* node, uint8_t (&directory)[SECTOR_SIZE], uint32_t& length) noexcept {
+    if (!node || node->type != file_type::REGULAR || !node->ptr) return -22;
+    auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
+    if (!internal->directory_lba || internal->directory_offset > SECTOR_SIZE - 32) return -5;
+    if (!ata::read_sectors(internal->directory_lba, 1, directory)) return -5;
+    auto* entry = directory + internal->directory_offset;
+    const uint32_t disk_length = read32(entry + 28);
+    const uint32_t disk_cluster =
+        ((static_cast<uint32_t>(read16(entry + 20)) << 16U) | read16(entry + 26)) & 0x0FFFFFFFU;
+    if (entry[0] == 0 || entry[0] == 0xE5 || (entry[11] & 0x18U) || disk_cluster != internal->start_cluster ||
+        disk_length > internal->allocated_bytes)
+        return -5;
+    length = disk_length;
+    return 0;
 }
 
 size_t fat32_write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
@@ -180,26 +206,12 @@ size_t fat32_write(vfs_node* node, size_t offset, size_t size, const void* buffe
         offset > UINT32_MAX || size > UINT32_MAX - offset)
         return 0;
     auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
-    if (!internal->directory_lba || internal->directory_offset > SECTOR_SIZE - 32 ||
-        offset >= internal->allocated_bytes)
-        return 0;
-
+    if (offset >= internal->allocated_bytes) return 0;
     uint8_t directory[SECTOR_SIZE];
-    if (!ata::read_sectors(internal->directory_lba, 1, directory)) return 0;
-    auto* entry = directory + internal->directory_offset;
-    const uint32_t disk_length = read32(entry + 28);
-    const uint32_t disk_cluster =
-        ((static_cast<uint32_t>(read16(entry + 20)) << 16U) | read16(entry + 26)) & 0x0FFFFFFFU;
-    if (entry[0] == 0 || entry[0] == 0xE5 || (entry[11] & 0x18U) || disk_cluster != internal->start_cluster ||
-        disk_length > internal->allocated_bytes)
-        return 0;
-    // A second open may hold an older vnode. Refresh it unless the caller has
-    // explicitly shortened its logical length (the existing ftruncate path).
-    if (node->length == internal->observed_length) {
-        node->length = disk_length;
-        internal->observed_length = disk_length;
-    }
-    if (offset > node->length || node->length > internal->allocated_bytes) return 0; // No sparse writes.
+    uint32_t disk_length;
+    if (read_file_entry(node, directory, disk_length) < 0) return 0;
+    node->length = disk_length;
+    if (offset > node->length) return 0; // No sparse writes.
     const auto available = internal->allocated_bytes - offset;
     if (size > available) size = static_cast<size_t>(available);
     const size_t old_length = node->length;
@@ -208,11 +220,46 @@ size_t fat32_write(vfs_node* node, size_t offset, size_t size, const void* buffe
 
     // Data sectors have completed their flush before publishing the new EOF.
     // A failed size write may itself have persisted: never acknowledge its tail.
-    write32(entry + 28, static_cast<uint32_t>(offset + done));
+    write32(directory + internal->directory_offset + 28, static_cast<uint32_t>(offset + done));
     if (!ata::write_sectors(internal->directory_lba, 1, directory)) return old_length - offset;
     node->length = offset + done;
-    internal->observed_length = node->length;
     return done;
+}
+
+int fat32_truncate(vfs_node* node, size_t length) noexcept {
+    operation_guard guard;
+    if (!guard.acquired) return -16;
+    uint8_t directory[SECTOR_SIZE];
+    uint32_t previous_length;
+    int result = read_file_entry(node, directory, previous_length);
+    if (result < 0) return result;
+    auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
+    node->length = previous_length;
+    if (length > previous_length) return -95; // Growth/zero filling is separate.
+    if (length == previous_length) return ata::flush() ? 0 : -5;
+    write32(directory + internal->directory_offset + 28, static_cast<uint32_t>(length));
+    // Retain the full chain, including for zero-length journals. The metadata
+    // write must complete its cache flush before the new EOF is acknowledged.
+    if (!ata::write_sectors(internal->directory_lba, 1, directory)) return -5;
+    node->length = length;
+    return 0;
+}
+
+int fat32_fsync(vfs_node* node) noexcept {
+    operation_guard guard;
+    if (!guard.acquired) return -16;
+    if (!node || !node->ptr) return -22;
+    uint32_t length = 0;
+    if (node->type == file_type::REGULAR) {
+        uint8_t directory[SECTOR_SIZE];
+        int result = read_file_entry(node, directory, length);
+        if (result < 0) return result;
+    } else if (node->type != file_type::DIRECTORY) {
+        return -22;
+    }
+    if (!ata::flush()) return -5;
+    if (node->type == file_type::REGULAR) node->length = length;
+    return 0;
 }
 
 bool short_name(const char* name, uint8_t (&target)[11]) noexcept {

@@ -61,12 +61,14 @@ static int socket_poll(vfs::vfs_node* node) {
 static vfs::vfs_ops socket_ops = {
     .read = socket_read,
     .write = socket_write,
+    .truncate = nullptr,
     .open = nullptr,
     .close = socket_close,
     .ioctl = nullptr,
     .readdir = nullptr,
     .finddir = nullptr,
     .mmap = nullptr,
+    .fsync = nullptr,
     .poll = socket_poll,
 };
 

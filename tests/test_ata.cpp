@@ -178,6 +178,22 @@ TEST(ata_reentrant_commands_fail_without_corrupting_the_active_transfer) {
     ASSERT_EQ(flushes, 1U);
     ASSERT(!bad_transfer);
 }
+TEST(ata_explicit_flush_checks_completion_and_device_faults) {
+    reset();
+    ASSERT(ata::flush());
+    ASSERT_EQ(flushes, 1U);
+    ASSERT_EQ(transfers, 0U);
+    for (uint8_t status : {0x01, 0x20}) {
+        reset();
+        error_command = 0xE7;
+        error_status = status;
+        ASSERT(!ata::flush());
+    }
+    reset();
+    timeout_command = 0xE7;
+    ASSERT(!ata::flush());
+    ASSERT(polls >= 1000000 && polls < 1000100);
+}
 int main() {
     return RUN_ALL_TESTS("ATA command completion and flushes");
 }

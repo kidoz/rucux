@@ -76,6 +76,10 @@ long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a5, long
         return kernel::vfs::vfs_manager::sys_stat(reinterpret_cast<const char*>(a1), reinterpret_cast<void*>(a2));
     case SYS_FSTAT:
         return kernel::vfs::vfs_manager::sys_fstat(static_cast<int>(a1), reinterpret_cast<void*>(a2));
+    case SYS_FTRUNCATE:
+        return kernel::vfs::vfs_manager::sys_ftruncate(static_cast<int>(a1), static_cast<long>(a2));
+    case SYS_FSYNC:
+        return kernel::vfs::vfs_manager::sys_fsync(static_cast<int>(a1));
     case SYS_MMAP:
         return reinterpret_cast<long>(kernel::memory::mmap_manager::sys_mmap(
             reinterpret_cast<void*>(a1), static_cast<size_t>(a2), static_cast<int>(a3), static_cast<int>(a4),

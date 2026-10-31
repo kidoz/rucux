@@ -76,10 +76,13 @@ verification, snapshot-based execution, NIC/DMA testing, or SMP socket validatio
 ## FAT32 crash consistency and ATA completion
 
 ```sh
-make -C tests test_fat32 test_ata
+make -C tests test_fat32 test_ata test_vfs test_file_sync
 build/host-tests/test_fat32
 build/host-tests/test_ata
+build/host-tests/test_vfs
+build/host-tests/test_file_sync
 build/host-tests/test_fat32 --crash 1 1 1 before
+build/host-tests/test_fat32 --sync-crash 1 1 0 before
 ```
 
 The FAT32 suite links the production filesystem to an in-memory ATA adapter.
@@ -106,23 +109,46 @@ zero-based sector-write attempt. `before`/`after` controls persistence of that
 interrupted sector. A cut beyond the workload's writes executes normally;
 `SIZE_MAX` is also accepted to replay an uninterrupted baseline.
 
+The mixed campaign adds 258 workloads and 2656 interruptions over one to three
+write/truncate/fsync operations. `--sync-crash` uses base 6: its first three
+operations are the writes above (clamping overwrite offsets to EOF after a
+shrink), followed by truncate-to-zero, truncate-to-half, and fsync. `CUT` counts
+sector writes and explicit flush attempts. A flush does
+not change the modeled image; the underlying write adapter already represents
+ordered durable sector writes. Truncation may change only the directory EOF,
+and each remount must expose the expected bytes without changing the FAT chain.
+
+The VFS suite links production VFS/RAMFS and checks callback dispatch, errors,
+access/type validation, unchanged descriptor offsets, and cleared gaps after
+shrinking RAMFS. `test_file_sync` compiles the actual custom-libc wrappers with
+only the raw syscall and errno storage replaced. It checks argument forwarding
+and -1/errno translation, rather than calling host libc.
+
 The ATA suite links `src/arch/amd64/ata.cpp` against the simulated port interface
 in `tests/support/arch/amd64/io.hpp`. It checks transfer/flush errors, device
 faults, polling bounds, LBA28 request validation, IDENTIFY and command reservation.
-Run both suites under ASan/UBSan with:
+Run these suites under ASan/UBSan with:
 
 ```sh
 make -C tests OBJDIR=../build/host-tests/fat32-sanitized \
   CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=address,undefined' \
-  LDLIBS='-lpthread -fsanitize=address,undefined' test_fat32 test_ata
+  LDLIBS='-lpthread -fsanitize=address,undefined' test_fat32 test_ata test_vfs test_file_sync
 build/host-tests/fat32-sanitized/test_fat32
 build/host-tests/fat32-sanitized/test_ata
+build/host-tests/fat32-sanitized/test_vfs
+build/host-tests/fat32-sanitized/test_file_sync
 ```
 
 These tests assume ordered, atomic 512-byte sectors and a device honoring flush
 completion. Failed writes may persist unacknowledged bytes. There is no promise
 of whole-write atomicity, torn-sector recovery, reordered unflushed writes,
-cluster allocation, sparse writes, or full POSIX fsync/ftruncate semantics.
-The existing logical truncate behavior is retained, but truncation alone is not
-made durable by this change. Concurrent operations fail without waiting through
-the current 0/null/false interfaces; this is not full concurrent filesystem support.
+cluster allocation, sparse writes, or full POSIX filesystem semantics.
+FAT32 truncation now durably shrinks EOF while retaining its allocated chain;
+truncate growth returns `EOPNOTSUPP`. Fsync explicitly checks ATA flush completion.
+RAMFS supports logical shrinking and volatile-memory fsync. FAT32 contention
+returns `EBUSY` for truncate/fsync and 0/null for read/write/lookup; operations
+do not wait. Cached stat/seek metadata across separate opens, multi-CPU storage,
+and physical power loss remain outside this evidence.
+
+For real libc/kernel and clean shutdown/remount coverage, see the three-boot
+[storage smoke product](../products/smoke-storage-qemu-amd64/README.md).

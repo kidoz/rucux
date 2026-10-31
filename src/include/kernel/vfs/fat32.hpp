@@ -13,8 +13,11 @@ namespace kernel::vfs::fat32 {
 // unacknowledged bytes. Durability assumes ordered atomic sectors and a device
 // that honors successful ATA cache flushes; torn sectors are not covered.
 // Operations reserve the device without waiting; contention returns 0/null via
-// the existing VFS callbacks. This is not a claim of complete POSIX fsync or
-// ftruncate semantics. Successful mount/vnode objects remain owned by the VFS.
+// the existing read/write callbacks; truncate/fsync return negative errno.
+// Truncate durably shrinks EOF while retaining the chain. Growth via truncate
+// returns -EOPNOTSUPP. Fsync explicitly checks device flush completion. These
+// remain a bounded profile, not full POSIX filesystem semantics. Successful
+// mount/vnode objects remain owned by the VFS.
 vfs_node* mount(uint32_t partition_lba) noexcept;
 
 } // namespace kernel::vfs::fat32

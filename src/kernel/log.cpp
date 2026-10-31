@@ -281,12 +281,14 @@ static int kmsg_poll(kernel::vfs::vfs_node*) noexcept {
 static kernel::vfs::vfs_ops g_kmsg_ops = {
     .read = kmsg_read,
     .write = kmsg_write,
+    .truncate = nullptr,
     .open = nullptr,
     .close = nullptr,
     .ioctl = nullptr,
     .readdir = nullptr,
     .finddir = nullptr,
     .mmap = nullptr,
+    .fsync = nullptr,
     .poll = kmsg_poll,
 };
 

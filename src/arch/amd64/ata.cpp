@@ -122,4 +122,12 @@ bool write_sectors(uint32_t lba, uint8_t sectors, const void* buffer) noexcept {
     return wait_status(wait_kind::complete);
 }
 
+bool flush() noexcept {
+    command_guard guard;
+    if (!guard.acquired || !wait_status(wait_kind::complete)) return false;
+    arch::amd64::outb(DRIVE, 0xE0);
+    arch::amd64::outb(STATUS, 0xE7);
+    return wait_status(wait_kind::complete);
+}
+
 } // namespace kernel::vfs::ata

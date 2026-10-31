@@ -12,12 +12,15 @@ struct vfs_node;
 struct vfs_ops {
     size_t (*read)(vfs_node* node, size_t offset, size_t size, void* buffer);
     size_t (*write)(vfs_node* node, size_t offset, size_t size, const void* buffer);
+    // Return 0 or a negative errno. Truncate changes size, never the FD offset.
+    int (*truncate)(vfs_node* node, size_t length);
     void (*open)(vfs_node* node);
     void (*close)(vfs_node* node);
     int (*ioctl)(vfs_node* node, unsigned long request, void* argp);
     vfs_node* (*readdir)(vfs_node* node, size_t index);
     vfs_node* (*finddir)(vfs_node* node, const char* name);
     uintptr_t (*mmap)(vfs_node* node, size_t offset); // Returns physical address
+    int (*fsync)(vfs_node* node);
     // poll: returns bitmask of ready events (POLLIN=1, POLLOUT=4)
     int (*poll)(vfs_node* node);
 };

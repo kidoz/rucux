@@ -119,18 +119,10 @@ int execvp(const char* file, char* const argv[]) {
     return -1; // stub
 }
 
-int ftruncate(int fd, off_t length) {
-    return (int)__syscall(SYS_FTRUNCATE, (long)fd, (long)length);
-}
-
 int truncate(const char* path, off_t length) {
     (void)path;
     (void)length;
     return -1;
-}
-
-int fsync(int fd) {
-    return (int)__syscall(SYS_FSYNC, (long)fd);
 }
 
 int chdir(const char* path) {

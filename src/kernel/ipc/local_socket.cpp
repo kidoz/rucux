@@ -179,12 +179,14 @@ static int local_poll(kernel::vfs::vfs_node* node) noexcept {
 static kernel::vfs::vfs_ops g_local_socket_ops = {
     .read = local_read,
     .write = local_write,
+    .truncate = nullptr,
     .open = local_open,
     .close = local_close,
     .ioctl = nullptr,
     .readdir = nullptr,
     .finddir = nullptr,
     .mmap = nullptr,
+    .fsync = nullptr,
     .poll = local_poll,
 };
 

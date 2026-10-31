@@ -16,4 +16,7 @@ bool read_sectors(uint32_t lba, uint8_t sector_count, void* buffer) noexcept;
 // mean that no data persisted. The physical device must honor its flush contract.
 bool write_sectors(uint32_t lba, uint8_t sector_count, const void* buffer) noexcept;
 
+// Explicit device flush, including a clear completion/error status check.
+bool flush() noexcept;
+
 } // namespace kernel::vfs::ata
