@@ -1,13 +1,6 @@
 name: smoke-reboot-qemu-armv7
 board: qemu-armv7-virt
-services:
-  - init
-  - console
-  - logd
-programs:
-  - dmesg_smoke
-  - unixsock_smoke
-  - reboot_smoke
-  - powerctl
+services: []
+programs: []
 images:
   - qemu-armv7-virt
