@@ -120,12 +120,14 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
         ok = a.array(1, a3, 1, INPUT);
         break;
     case SYS_IPC_SEND:
+        if (!process::ipc_send_allowed(static_cast<uint32_t>(a1))) return -1;
         ok = a.marshal(1, sizeof(ipc::message), INPUT);
         break;
     case SYS_IPC_RECV:
         ok = a.marshal(0, sizeof(ipc::message), OUTPUT);
         break;
     case SYS_IPC_CALL:
+        if (!process::ipc_send_allowed(static_cast<uint32_t>(a1))) return -1;
         ok = a.marshal(1, sizeof(ipc::fast_msg), INOUT);
         break;
     case SYS_IPC_REPLY:

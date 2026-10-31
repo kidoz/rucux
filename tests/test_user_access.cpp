@@ -8,8 +8,12 @@
 
 namespace kernel::process {
 bool allow_raw_io_for_test = true;
+bool allow_ipc_for_test = true;
 bool raw_io_allowed() noexcept {
     return allow_raw_io_for_test;
+}
+bool ipc_send_allowed(uint32_t) noexcept {
+    return allow_ipc_for_test;
 }
 } // namespace kernel::process
 
@@ -24,6 +28,7 @@ void reset() {
     present[0] = present[1] = writable[0] = writable[1] = true;
     invoked = false;
     kernel::process::allow_raw_io_for_test = true;
+    kernel::process::allow_ipc_for_test = true;
 }
 long reject_handler(long, long, long, long, long, long, long) {
     invoked = true;
@@ -169,6 +174,18 @@ TEST(raw_io_requires_capability) {
     invoked = false;
     ASSERT_EQ(kernel::checked_syscall(handler, SYS_EXIT, 0, 0, 0, 0, 0, 0), 0);
     ASSERT(invoked);
+}
+TEST(ipc_send_requires_permission) {
+    reset();
+    kernel::process::allow_ipc_for_test = false;
+    ASSERT_EQ(kernel::checked_syscall(reject_handler, SYS_IPC_SEND, 2, 0x1, 0, 0, 0, 0), -1);
+    ASSERT_EQ(kernel::checked_syscall(reject_handler, SYS_IPC_CALL, 2, 0x1, 0, 0, 0, 0), -1);
+    ASSERT(!invoked);
+    auto handler = +[](long, long buf, long, long, long, long, long) -> long {
+        memset(reinterpret_cast<void*>(buf), 0, 40);
+        return 0;
+    };
+    ASSERT_EQ(kernel::checked_syscall(handler, SYS_IPC_RECV, BASE, 0, 0, 0, 0, 0), 0);
 }
 TEST(waitpid_rejects_kernel_status_pointer) {
     reset();
