@@ -26,7 +26,11 @@ boot to check their exact length and contents independently.
 
 1. Shrink 1024 bytes to 37 without a later write to that file. Truncate another
    preallocated file to zero, rewrite 700 bytes, and fsync. Check descriptor
-   offsets, RAMFS shrinking/gap clearing, and libc error translation.
+   offsets, RAMFS shrinking/gap clearing, and libc error translation. Before the
+   rewrite, open that file three times, shrink to 37, seek an old handle to EOF
+   and append, then check the new size through another old handle. Check zero
+   shrinking and later growth through those handles too, without an intervening
+   read/write/fsync on the handle whose metadata is being queried.
 2. Remount and verify both files, then truncate the rewritten file to zero and
    fsync without a later write.
 3. Remount, verify zero EOF, and rewrite 700 bytes using the retained FAT chain.
@@ -34,6 +38,9 @@ boot to check their exact length and contents independently.
 Successful FAT32 shrinking persists directory EOF and keeps all allocated
 clusters. Growth via `ftruncate` returns `EOPNOTSUPP`; writes can reuse the
 retained capacity. Fsync reports device flush failures. RAMFS remains volatile.
+Stat/fstat and SEEK_END refresh FAT32 EOF; failed refreshes propagate through
+libc as -1/errno. The test uses sequential operations across separate opens;
+it does not establish atomic append or concurrent multi-CPU storage behavior.
 This is clean shutdown/remount evidence under atomic sector and honest flush
 assumptions; it does not model torn sectors or a physical power cut. See
 [hosted crash tests](../../tests/README.md) for the interruption model.

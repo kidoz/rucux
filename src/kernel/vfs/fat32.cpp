@@ -96,6 +96,7 @@ size_t fat32_read(vfs_node*, size_t, size_t, void*) noexcept;
 size_t fat32_write(vfs_node*, size_t, size_t, const void*) noexcept;
 int fat32_truncate(vfs_node*, size_t) noexcept;
 int fat32_fsync(vfs_node*) noexcept;
+int fat32_refresh_metadata(vfs_node*) noexcept;
 int read_file_entry(vfs_node*, uint8_t (&)[SECTOR_SIZE], uint32_t&) noexcept;
 vfs_node* fat32_finddir(vfs_node*, const char*) noexcept;
 
@@ -128,6 +129,7 @@ vfs_node* make_node(fat32_info* info, uint32_t cluster, uint64_t capacity, uint3
         ops->read = fat32_read;
         ops->write = fat32_write;
         ops->truncate = fat32_truncate;
+        ops->refresh_metadata = fat32_refresh_metadata;
     }
     return node;
 }
@@ -224,6 +226,17 @@ size_t fat32_write(vfs_node* node, size_t offset, size_t size, const void* buffe
     if (!ata::write_sectors(internal->directory_lba, 1, directory)) return old_length - offset;
     node->length = offset + done;
     return done;
+}
+
+int fat32_refresh_metadata(vfs_node* node) noexcept {
+    operation_guard guard;
+    if (!guard.acquired) return -16;
+    uint8_t directory[SECTOR_SIZE];
+    uint32_t length;
+    const int result = read_file_entry(node, directory, length);
+    if (result < 0) return result;
+    node->length = length;
+    return 0;
 }
 
 int fat32_truncate(vfs_node* node, size_t length) noexcept {

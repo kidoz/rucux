@@ -5,8 +5,11 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <kernel/scheduler/scheduler.hpp>
+#include <kernel/time.hpp>
 #include <kernel/vfs/ata.hpp>
 #include <kernel/vfs/fat32.hpp>
+#include <uapi/kernel/stat.h>
 
 namespace {
 using namespace kernel::vfs;
@@ -32,6 +35,8 @@ uint32_t fail_write = UINT32_MAX;
 void (*on_read)();
 vfs_node* reentrant_file;
 size_t nested_result;
+kernel::scheduler::thread current{};
+kernel::scheduler::thread::file_descriptor descriptors[4]{};
 
 void put16(uint8_t* p, uint16_t value) {
     p[0] = static_cast<uint8_t>(value);
@@ -46,6 +51,11 @@ uint32_t get32(const uint8_t* p) {
            (static_cast<uint32_t>(p[3]) << 24U);
 }
 void reset_volatile() {
+    vfs_manager::set_root(nullptr);
+    current.fd_table = descriptors;
+    current.fd_count = 4;
+    for (auto& fd : descriptors)
+        fd = {};
     for (size_t i = 0; i < allocation_count; ++i)
         std::free(allocations[i]);
     allocation_count = 0;
@@ -132,6 +142,18 @@ extern "C" void kfree(void* pointer) noexcept {
 namespace kernel {
 void kwrite(const char*) noexcept {}
 void kputc(char) noexcept {}
+uint64_t time_manager::get_ticks() noexcept {
+    return 0;
+}
+namespace scheduler {
+thread* scheduler::current_thread() noexcept {
+    return &current;
+}
+bool thread::ensure_fd_capacity(size_t) noexcept {
+    return false;
+}
+void scheduler::sleep_until(uint64_t) noexcept {}
+} // namespace scheduler
 namespace console {
 uintptr_t lock_output() noexcept {
     return 0;
@@ -436,6 +458,100 @@ TEST(fat32_stale_readers_and_writers_observe_a_durable_shrink) {
     ASSERT_EQ(stale->ops->write(stale, 37, 1, "x"), 1UL);
     ASSERT_EQ(first->ops->fsync(first), 0);
     ASSERT_EQ(first->length, 38UL);
+}
+
+TEST(fat32_vfs_existing_handles_report_shrink_and_append_at_the_new_eof) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int writer = vfs_manager::sys_open("/journal.log", 2);
+    const int observer = vfs_manager::sys_open("/journal.log", 2);
+    const int seeker = vfs_manager::sys_open("/journal.log", 2);
+    ASSERT(writer >= 0 && observer >= 0 && seeker >= 0);
+    ASSERT(vfs_manager::get_fd_node(writer) != vfs_manager::get_fd_node(observer));
+    ASSERT_EQ(vfs_manager::sys_ftruncate(writer, 37), 0);
+    struct stat info{};
+    ASSERT_EQ(vfs_manager::sys_fstat(observer, &info), 0);
+    ASSERT_EQ(info.st_size, 37);
+    ASSERT_EQ(vfs_manager::sys_lseek(seeker, 0, 2), 37);
+    ASSERT_EQ(vfs_manager::sys_write(seeker, "x", 1), 1);
+    ASSERT_EQ(vfs_manager::sys_fstat(writer, &info), 0);
+    ASSERT_EQ(info.st_size, 38);
+    ASSERT_EQ(vfs_manager::sys_stat("/journal.log", &info), 0);
+    ASSERT_EQ(info.st_size, 38);
+    ASSERT_EQ(vfs_manager::sys_ftruncate(writer, 0), 0);
+    ASSERT_EQ(vfs_manager::sys_lseek(observer, 0, 2), 0);
+    ASSERT_EQ(vfs_manager::sys_write(observer, "abc", 3), 3);
+    ASSERT_EQ(vfs_manager::sys_fstat(seeker, &info), 0);
+    ASSERT_EQ(info.st_size, 3);
+    ASSERT_EQ(disk[Fixture::physical(0)], 'a');
+    ASSERT_EQ(disk[Fixture::physical(2)], 'c');
+}
+
+TEST(fat32_metadata_read_errors_leave_cached_size_output_and_offset_unchanged) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2);
+    ASSERT(fd >= 0);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 17, 0), 17L);
+    struct stat info;
+    std::memset(&info, 0xA5, sizeof(info));
+    const auto original = info;
+    const auto before = disk;
+    fail_read = ROOT;
+    ASSERT_EQ(vfs_manager::sys_fstat(fd, &info), -5);
+    ASSERT(std::memcmp(&info, &original, sizeof(info)) == 0);
+    fail_read = ROOT;
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 2), -5L);
+    ASSERT_EQ(vfs_manager::get_fd_node(fd)->length, 128UL);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 17L);
+    ASSERT(disk == before);
+    ASSERT_EQ(write_attempts, 0UL);
+    ASSERT_EQ(flush_attempts, 0UL);
+}
+
+TEST(fat32_metadata_refresh_rejects_changed_or_malformed_directory_entries) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2);
+    ASSERT(fd >= 0);
+    const auto before = disk;
+    for (unsigned mutation = 0; mutation < 4; ++mutation) {
+        disk = before;
+        auto* entry = disk.data() + ROOT * SECTOR;
+        if (mutation == 0) entry[0] = 0xE5;
+        if (mutation == 1) entry[11] = 0x10;
+        if (mutation == 2) put16(entry + 26, 4);
+        if (mutation == 3) put32(entry + 28, CAPACITY + 1);
+        struct stat info{};
+        info.st_size = -123;
+        ASSERT_EQ(vfs_manager::sys_fstat(fd, &info), -5);
+        ASSERT_EQ(info.st_size, -123);
+        ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 2), -5L);
+        ASSERT_EQ(vfs_manager::get_fd_node(fd)->length, 128UL);
+        ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 0L);
+    }
+}
+
+TEST(fat32_metadata_refresh_reports_contention_through_vfs) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2);
+    ASSERT_EQ(fd, 0);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 17, 0), 17L);
+    static int stat_result;
+    static long seek_result;
+    static struct stat info;
+    info = {};
+    info.st_size = -123;
+    on_read = [] {
+        stat_result = vfs_manager::sys_fstat(0, &info);
+        seek_result = vfs_manager::sys_lseek(0, 0, 2);
+    };
+    ASSERT_EQ(vfs_manager::sys_fsync(fd), 0);
+    ASSERT_EQ(stat_result, -16);
+    ASSERT_EQ(seek_result, -16L);
+    ASSERT_EQ(info.st_size, -123);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 17L);
 }
 
 TEST(fat32_sync_and_truncate_report_contention_without_waiting) {

@@ -23,6 +23,9 @@ struct vfs_ops {
     int (*fsync)(vfs_node* node);
     // poll: returns bitmask of ready events (POLLIN=1, POLLOUT=4)
     int (*poll)(vfs_node* node);
+    // Optional for filesystems with externally mutable cached attributes.
+    // Return 0 or negative errno; leave cached attributes unchanged on failure.
+    int (*refresh_metadata)(vfs_node* node) = nullptr;
 };
 
 struct vfs_node {
@@ -67,7 +70,7 @@ public:
     static int sys_getdents(int fd, void* dirp, size_t count) noexcept;
 
     // File Management
-    static int sys_lseek(int fd, long offset, int whence) noexcept;
+    static long sys_lseek(int fd, long offset, int whence) noexcept;
     static int sys_stat(const char* path, void* statbuf) noexcept;
     static int sys_fstat(int fd, void* statbuf) noexcept;
     static int sys_ftruncate(int fd, long length) noexcept;

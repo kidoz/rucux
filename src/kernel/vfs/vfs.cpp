@@ -199,25 +199,39 @@ int vfs_manager::sys_getdents(int fd, void* dirp, size_t count) noexcept {
     return static_cast<int>(sizeof(dirent_k));
 }
 
-int vfs_manager::sys_lseek(int fd, long offset, int whence) noexcept {
+static int refresh_metadata(vfs_node* node) noexcept {
+    return node->ops && node->ops->refresh_metadata ? node->ops->refresh_metadata(node) : 0;
+}
+
+long vfs_manager::sys_lseek(int fd, long offset, int whence) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);
-    if (!fdesc || !fdesc->node) return -1;
+    if (!fdesc || !fdesc->node) return -9;
 
     vfs_node* node = static_cast<vfs_node*>(fdesc->node);
-    long new_offset = 0;
-    if (whence == 0)
-        new_offset = offset;
-    else if (whence == 1)
-        new_offset = static_cast<long>(fdesc->offset) + offset;
-    else if (whence == 2)
-        new_offset = static_cast<long>(node->length) + offset;
-    else
-        return -1;
-
-    if (new_offset < 0) return -1;
-    fdesc->offset = static_cast<size_t>(new_offset);
-    return new_offset;
+    size_t base = 0;
+    if (whence == 1) {
+        base = fdesc->offset;
+    } else if (whence == 2) {
+        const int result = refresh_metadata(node);
+        if (result < 0) return result;
+        base = node->length;
+    } else if (whence != 0) {
+        return -22;
+    }
+    size_t new_offset;
+    if (offset < 0) {
+        // Form the magnitude without negating LONG_MIN. A large EOF can still
+        // yield a representable result when seeking backward (notably ARMv7).
+        const auto distance = static_cast<size_t>(-(offset + 1)) + 1;
+        if (distance > base) return -22;
+        new_offset = base - distance;
+    } else if (__builtin_add_overflow(base, static_cast<size_t>(offset), &new_offset)) {
+        return -75;
+    }
+    if (new_offset > static_cast<size_t>(__LONG_MAX__)) return -75;
+    fdesc->offset = new_offset;
+    return static_cast<long>(new_offset);
 }
 
 static void fill_stat(const vfs_node* node, void* buffer) noexcept {
@@ -235,15 +249,21 @@ static void fill_stat(const vfs_node* node, void* buffer) noexcept {
 }
 
 int vfs_manager::sys_stat(const char* path, void* statbuf) noexcept {
+    if (!path || !statbuf) return -14;
     vfs_node* node = resolve_path(path);
-    if (!node || !statbuf) return -1;
+    if (!node) return -2;
+    const int result = refresh_metadata(node);
+    if (result < 0) return result;
     fill_stat(node, statbuf);
     return 0;
 }
 
 int vfs_manager::sys_fstat(int fd, void* statbuf) noexcept {
     auto* node = get_fd_node(fd);
-    if (!node || !statbuf) return -1;
+    if (!node) return -9;
+    if (!statbuf) return -14;
+    const int result = refresh_metadata(node);
+    if (result < 0) return result;
     fill_stat(node, statbuf);
     return 0;
 }

@@ -191,14 +191,6 @@ int fcntl(int fd, int cmd, ...) {
     return (int)__syscall(SYS_FCNTL, (long)fd, (long)cmd, arg);
 }
 
-int stat(const char* pathname, struct stat* statbuf) {
-    return (int)__syscall(SYS_STAT, (long)pathname, (long)statbuf);
-}
-
-int fstat(int fd, struct stat* statbuf) {
-    return (int)__syscall(SYS_FSTAT, (long)fd, (long)statbuf);
-}
-
 int lstat(const char* pathname, struct stat* statbuf) {
     return stat(pathname, statbuf); // fallback to stat
 }

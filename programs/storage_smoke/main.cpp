@@ -21,6 +21,7 @@ bool verify_file(const char* path, size_t size, bool seed) {
     if (fd < 0) return false;
     struct stat info{};
     bool ok = fstat(fd, &info) == 0 && info.st_size == static_cast<int64_t>(size);
+    ok = ok && stat(path, &info) == 0 && info.st_size == static_cast<int64_t>(size);
     uint8_t data[2048];
     if (ok && size) ok = read(fd, data, size) == static_cast<ssize_t>(size);
     for (size_t i = 0; ok && i < size; ++i) {
@@ -50,6 +51,13 @@ bool verify_ramfs() {
 bool check_errors() {
     errno = 0;
     if (fsync(-1) != -1 || errno != EBADF) return false;
+    struct stat info{};
+    errno = 0;
+    if (fstat(-1, &info) != -1 || errno != EBADF) return false;
+    errno = 0;
+    if (stat("/fat32/missing.bin", &info) != -1 || errno != ENOENT) return false;
+    errno = 0;
+    if (lseek(-1, 0, SEEK_END) != -1 || errno != EBADF) return false;
     int fd = open(SHRINK, O_RDONLY);
     if (fd < 0) return false;
     errno = 0;
@@ -94,9 +102,22 @@ int main() {
         REQUIRE(verify_file(SHRINK, 37, true));
         fd = open(REWRITE, O_RDWR);
         REQUIRE(fd >= 0);
+        const int observer = open(REWRITE, O_RDWR);
+        const int seeker = open(REWRITE, O_RDWR);
+        REQUIRE(observer >= 0 && seeker >= 0);
+        REQUIRE(ftruncate(fd, 37) == 0);
+        // Each old open must refresh independently, before any read/write/fsync.
+        REQUIRE(lseek(seeker, 0, SEEK_END) == 37 && write(seeker, "x", 1) == 1);
+        struct stat info{};
+        REQUIRE(fstat(observer, &info) == 0 && info.st_size == 38);
+        REQUIRE(stat(REWRITE, &info) == 0 && info.st_size == 38);
         REQUIRE(ftruncate(fd, 0) == 0 && fsync(fd) == 0);
+        REQUIRE(lseek(observer, 0, SEEK_END) == 0);
         REQUIRE(verify_file(REWRITE, 0, false));
         REQUIRE(write(fd, payload, PAYLOAD_SIZE) == static_cast<ssize_t>(PAYLOAD_SIZE) && fsync(fd) == 0);
+        REQUIRE(fstat(seeker, &info) == 0 && info.st_size == static_cast<int64_t>(PAYLOAD_SIZE));
+        close(observer);
+        close(seeker);
         close(fd);
         REQUIRE(verify_file(REWRITE, PAYLOAD_SIZE, false));
         REQUIRE(check_errors());

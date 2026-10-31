@@ -15,8 +15,10 @@ namespace kernel::vfs::fat32 {
 // Operations reserve the device without waiting; contention returns 0/null via
 // the existing read/write callbacks; truncate/fsync return negative errno.
 // Truncate durably shrinks EOF while retaining the chain. Growth via truncate
-// returns -EOPNOTSUPP. Fsync explicitly checks device flush completion. These
-// remain a bounded profile, not full POSIX filesystem semantics. Successful
+// returns -EOPNOTSUPP. Fsync explicitly checks device flush completion.
+// Metadata queries refresh cached EOF under the same nonwaiting reservation;
+// refresh errors leave the cached size unchanged.
+// These remain a bounded profile, not full POSIX filesystem semantics. Successful
 // mount/vnode objects remain owned by the VFS.
 vfs_node* mount(uint32_t partition_lba) noexcept;
 
