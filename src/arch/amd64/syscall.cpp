@@ -12,6 +12,7 @@
 #include <kernel/log.hpp>
 #include <kernel/memory/mmap.hpp>
 #include <kernel/net/socket.hpp>
+#include <kernel/power.hpp>
 #include <kernel/process/signal.hpp>
 #include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
@@ -317,6 +318,8 @@ static long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a
     case SYS_LOG_CTL:
         return kernel::log::sys_log_ctl(static_cast<uint32_t>(a1), reinterpret_cast<void*>(a2), static_cast<size_t>(a3),
                                         static_cast<uintptr_t>(a4));
+    case SYS_POWER_CTL:
+        return kernel::power::sys_power_ctl(static_cast<uint32_t>(a1));
     case SYS_WAITPID:
         return kernel::scheduler::scheduler::sys_waitpid(static_cast<int>(a1), reinterpret_cast<int*>(a2),
                                                          static_cast<int>(a3));

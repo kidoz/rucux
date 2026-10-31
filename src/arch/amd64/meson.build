@@ -11,7 +11,8 @@ kernel_args += [
 user_c_args += ['-mcmodel=large', '-DRUCUX_ARCH="amd64"']
 user_cpp_args += ['-mcmodel=large', '-DRUCUX_ARCH="amd64"']
 
-arch_feature_sources = kernel_net_sources + kernel_local_socket_sources + kernel_ramfs_sources + kernel_storage_sources
+arch_feature_sources = kernel_net_sources + kernel_local_socket_sources + kernel_runtime_services_sources
+arch_feature_sources += kernel_ramfs_sources + kernel_storage_sources
 arch_kernel_sources = files(
     'boot.cpp',
     'gdt.cpp',
@@ -20,6 +21,7 @@ arch_kernel_sources = files(
     'syscall.cpp',
     'pic.cpp',
     'pit.cpp',
+    'power.cpp',
     'console.cpp',
     'uart.cpp',
     'pci.cpp',

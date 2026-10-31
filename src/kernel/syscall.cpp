@@ -322,6 +322,7 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
     case SYS_FTRUNCATE:
     case SYS_FSYNC:
     case SYS_FCNTL:
+    case SYS_POWER_CTL:
     case SYS_KILL:
     case SYS_SIGRETURN:
         break;
