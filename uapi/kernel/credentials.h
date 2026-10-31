@@ -8,6 +8,8 @@ enum rucux_capability : uint32_t {
     RUCUX_CAP_INPUT_ADMIN = 1u << 2,
     RUCUX_CAP_SESSION_ADMIN = 1u << 3,
     RUCUX_CAP_POWER = 1u << 4,
+    // Direct port I/O and IRQ waits. Not implied by uid 0.
+    RUCUX_CAP_RAW_IO = 1u << 5,
 };
 
 struct rucux_credentials {

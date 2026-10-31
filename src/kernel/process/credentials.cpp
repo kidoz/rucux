@@ -18,6 +18,20 @@ static bool is_privileged(const credentials& creds) noexcept {
     return creds.euid == ROOT_UID;
 }
 
+bool raw_io_allowed() noexcept {
+    auto* thread = current();
+    return thread && has_capability(thread->creds, RUCUX_CAP_RAW_IO);
+}
+
+bool ipc_send_allowed(uint32_t target_tid) noexcept {
+    auto* caller = current();
+    if (!caller) return false;
+    // A missing target keeps the existing send path, which reports the miss.
+    auto* target = scheduler::scheduler::get_thread_by_tid(target_tid);
+    if (!target) return true;
+    return may_ipc(caller->creds, target->creds);
+}
+
 long sys_getuid() noexcept {
     auto* thread = current();
     return thread ? static_cast<long>(thread->creds.ruid) : -1;
