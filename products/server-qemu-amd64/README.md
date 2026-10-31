@@ -82,14 +82,17 @@ Hosted regression checks:
 
 ```sh
 make -C tests run
-c++ -std=c++23 -g -fsanitize=address,undefined \
-  -Isrc/include -idirafter lib/include -I. tests/test_network.cpp \
-  src/kernel/net/{netbuf,netif,ethernet,arp,ipv4,checksum,udp,tcp,socket}.cpp \
-  -o build/host-tests/test_network_sanitized
-./build/host-tests/test_network_sanitized
+make -C tests OBJDIR=../build/host-tests/sanitized \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=address,undefined' \
+  LDLIBS='-lpthread -fsanitize=address,undefined' test_network
+build/host-tests/sanitized/test_network
 ```
 
 The network suite uses production protocol/socket code with host allocation, scheduler and I/O boundaries. It checks length/checksum validation, bounded queues/backlogs, receive-buffer saturation, file-descriptor exhaustion, partial acknowledgements, congestion backpressure, RTT estimation and ambiguous ACK suppression, MSS option validation, sequence wraparound, zero-window recovery and silence expiry, retry exhaustion, simultaneous retransmissions, ARP queue expiry, timeout cleanup, and 100 TCP lifecycles with allocation counts and bytes returning to baseline. A zero-window peer answers 100 probes over several simulated minutes without increasing live allocations or bytes. These host checks do not establish DMA or SMP correctness.
+
+See [stateful campaigns and coverage-guided fuzzing](../../tests/README.md) for
+seed replay, input bounds and the optional libFuzzer target. Use the Makefile so
+production allocation calls are tracked without overriding the host runtime's allocator.
 
 ## Current server limits
 

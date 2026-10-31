@@ -71,4 +71,7 @@ just validate             # all product/component/image manifests
 scripts/test_smoke_all.sh # QEMU poweroff/reboot gates; needs target prerequisites
 ```
 
+See [hosted test and fuzzing commands](tests/README.md) for reproducible stateful
+network campaigns and the optional Clang/libFuzzer target.
+
 CI runs host checks, manifest validation, and a three-architecture cross-build matrix. QEMU smoke tests remain separate because they require architecture-specific emulators, firmware, and host tools.
