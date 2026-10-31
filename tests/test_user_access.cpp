@@ -6,6 +6,13 @@
 #include <kernel/syscall.hpp>
 #include <uapi/kernel/syscalls.h>
 
+namespace kernel::process {
+bool allow_raw_io_for_test = true;
+bool raw_io_allowed() noexcept {
+    return allow_raw_io_for_test;
+}
+} // namespace kernel::process
+
 namespace {
 alignas(4096) uint8_t pages[8192];
 bool present[2];
@@ -16,6 +23,7 @@ void reset() {
     memset(pages, 0xA5, sizeof(pages));
     present[0] = present[1] = writable[0] = writable[1] = true;
     invoked = false;
+    kernel::process::allow_raw_io_for_test = true;
 }
 long reject_handler(long, long, long, long, long, long, long) {
     invoked = true;
@@ -143,6 +151,24 @@ TEST(waitpid_status_is_copied_back) {
     };
     ASSERT_EQ(kernel::checked_syscall(handler, SYS_WAITPID, 42, BASE, 0, 0, 0, 0), 42);
     ASSERT_EQ(*reinterpret_cast<int*>(pages), 7 << 8);
+}
+TEST(raw_io_requires_capability) {
+    reset();
+    kernel::process::allow_raw_io_for_test = false;
+    ASSERT_EQ(kernel::checked_syscall(reject_handler, SYS_OUTB, 0x3F8, 'A', 0, 0, 0, 0), -1);
+    ASSERT_EQ(kernel::checked_syscall(reject_handler, SYS_INB, 0x60, 0, 0, 0, 0, 0), -1);
+    ASSERT_EQ(kernel::checked_syscall(reject_handler, SYS_IRQ_WAIT, 1, 0, 0, 0, 0, 0), -1);
+    ASSERT(!invoked);
+    kernel::process::allow_raw_io_for_test = true;
+    auto handler = +[](long, long, long, long, long, long, long) -> long {
+        invoked = true;
+        return 0;
+    };
+    ASSERT_EQ(kernel::checked_syscall(handler, SYS_OUTB, 0x3F8, 'A', 0, 0, 0, 0), 0);
+    ASSERT(invoked);
+    invoked = false;
+    ASSERT_EQ(kernel::checked_syscall(handler, SYS_EXIT, 0, 0, 0, 0, 0, 0), 0);
+    ASSERT(invoked);
 }
 TEST(waitpid_rejects_kernel_status_pointer) {
     reset();

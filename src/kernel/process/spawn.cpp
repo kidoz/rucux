@@ -2,6 +2,7 @@
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
+#include <kernel/process/credentials.hpp>
 #include <kernel/process/elf.hpp>
 #include <kernel/process/spawn.hpp>
 #include <kernel/scheduler/scheduler.hpp>
@@ -22,6 +23,10 @@ constexpr uintptr_t USER_STACK_BASE = 0x1000100000ULL;
 constexpr uintptr_t USER_STACK_BASE = 0x80010000UL;
 #endif
 constexpr size_t USER_STACK_SIZE = 64 * 1024;
+
+bool grants_raw_io(const char* path) noexcept {
+    return lib::strcmp(path, "/bin/console") == 0 || lib::strcmp(path, "/bin/kbd") == 0;
+}
 
 void open_stdio(kernel::scheduler::thread* t) noexcept {
     auto* root = kernel::vfs::vfs_manager::get_root();
@@ -126,6 +131,10 @@ long spawn_path(const char* path, uint32_t requested_tid) noexcept {
     }
 
     open_stdio(t);
+    // Raw port access is granted to the driver binaries themselves. It is not
+    // inherited from the parent, so a driver cannot pass it to a child it spawns.
+    t->creds.capabilities &= ~static_cast<uint32_t>(RUCUX_CAP_RAW_IO);
+    if (grants_raw_io(path)) t->creds.capabilities |= static_cast<uint32_t>(RUCUX_CAP_RAW_IO);
     kernel::scheduler::scheduler::add_thread(t);
     return t->tid;
 }

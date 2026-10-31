@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/ipc/ipc.hpp>
 #include <kernel/memory/user_access.hpp>
+#include <kernel/process/credentials.hpp>
 #include <kernel/syscall.hpp>
 #include <kernel/time.hpp>
 #include <knew.hpp>
@@ -221,9 +222,12 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
         break; // futex_wait copies the word while holding its wait-bucket lock.
     case SYS_EXIT:
     case SYS_CLOSE:
+        break;
     case SYS_OUTB:
     case SYS_INB:
     case SYS_IRQ_WAIT:
+        if (!process::raw_io_allowed()) return -1;
+        break;
     case SYS_MMAP:
     case SYS_MUNMAP:
     case SYS_SOCKET:
