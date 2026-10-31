@@ -1,0 +1,10 @@
+name: smoke-storage-qemu-amd64
+board: qemu-amd64
+services:
+  - init
+  - console
+programs:
+  - storage_smoke
+ports: []
+images:
+  - uefi-disk
