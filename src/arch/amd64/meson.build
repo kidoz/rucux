@@ -1,0 +1,35 @@
+userspace_enabled = true
+entry_point = 'kernel_main'
+kernel_linker_script = meson.current_source_dir() + '/linker.ld'
+
+kernel_args += [
+    '-mno-red-zone',
+    '-mno-mmx',
+    '-mno-sse',
+    '-mno-sse2',
+]
+user_c_args += ['-mcmodel=large', '-DRUCUX_ARCH="amd64"']
+user_cpp_args += ['-mcmodel=large', '-DRUCUX_ARCH="amd64"']
+
+arch_feature_sources = kernel_net_sources + kernel_ramfs_sources + kernel_storage_sources
+arch_kernel_sources = files(
+    'boot.cpp',
+    'gdt.cpp',
+    'idt.cpp',
+    'tss.cpp',
+    'syscall.cpp',
+    'pic.cpp',
+    'pit.cpp',
+    'console.cpp',
+    'uart.cpp',
+    'pci.cpp',
+    'framebuffer.cpp',
+    'vmm.cpp',
+    'cpu/percpu.cpp',
+    'acpi.cpp',
+    'apic.cpp',
+    'smp.cpp',
+    'smp_trampoline.S',
+    'scheduler/switch.S',
+    'e1000.cpp',
+)
