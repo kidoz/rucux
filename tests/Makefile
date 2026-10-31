@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++23 -Wall -Wextra -g
 CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
 LDLIBS = -lpthread
 OBJDIR ?= ../build/host-tests
-TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_fat32 test_ata
+TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata
 TESTS = $(addprefix $(OBJDIR)/,$(TEST_NAMES))
 LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
 LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
@@ -33,6 +33,10 @@ $(OBJDIR)/libc_%.o: ../libc/src/%.cpp | $(OBJDIR)
 $(OBJDIR)/test_atomic: $(OBJDIR)/test_atomic.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/test_spinlock: $(OBJDIR)/test_spinlock.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+$(OBJDIR)/rcu.o: ../src/kernel/sync/rcu.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_rcu: $(OBJDIR)/test_rcu.o $(OBJDIR)/rcu.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/fat32.o: ../src/kernel/vfs/fat32.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<

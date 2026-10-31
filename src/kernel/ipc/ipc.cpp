@@ -4,6 +4,7 @@
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/sync/rcu.hpp>
 #include <kernel/sync/spinlock.hpp>
 #include <lib/string.hpp>
 
@@ -123,6 +124,7 @@ void ipc_manager::receive_sync(message& msg) noexcept {
 // Like switch_context but also handles CR3/TSS for cross-address-space calls.
 static void direct_switch(scheduler::thread* from, scheduler::thread* to) noexcept {
     auto* pcpu = cpu::this_cpu();
+    kernel::rcu::note_quiescent_state();
 
     to->state = scheduler::thread_state::RUNNING;
     to->last_cpu = pcpu->cpu_id;

@@ -59,6 +59,10 @@ extern per_cpu g_percpu[MAX_CPUS];
 extern atomic<uint32_t> g_cpu_count;
 
 // Get the per_cpu struct for the calling CPU (fast path via segment register)
+#if defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1
+// Hosted harnesses supply CPU identity without accessing privileged registers.
+per_cpu* this_cpu() noexcept;
+#else
 inline per_cpu* this_cpu() noexcept {
 #if defined(__x86_64__)
     per_cpu* p;
@@ -76,6 +80,7 @@ inline per_cpu* this_cpu() noexcept {
     return &g_percpu[0];
 #endif
 }
+#endif
 
 // Get per_cpu by CPU id (for cross-CPU access, e.g. IPI target)
 inline per_cpu* get_cpu(uint32_t id) noexcept {

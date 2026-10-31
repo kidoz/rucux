@@ -603,6 +603,9 @@ void scheduler::schedule() noexcept {
     uintptr_t flags = kernel::irq_save();
     auto* pcpu = cpu::this_cpu();
 
+    // Idle/same-thread passes must also advance RCU grace periods.
+    kernel::rcu::note_quiescent_state();
+
     cleanup_terminated();
 
     thread* old_thread = pcpu->current_thread;
@@ -636,6 +639,7 @@ choose_next:
     // If still nothing, check if current thread can continue
     if (!new_thread) {
         if (old_thread && (old_thread->state == thread_state::RUNNING || old_thread->state == thread_state::READY)) {
+            kernel::rcu::process_callbacks();
             kernel::irq_restore(flags);
             return;
         }
@@ -660,8 +664,6 @@ choose_next:
     if (old_thread != new_thread) {
         uint64_t old_tid = old_thread ? old_thread->tid : 0;
         TRACE_INSTANT(TRACE_EVENT_SCHED_SWITCH, old_tid, new_thread->tid);
-        // Context switch = quiescent state for RCU
-        kernel::rcu::note_quiescent_state();
 #ifdef __x86_64__
         arch::amd64::tss_set_rsp0(new_kstack);
 #endif

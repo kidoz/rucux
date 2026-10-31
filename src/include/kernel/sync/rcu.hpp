@@ -7,49 +7,30 @@
 
 namespace kernel::rcu {
 
-// Simplified RCU (Read-Copy-Update) for freestanding kernel.
-//
-// Readers: rcu_read_lock() / rcu_read_unlock() — very cheap, no atomics.
-//   Just increment/decrement a per-CPU nesting counter.
-//   While in an RCU read section, the CPU is not in a quiescent state.
-//
-// Writers: synchronize_rcu() — waits until all CPUs have passed through
-//   a quiescent state (i.e., all rcu_read_lock regions have ended).
-//   After synchronize_rcu() returns, it's safe to free old data.
-//
-// call_rcu(callback, arg) — deferred free: callback(arg) is invoked after
-//   the next grace period.
+// Non-preemptible RCU: read sections save/disable IRQs and may nest. Readers
+// must not block, yield, migrate, or call synchronize(). Keep sections short.
+// Publish protected pointers with atomic<T*>::store(release), and acquire-load
+// them inside a read section. Unlink an object before requesting reclamation.
+// CPU IDs must be contiguous; CPU hot-unplug is not supported.
 
-// Per-CPU RCU state (embedded in per_cpu or stored separately)
-struct rcu_cpu_data {
-    uint32_t nesting;       // Read-side nesting depth
-    uint64_t passed_quiesc; // Set by each CPU when it passes quiescent state
-};
-
-// Initialize RCU subsystem
+// Boot/test initialization only: no readers, callbacks, or updaters may exist.
 void init() noexcept;
 
-// Reader API — extremely cheap (just per-CPU counter)
-inline void read_lock() noexcept {
-    // Disable preemption (IRQs off for the read section)
-    // For a simple kernel: just bump the nesting counter.
-    // In a full implementation, preemption would be disabled.
-    // We rely on the fact that schedule() calls note_quiescent_state().
-}
-
-inline void read_unlock() noexcept {
-    // Symmetric with read_lock
-}
+void read_lock() noexcept;
+void read_unlock() noexcept;
 
 // Writer API — synchronous wait for grace period
 void synchronize() noexcept;
 
-// Callback-based deferred free
+// Callback-based deferred free. False means allocation failed or cb was null;
+// the caller retains ownership and must not reclaim the object prematurely.
+// Callbacks run outside the list lock, in the processing caller's IRQ context,
+// and must not block. They may enqueue another callback.
 using rcu_callback = void (*)(void* arg);
-void call_rcu(rcu_callback cb, void* arg) noexcept;
+[[nodiscard]] bool call_rcu(rcu_callback cb, void* arg) noexcept;
 
-// Called from the scheduler on every context switch.
-// Marks this CPU as having passed a quiescent state.
+// Called on scheduler passes/direct switches and the outermost read unlock.
+// Does not acknowledge a grace period while this CPU has an active reader.
 void note_quiescent_state() noexcept;
 
 // Called periodically (e.g., from timer IRQ) to process callbacks
