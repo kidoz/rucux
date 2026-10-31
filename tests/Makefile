@@ -81,7 +81,23 @@ $(OBJDIR)/test_tty: $(OBJDIR)/test_tty.o $(OBJDIR)/tty.o
 
 NETWORK_SOURCES = netbuf netif ethernet arp ipv4 checksum udp tcp socket
 NETWORK_OBJECTS = $(addprefix $(OBJDIR)/net_,$(addsuffix .o,$(NETWORK_SOURCES)))
-$(OBJDIR)/net_%.o: ../src/kernel/net/%.cpp | $(OBJDIR)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/net_%.o: ../src/kernel/net/%.cpp network_test_alloc.hpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -include network_test_alloc.hpp -MMD -MP -c -o $@ $<
 $(OBJDIR)/test_network: $(OBJDIR)/test_network.o $(NETWORK_OBJECTS)
 	$(CXX) -o $@ $^ $(LDLIBS)
+
+# Optional Clang/libFuzzer campaign. Separate objects keep sanitizers out of the
+# normal hosted build. The in-process fixtures never open host network sockets.
+.PHONY: fuzz-network
+fuzz-network: $(OBJDIR)/fuzz_network
+FUZZ_FLAGS = -DRUCUX_NETWORK_FUZZ -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer
+FUZZ_OBJECTS = $(OBJDIR)/network-fuzz/test_network.o $(addprefix $(OBJDIR)/network-fuzz/net_,$(addsuffix .o,$(NETWORK_SOURCES)))
+$(OBJDIR)/network-fuzz:
+	mkdir -p $@
+$(OBJDIR)/network-fuzz/test_network.o: test_network.cpp | $(OBJDIR)/network-fuzz
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(FUZZ_FLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/network-fuzz/net_%.o: ../src/kernel/net/%.cpp network_test_alloc.hpp | $(OBJDIR)/network-fuzz
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(FUZZ_FLAGS) -include network_test_alloc.hpp -MMD -MP -c -o $@ $<
+$(OBJDIR)/fuzz_network: $(FUZZ_OBJECTS)
+	$(CXX) $(FUZZ_FLAGS) -o $@ $^ $(LDLIBS)
+-include $(wildcard $(OBJDIR)/network-fuzz/*.d)

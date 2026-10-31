@@ -3,6 +3,7 @@
 #include "test_harness.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #undef htons
 #undef htonl
 #undef ntohs
@@ -27,7 +28,7 @@ kernel::scheduler::thread current{};
 kernel::vfs::vfs_node* fds[16]{};
 void (*on_schedule)();
 } // namespace
-void* operator new(size_t size) {
+extern "C" void* rucux_network_allocate(size_t size) {
     auto* header = static_cast<Allocation*>(std::malloc(sizeof(Allocation) + size));
     if (!header) throw std::bad_alloc();
     header->size = size;
@@ -35,24 +36,21 @@ void* operator new(size_t size) {
     live_bytes += size;
     return header + 1;
 }
-void operator delete(void* ptr) noexcept {
+extern "C" void rucux_network_deallocate(void* ptr) noexcept {
     if (!ptr) return;
     auto* header = static_cast<Allocation*>(ptr) - 1;
     --live_allocations;
     live_bytes -= header->size;
     std::free(header);
 }
-void* operator new[](size_t size) {
-    return ::operator new(size);
-}
-void operator delete[](void* ptr) noexcept {
-    ::operator delete(ptr);
+extern "C" void rucux_network_deallocate_sized(void* ptr, size_t) noexcept {
+    rucux_network_deallocate(ptr);
 }
 extern "C" void* kmalloc(size_t size) noexcept {
-    return ::operator new(size);
+    return rucux_network_allocate(size);
 }
 extern "C" void kfree(void* ptr) noexcept {
-    ::operator delete(ptr);
+    rucux_network_deallocate(ptr);
 }
 namespace kernel {
 void kwrite(const char*) noexcept {}
@@ -916,8 +914,203 @@ TEST(tcp_sequence_wrap_preserves_partial_ack_and_mss_suffix) {
     ASSERT_EQ(live_allocations, before);
 }
 
-int main() {
+namespace {
+size_t campaign_step;
+
+// Three bytes describe one operation. The fixture preserves valid endpoints and
+// sequence numbers while mutations change operation order, sizes and timing.
+void network_campaign(const uint8_t* input, size_t size) {
+    capture_iface();
+    const auto before = live_allocations, bytes = live_bytes;
+    ticks = 0;
+    auto* pcb = established_fixture();
+    auto* udp = udp_new();
+    ASSERT(udp);
+    ASSERT_EQ(udp_bind(udp, LO, htons(19091)), 0);
+    uint8_t expected[32768]{};
+    size_t written = 0, consumed = 0;
+    size_t datagrams[32]{};
+    size_t produced = 0, received = 0;
+
+    for (size_t pos = 0; pos + 2 < size && pos < 3072; pos += 3) {
+        campaign_step = pos / 3;
+        captured_count = 0; // Output is intentionally lost unless explicitly ACKed.
+        const auto op = input[pos] % 12;
+        const auto arg = input[pos + 1];
+        const auto value = input[pos + 2];
+        char payload[64];
+        std::memset(payload, value, sizeof(payload));
+        switch (op) {
+        case 0: {
+            auto previous = pcb->snd_nxt;
+            long sent = tcp_send(pcb, payload, arg % sizeof(payload) + 1);
+            ASSERT(sent == -11 || sent == -107 || (sent > 0 && sent <= 64));
+            ASSERT_EQ(pcb->snd_nxt - previous, sent > 0 ? static_cast<uint32_t>(sent) : 0U);
+            break;
+        }
+        case 1: {
+            auto flight = pcb->snd_nxt - pcb->snd_una;
+            auto acked = arg & 1 ? flight : (flight ? value % flight : 0);
+            receive_ack(pcb, pcb->snd_una + acked);
+            break;
+        }
+        case 2:
+            receive_ack(pcb, pcb->snd_una, TCP_ACK, arg & 1 ? static_cast<uint16_t>(value * 16) : 0);
+            break;
+        case 3:
+            ticks += 1 + static_cast<uint64_t>(value) * 100;
+            tcp_tick(ticks);
+            break;
+        case 4:
+            if (pcb->state == tcp_state::ESTABLISHED) {
+                const size_t length = arg % sizeof(payload) + 1;
+                const auto previous = pcb->rcv_nxt;
+                const auto window = pcb->rcv_wnd;
+                receive_ack(pcb, pcb->snd_una, TCP_ACK, 65535, nullptr, 0, payload, length);
+                size_t accepted = pcb->rcv_nxt - previous;
+                ASSERT_EQ(accepted, length < window ? length : window);
+                ASSERT(written - consumed + accepted <= sizeof(expected));
+                for (size_t i = 0; i < accepted; ++i)
+                    expected[written++ % sizeof(expected)] = value;
+            }
+            break;
+        case 5: {
+            const auto previous = pcb->rcv_nxt;
+            receive_ack(pcb, pcb->snd_una, TCP_ACK, 65535, nullptr, 0, payload, arg % 64 + 1,
+                        static_cast<int32_t>(value) + 1);
+            ASSERT_EQ(pcb->rcv_nxt, previous);
+            break;
+        }
+        case 6:
+            if (written != consumed) {
+                char data[64];
+                const size_t wanted = arg % sizeof(data) + 1;
+                const size_t available = written - consumed;
+                const size_t count = wanted < available ? wanted : available;
+                ASSERT_EQ(tcp_recv(pcb, data, wanted), static_cast<long>(count));
+                for (size_t i = 0; i < count; ++i)
+                    ASSERT_EQ(static_cast<uint8_t>(data[i]), expected[consumed++ % sizeof(expected)]);
+            }
+            break;
+        case 7: {
+            auto* packet = udp_packet(value % 64);
+            add_ip(packet);
+            auto* ip = reinterpret_cast<ipv4_header*>(packet->data());
+            // Exercise nested lengths and fragment rejection with a valid IP checksum.
+            if (arg & 1)
+                ip->total_length = htons(static_cast<uint16_t>(19 - arg % 20));
+            else
+                ip->flags_fragment = htons(static_cast<uint16_t>(1 + arg));
+            ip->checksum = 0;
+            ip->checksum = checksum(ip, 20);
+            const auto queued = udp->recv_count;
+            ipv4_input(netif_loopback(), packet);
+            ASSERT_EQ(udp->recv_count, queued);
+            break;
+        }
+        case 8: {
+            const size_t length = value % 64;
+            const bool valid = !(arg & 1);
+            auto* packet = udp_packet(length);
+            if (!valid) reinterpret_cast<udp_header*>(packet->data())->length = htons(7);
+            if (valid && produced - received < 32) datagrams[produced++ % 32] = length;
+            udp_input(netif_loopback(), packet);
+            break;
+        }
+        case 9:
+            if (produced != received) {
+                char data[64];
+                size_t length = datagrams[received++ % 32];
+                ASSERT_EQ(udp_recvfrom(udp, data, sizeof(data), nullptr, nullptr), static_cast<long>(length));
+                for (size_t i = 0; i < length; ++i)
+                    ASSERT_EQ(data[i], 'x');
+            }
+            break;
+        case 10:
+            if (pcb->state == tcp_state::ESTABLISHED) receive_ack(pcb, pcb->snd_nxt, TCP_ACK | TCP_FIN);
+            break;
+        case 11:
+            expire_closed(pcb);
+            pcb = established_fixture();
+            written = consumed = 0;
+            break;
+        }
+        ASSERT(pcb->unacked_count <= 8);
+        ASSERT(pcb->rcv_buf_head < pcb->rcv_buf_size);
+        ASSERT(pcb->rcv_buf_tail < pcb->rcv_buf_size);
+        ASSERT_EQ((pcb->rcv_buf_head + pcb->rcv_buf_size - pcb->rcv_buf_tail) % pcb->rcv_buf_size, written - consumed);
+        ASSERT_EQ(udp->recv_count, static_cast<int>(produced - received));
+        ASSERT(static_cast<int32_t>(pcb->snd_nxt - pcb->snd_una) >= 0);
+    }
+    captured_count = 0;
+    expire_closed(pcb);
+    udp_free(udp);
+    ASSERT_EQ(live_allocations, before);
+    ASSERT_EQ(live_bytes, bytes);
+}
+
+void seeded_campaign(uint32_t seed, size_t steps) {
+    uint8_t input[3072];
+    auto random = seed;
+    for (size_t i = 0; i < steps * 3; ++i) {
+        random = random * 1664525U + 1013904223U;
+        input[i] = static_cast<uint8_t>(random >> 24);
+    }
+    try {
+        network_campaign(input, steps * 3);
+    } catch (...) {
+        std::cerr << "Network campaign failed: seed=" << seed << " step=" << campaign_step
+                  << " replay: test_network --campaign " << seed << " 1 " << steps << '\n';
+        throw;
+    }
+}
+} // namespace
+
+TEST(network_stateful_seeded_campaigns) {
+    for (uint32_t seed = 0; seed < 32; ++seed)
+        seeded_campaign(seed, 128);
+}
+
+#if defined(RUCUX_NETWORK_FUZZ)
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* input, size_t size) {
+    static const bool initialized = [] {
+        net_init();
+        socket_manager::init();
+        return true;
+    }();
+    (void)initialized;
+    network_campaign(input, size);
+    return 0;
+}
+#else
+int main(int argc, char** argv) {
     net_init();
     socket_manager::init();
+    if (argc != 1) {
+        unsigned long numbers[3]{};
+        bool valid = argc == 5 && std::strcmp(argv[1], "--campaign") == 0;
+        for (int i = 0; valid && i < 3; ++i) {
+            char* end = nullptr;
+            numbers[i] = std::strtoul(argv[i + 2], &end, 10);
+            valid = argv[i + 2][0] >= '0' && argv[i + 2][0] <= '9' && end && !*end;
+        }
+        valid =
+            valid && numbers[0] <= UINT32_MAX && numbers[1] && numbers[1] <= 1024 && numbers[2] && numbers[2] <= 1024;
+        if (!valid) {
+            std::cerr << "Usage: test_network [--campaign SEED CASES STEPS] (CASES/STEPS: 1..1024)\n";
+            return 2;
+        }
+        try {
+            for (unsigned long i = 0; i < numbers[1]; ++i)
+                seeded_campaign(static_cast<uint32_t>(numbers[0] + i), numbers[2]);
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+        std::cout << "Network campaign PASS: seed=" << numbers[0] << " cases=" << numbers[1] << " steps=" << numbers[2]
+                  << '\n';
+        return 0;
+    }
     return rucux_test::run_all_tests("Network protocols and sockets");
 }
+#endif
