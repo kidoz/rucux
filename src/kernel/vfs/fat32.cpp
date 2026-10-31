@@ -25,6 +25,8 @@ struct fat32_node_internal {
     vfs_node* vnode;
     fat32_info* info;
     uint32_t start_cluster;
+    uint32_t directory_lba;
+    uint16_t directory_offset;
 };
 
 static uint32_t cluster_to_lba(fat32_info* info, uint32_t cluster) {
@@ -101,6 +103,58 @@ static size_t fat32_read(vfs_node* node, size_t offset, size_t size, void* buffe
     return bytes_read;
 }
 
+static size_t fat32_write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
+    if (!node || (!buffer && size != 0) || size > SIZE_MAX - offset) return 0;
+    if (size == 0) return 0;
+
+    auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
+    fat32_info* info = internal->info;
+    uint32_t cluster = internal->start_cluster;
+    const uint32_t cluster_size = info->sectors_per_cluster * info->bytes_per_sector;
+
+    size_t skip_clusters = offset / cluster_size;
+    for (size_t i = 0; i < skip_clusters; ++i) {
+        cluster = get_next_cluster(info, cluster);
+        if (cluster >= 0x0FFFFFF8) return 0;
+    }
+
+    size_t cluster_offset = offset % cluster_size;
+    size_t bytes_written = 0;
+    const auto* ptr = static_cast<const uint8_t*>(buffer);
+    uint8_t sec_buf[512];
+
+    while (bytes_written < size && cluster >= 2 && cluster < 0x0FFFFFF8) {
+        uint32_t lba = cluster_to_lba(info, cluster);
+        for (uint8_t sec = 0; sec < info->sectors_per_cluster && bytes_written < size; ++sec) {
+            if (cluster_offset >= 512) {
+                cluster_offset -= 512;
+                continue;
+            }
+            if (!ata::read_sectors(lba + sec, 1, sec_buf)) break;
+
+            size_t to_copy = 512 - cluster_offset;
+            if (size - bytes_written < to_copy) to_copy = size - bytes_written;
+            lib::memcpy(sec_buf + cluster_offset, ptr + bytes_written, to_copy);
+            if (!ata::write_sectors(lba + sec, 1, sec_buf)) break;
+
+            bytes_written += to_copy;
+            cluster_offset = 0;
+        }
+        cluster = get_next_cluster(info, cluster);
+    }
+
+    size_t written_end = offset + bytes_written;
+    if (written_end > node->length) {
+        node->length = written_end;
+        if (internal->directory_lba != 0 && ata::read_sectors(internal->directory_lba, 1, sec_buf)) {
+            *reinterpret_cast<uint32_t*>(sec_buf + internal->directory_offset + 28) =
+                static_cast<uint32_t>(node->length);
+            ata::write_sectors(internal->directory_lba, 1, sec_buf);
+        }
+    }
+    return bytes_written;
+}
+
 static vfs_node* fat32_finddir(vfs_node* node, const char* name) noexcept {
     fat32_node_internal* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
     fat32_info* info = internal->info;
@@ -168,7 +222,7 @@ static vfs_node* fat32_finddir(vfs_node* node, const char* name) noexcept {
 
                     v->ops = new vfs_ops();
                     v->ops->read = fat32_read;
-                    v->ops->write = nullptr;
+                    v->ops->write = fat32_write;
                     v->ops->open = nullptr;
                     v->ops->close = nullptr;
                     v->ops->ioctl = nullptr;
@@ -183,6 +237,8 @@ static vfs_node* fat32_finddir(vfs_node* node, const char* name) noexcept {
                     new_internal->start_cluster =
                         (static_cast<uint32_t>(entry[21]) << 24) | (static_cast<uint32_t>(entry[20]) << 16) |
                         (static_cast<uint32_t>(entry[27]) << 8) | (static_cast<uint32_t>(entry[26]));
+                    new_internal->directory_lba = lba + sec;
+                    new_internal->directory_offset = static_cast<uint16_t>(offset);
                     v->ptr = reinterpret_cast<vfs_node*>(new_internal);
                     return v;
                 }

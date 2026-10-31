@@ -122,11 +122,26 @@ size_t ramfs::read(vfs_node* node, size_t offset, size_t size, void* buffer) noe
 }
 
 size_t ramfs::write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
-    (void)node;
-    (void)offset;
-    (void)size;
-    (void)buffer;
-    return 0; // RAMFS is read-only for now via this interface
+    if (!node || (!buffer && size != 0) || size > SIZE_MAX - offset) return 0;
+    if (size == 0) return 0;
+
+    auto* internal = reinterpret_cast<ramfs_node_internal*>(node->ptr);
+    size_t required = offset + size;
+    if (required > internal->size) {
+        auto* expanded = new uint8_t[required];
+        if (!expanded) return 0;
+        lib::memset(expanded, 0, required);
+        if (internal->data && internal->size != 0) {
+            lib::memcpy(expanded, internal->data, internal->size);
+        }
+        delete[] internal->data;
+        internal->data = expanded;
+        internal->size = required;
+    }
+
+    lib::memcpy(internal->data + offset, buffer, size);
+    if (required > node->length) node->length = required;
+    return size;
 }
 
 vfs_node* ramfs::readdir(vfs_node* node, size_t index) noexcept {
