@@ -8,7 +8,7 @@ runtime:
   machine: virt
   cpu: cortex-a15
 artifacts:
-  kernel: builddir-arm/kernel.elf
+  kernel: kernel.elf
 platform:
   cpu_count: 1
   uart:

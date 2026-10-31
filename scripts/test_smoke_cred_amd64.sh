@@ -5,10 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PRODUCT="smoke-cred-qemu-amd64"
-BUILD_DIR="builddir-cred-smoke"
+BUILD_DIR="${RUCUX_BUILD_DIR:-build/${PRODUCT}}"
 KERNEL_PATH="${BUILD_DIR}/kernel.elf"
 TIMEOUT_SECS="${RUCUX_CRED_SMOKE_TIMEOUT:-25}"
-LOG_PATH="${RUCUX_CRED_SMOKE_LOG:-smoke_cred_run.log}"
+LOG_PATH="${RUCUX_CRED_SMOKE_LOG:-build/logs/${PRODUCT}/boot.log}"
+mkdir -p "$(dirname "${LOG_PATH}")"
 
 setup_builddir() {
     if [ -d "${BUILD_DIR}" ]; then

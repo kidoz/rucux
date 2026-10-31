@@ -70,7 +70,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Package a rucux port into a .rpkg file")
     parser.add_argument("port_dir", help="Path to the port directory containing port.yaml and pkg-stage/")
     parser.add_argument(
-        "--dest", default=str(product_info.REPO_ROOT / "packages"), help="Destination directory for the .rpkg file"
+        "--dest",
+        default=str(product_info.REPO_ROOT / "build" / "packages"),
+        help="Destination directory for the .rpkg file",
     )
 
     args = parser.parse_args()

@@ -6,7 +6,7 @@ boot:
 runtime:
   hardware: qemu-virt
 artifacts:
-  kernel: builddir-aarch64/kernel.elf
+  kernel: kernel.elf
 platform:
   # Matches the -smp value the aarch64 smoke test launches QEMU with.
   cpu_count: 4

@@ -25,9 +25,10 @@ export CXXFLAGS="-ffreestanding -mcmodel=large -fno-stack-protector -I${SYSROOT}
 export LDFLAGS="-nostdlib -static -L${SYSROOT}/usr/lib"
 export LIBS="-Wl,--start-group ${SYSROOT}/usr/lib/libc++.a ${SYSROOT}/usr/lib/libc++abi.a ${SYSROOT}/usr/lib/libunwind.a ${SYSROOT}/usr/lib/libc.a -Wl,--end-group"
 
-# The master build directory for ports
-export PORTS_BUILD_DIR="${RUCUX_ROOT}/builddir/ports"
-mkdir -p "${PORTS_BUILD_DIR}"
+# Build and package outputs stay outside the source directories.
+export PORTS_BUILD_DIR="${RUCUX_ROOT}/build/ports"
+PRODUCT_BUILD_DIR="${RUCUX_BUILD_DIR:-${RUCUX_ROOT}/build/dev-qemu-amd64}"
+mkdir -p "${PORTS_BUILD_DIR}" "${RUCUX_ROOT}/build/packages"
 
 # Ensure libc is in the sysroot
 mkdir -p "${SYSROOT}/usr/lib"
@@ -37,9 +38,9 @@ mkdir -p "${SYSROOT}/usr/include"
 cp -r "${RUCUX_ROOT}/libc/include/"* "${SYSROOT}/usr/include/"
 
 # Meson creates thin archives by default which breaks external toolchains. We must convert it.
-x86_64-elf-ar -t "${RUCUX_ROOT}/builddir/libc.a" > /dev/null || true # dummy check
-cp "${RUCUX_ROOT}/builddir/libc.a" "${SYSROOT}/usr/lib/libc_thin.a"
-cd "${RUCUX_ROOT}/builddir"
+x86_64-elf-ar -t "${PRODUCT_BUILD_DIR}/libc.a" > /dev/null || true # dummy check
+cp "${PRODUCT_BUILD_DIR}/libc.a" "${SYSROOT}/usr/lib/libc_thin.a"
+cd "${PRODUCT_BUILD_DIR}"
 x86_64-elf-ar -M <<EOF
 CREATE ${SYSROOT}/usr/lib/libc.a
 ADDLIB libc.a

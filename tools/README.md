@@ -34,5 +34,5 @@ typed interfaces and the bodies of existing untyped functions; this is gradual
 typing, not strict mode. Service policies and trace events use typed dictionaries,
 and the Ethernet test peer has typed interfaces.
 
-Tool caches are stored under `builddir-python-tools/`. No CI workflow is currently
-configured; these checks run locally through `just`.
+Tool caches are stored under `build/python-tools/`. CI runs the same checks
+exposed locally through `just`.

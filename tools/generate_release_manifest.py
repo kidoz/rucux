@@ -164,7 +164,7 @@ def generate_release(release_name: str) -> Path:
         if image_name not in declared_images:
             raise ReleaseError(f"release image '{image_name}' is not declared by product '{product_name}'")
 
-    release_output_dir = REPO_ROOT / "builddir" / "release" / release_name
+    release_output_dir = REPO_ROOT / "build" / "release" / release_name
     release_output_dir.mkdir(parents=True, exist_ok=True)
 
     resolved_ports = resolve_ports.resolve_ports(resolve_ports.normalize_ports(product_name))

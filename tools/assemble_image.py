@@ -30,6 +30,20 @@ def run_command(args: list[str]) -> None:
         raise AssembleError(f"command failed: {' '.join(args)}")
 
 
+def resolve_directory(path: str | Path | None, default: Path) -> Path:
+    if path is None:
+        return default
+    resolved = Path(path)
+    return resolved if resolved.is_absolute() else REPO_ROOT / resolved
+
+
+def artifact_path(base_dir: Path, raw_path: str, description: str) -> Path:
+    relative = Path(raw_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise AssembleError(f"{description} must be a relative artifact path: {raw_path}")
+    return base_dir / relative
+
+
 def bootloader_path_from_image(image: dict[str, object]) -> Path:
     raw_path = image.get("efi_bootloader")
     if not isinstance(raw_path, str) or not raw_path:
@@ -37,32 +51,31 @@ def bootloader_path_from_image(image: dict[str, object]) -> Path:
     return REPO_ROOT / raw_path
 
 
-def output_path_from_resolved(data: dict[str, object], image: dict[str, object]) -> Path:
+def output_path_from_resolved(
+    data: dict[str, object], image: dict[str, object], output_dir: str | Path | None = None
+) -> Path:
     raw_output = image.get("output")
-    if isinstance(raw_output, str) and raw_output:
-        return REPO_ROOT / raw_output
+    if not isinstance(raw_output, str) or not raw_output:
+        board = data.get("board")
+        if not isinstance(board, dict):
+            raise AssembleError("resolved board manifest is invalid")
+        artifacts = board.get("artifacts")
+        if not isinstance(artifacts, dict):
+            raise AssembleError("board manifest missing artifacts")
+        raw_board_output = artifacts.get("uefi_image")
+        if not isinstance(raw_board_output, str) or not raw_board_output:
+            raise AssembleError("board manifest missing artifacts.uefi_image")
+        raw_output = raw_board_output
 
-    board = data.get("board")
-    if not isinstance(board, dict):
-        raise AssembleError("resolved board manifest is invalid")
-
-    artifacts = board.get("artifacts")
-    if not isinstance(artifacts, dict):
-        raise AssembleError("board manifest missing artifacts")
-
-    raw_board_output = artifacts.get("uefi_image")
-    if not isinstance(raw_board_output, str) or not raw_board_output:
-        raise AssembleError("board manifest missing artifacts.uefi_image")
-    return REPO_ROOT / raw_board_output
+    product_name = str(data.get("name", "product"))
+    base_dir = resolve_directory(output_dir, REPO_ROOT / "build" / "images" / product_name)
+    return artifact_path(base_dir, raw_output, "image output")
 
 
-def kernel_path_from_resolved(board: dict[str, object]) -> Path:
+def kernel_path_from_resolved(board: dict[str, object], build_dir: str | Path | None = None) -> Path:
     override = os.environ.get("RUCUX_KERNEL_ARTIFACT")
     if override:
-        kernel_path = Path(override)
-        if not kernel_path.is_absolute():
-            kernel_path = REPO_ROOT / kernel_path
-        return kernel_path
+        return resolve_directory(override, REPO_ROOT)
 
     artifacts = board.get("artifacts")
     if not isinstance(artifacts, dict):
@@ -71,10 +84,16 @@ def kernel_path_from_resolved(board: dict[str, object]) -> Path:
     raw_kernel = artifacts.get("kernel")
     if not isinstance(raw_kernel, str) or not raw_kernel:
         raise AssembleError("board manifest missing artifacts.kernel")
-    return REPO_ROOT / raw_kernel
+    base_dir = resolve_directory(build_dir, REPO_ROOT / "build")
+    return artifact_path(base_dir, raw_kernel, "kernel artifact")
 
 
-def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Path:
+def assemble_uefi_disk(
+    data: dict[str, object],
+    image: dict[str, object],
+    build_dir: str | Path | None = None,
+    output_dir: str | Path | None = None,
+) -> Path:
     image_size_mib = image.get("size_mib")
     if not isinstance(image_size_mib, str) and not isinstance(image_size_mib, int):
         raise AssembleError("image manifest missing size_mib")
@@ -82,7 +101,7 @@ def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Pat
     if not isinstance(image_size_mib, (str, int)):
         raise AssembleError("image.size_mib must be an integer")
     size_mib = int(image_size_mib)
-    output_path = output_path_from_resolved(data, image)
+    output_path = output_path_from_resolved(data, image, output_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     bootloader_path = bootloader_path_from_image(image)
@@ -92,7 +111,7 @@ def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Pat
     board = data.get("board")
     if not isinstance(board, dict):
         raise AssembleError("resolved board manifest is invalid")
-    kernel_path = kernel_path_from_resolved(board)
+    kernel_path = kernel_path_from_resolved(board, build_dir)
     if not kernel_path.exists():
         raise AssembleError(f"kernel artifact not found: {kernel_path}")
 
@@ -128,7 +147,7 @@ def assemble_uefi_disk(data: dict[str, object], image: dict[str, object]) -> Pat
                 run_command(["mmd", "-i", str(output_path), "::/packages"])
             except AssembleError:
                 pass  # directory might already exist
-            packages_dir = REPO_ROOT / "packages"
+            packages_dir = REPO_ROOT / "build" / "packages"
             for port in ports:
                 for match in packages_dir.glob(f"{port}-*.rpkg"):
                     run_command(["mcopy", "-i", str(output_path), str(match), f"::/packages/{match.name}"])
@@ -149,19 +168,24 @@ def create_boot_scr(script_text: str, output_path: Path) -> None:
     output_path.write_bytes(header + data)
 
 
-def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> Path:
+def assemble_raw_sd_image(
+    data: dict[str, object],
+    image: dict[str, object],
+    build_dir: str | Path | None = None,
+    output_dir: str | Path | None = None,
+) -> Path:
     image_size_mib = image.get("size_mib", 128)
     if not isinstance(image_size_mib, (str, int)):
         raise AssembleError("image.size_mib must be an integer")
     size_mib = int(image_size_mib)
-    output_path = output_path_from_resolved(data, image)
+    output_path = output_path_from_resolved(data, image, output_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     board = data.get("board")
     if not isinstance(board, dict):
         raise AssembleError("resolved board manifest is invalid")
 
-    kernel_path = kernel_path_from_resolved(board)
+    kernel_path = kernel_path_from_resolved(board, build_dir)
     if not kernel_path.exists():
         raise AssembleError(f"kernel artifact not found: {kernel_path}")
 
@@ -194,7 +218,7 @@ def assemble_raw_sd_image(data: dict[str, object], image: dict[str, object]) -> 
             ports = product.get("ports", [])
             if isinstance(ports, list) and ports:
                 run_command(["mmd", "-i", str(fat_img_path), "::/packages"])
-                packages_dir = REPO_ROOT / "packages"
+                packages_dir = REPO_ROOT / "build" / "packages"
                 for port in ports:
                     for match in packages_dir.glob(f"{port}-*.rpkg"):
                         run_command(["mcopy", "-i", str(fat_img_path), str(match), f"::/packages/{match.name}"])
@@ -274,17 +298,23 @@ def write_boot_firmware(output_path: Path, board: dict[str, object], lba_start: 
     print(f"wrote {len(blob)} bytes of boot firmware at offset {offset}")
 
 
-def assemble_image(product_name: str, image_name: str) -> Path:
+def assemble_image(
+    product_name: str,
+    image_name: str,
+    build_dir: str | Path | None = None,
+    output_dir: str | Path | None = None,
+) -> Path:
     data = product_info.resolved_image_manifest(product_name, image_name)
     image = data.get("image")
     if not isinstance(image, dict):
         raise AssembleError("resolved image manifest is invalid")
 
+    product_build_dir = resolve_directory(build_dir, REPO_ROOT / "build" / product_name)
     kind = image.get("kind")
     if kind == "fat32-efi-disk":
-        return assemble_uefi_disk(data, image)
+        return assemble_uefi_disk(data, image, product_build_dir, output_dir)
     if kind == "raw-sd-image":
-        return assemble_raw_sd_image(data, image)
+        return assemble_raw_sd_image(data, image, product_build_dir, output_dir)
 
     raise AssembleError(f"unsupported image kind: {kind}")
 
@@ -293,6 +323,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Assemble rucux images from product manifests")
     parser.add_argument("product", help="Product name")
     parser.add_argument("image", help="Image name")
+    parser.add_argument("--build-dir", help="Directory containing product build artifacts")
+    parser.add_argument("--output-dir", help="Directory for the assembled image")
     args = parser.parse_args()
 
     for tool_name in ("dd", "mformat", "mmd", "mcopy"):
@@ -301,12 +333,15 @@ def main() -> int:
             return 1
 
     try:
-        output_path = assemble_image(args.product, args.image)
+        output_path = assemble_image(args.product, args.image, args.build_dir, args.output_dir)
     except (AssembleError, product_info.ManifestError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
-    print(output_path.relative_to(REPO_ROOT))
+    try:
+        print(output_path.relative_to(REPO_ROOT))
+    except ValueError:
+        print(output_path)
     return 0
 
 

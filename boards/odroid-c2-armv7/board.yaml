@@ -6,7 +6,7 @@ boot:
 runtime:
   hardware: odroid-c2
 artifacts:
-  kernel: builddir-arm/kernel.elf
+  kernel: kernel.elf
 platform:
   cpu_count: 4
   uart:

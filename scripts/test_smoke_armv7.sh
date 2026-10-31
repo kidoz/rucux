@@ -6,10 +6,11 @@ cd "$(dirname "$0")/.."
 
 PRODUCT="smoke-qemu-armv7"
 IMAGE="qemu-armv7-virt"
-BUILD_DIR="builddir-arm-smoke"
+BUILD_DIR="${RUCUX_BUILD_DIR:-build/${PRODUCT}}"
 KERNEL_PATH="${BUILD_DIR}/kernel.elf"
 TIMEOUT_SECS="${RUCUX_ARM_SMOKE_TIMEOUT:-40}"
-LOG_PATH="${RUCUX_ARM_SMOKE_LOG:-qemu_arm_smoke.log}"
+LOG_PATH="${RUCUX_ARM_SMOKE_LOG:-build/logs/${PRODUCT}/boot.log}"
+mkdir -p "$(dirname "${LOG_PATH}")"
 
 required_markers=(
     "rucux (armv7) Initialized!"

@@ -9,7 +9,7 @@ Each release definition should pin:
 - the image set to materialize
 - any release-specific overrides
 
-Concrete generated release outputs belong under `builddir/release/<release>/`.
+Concrete generated release outputs belong under `build/release/<release>/`.
 
 Current workflow:
 

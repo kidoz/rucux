@@ -5,31 +5,31 @@
 Build from the repository root:
 
 ```sh
-meson setup builddir-server --cross-file cross_amd64.txt -Dproduct=server-qemu-amd64
-meson compile -C builddir-server
-make -C bootloader ARCH=x86_64 TARGET=../builddir-server/BOOTX64.EFI
+meson setup build/server-qemu-amd64 --cross-file cross_amd64.txt -Dproduct=server-qemu-amd64
+meson compile -C build/server-qemu-amd64
+make -C bootloader ARCH=x86_64 TARGET=../build/server-qemu-amd64/BOOTX64.EFI
 ```
 
 Run the offline integration test with local EDK2 firmware files:
 
 ```sh
 python3 -B tools/test_console_smoke.py \
-  --build-dir builddir-server \
-  --bootloader builddir-server/BOOTX64.EFI \
+  --build-dir build/server-qemu-amd64 \
+  --bootloader build/server-qemu-amd64/BOOTX64.EFI \
   --uefi-code /path/to/edk2-x86_64-code.fd \
   --uefi-vars /path/to/edk2-i386-vars.fd
 ```
 
-The test creates a 48 MiB FAT image and a writable firmware-variable copy inside the build directory. It checks serial input, CR-to-newline conversion, Delete/backspace and Ctrl-U editing, process status, timed sleep, SIMD state across thread switches, exit-status collection, service stop/start, repeated UDP loopback, and shell restart after Ctrl-D. `--isolated-nic` adds an E1000 attached only to an internal QEMU hub; it does not connect to a host or external network. Logs are written to `builddir-server/console-smoke.log`.
+The test creates a 48 MiB FAT image and a writable firmware-variable copy inside the build directory. It checks serial input, CR-to-newline conversion, Delete/backspace and Ctrl-U editing, process status, timed sleep, SIMD state across thread switches, exit-status collection, service stop/start, repeated UDP loopback, and shell restart after Ctrl-D. `--isolated-nic` adds an E1000 attached only to an internal QEMU hub; it does not connect to a host or external network. Logs are written to `build/server-qemu-amd64/console-smoke.log`.
 
-Add `--network-peer` instead of `--isolated-nic` to exercise actual Ethernet traffic. The test passes frames between QEMU and a deterministic Python peer over an inherited Unix socket pair. It uses no host IP socket, TAP interface, bridge, or external network. It verifies ARP, malformed IPv4/UDP/TCP rejection, UDP payloads from 0 to 1472 bytes, 32 TCP connections carrying 2048 bytes each, FIN/ACK teardown, reconnection using the same peer port, and restarting the service. It also verifies delivery of the first UDP packet after a lost ARP request and deliberately loses TCP SYN/ACK, handshake ACK, data, data ACK, FIN, and final ACK packets to exercise retransmission. It negotiates a 256-byte MSS, delivers TCP segments out of order and retransmits the missing suffix, then transfers 64 KiB over a connection held at a zero receive window for six backoff probes. A lost window update is recovered by a probe; subsequent sends respect the reopened 128-byte window. Serial commands execute during traffic and while the reader is stalled. The packet capture is `builddir-server/network-peer.pcap`.
+Add `--network-peer` instead of `--isolated-nic` to exercise actual Ethernet traffic. The test passes frames between QEMU and a deterministic Python peer over an inherited Unix socket pair. It uses no host IP socket, TAP interface, bridge, or external network. It verifies ARP, malformed IPv4/UDP/TCP rejection, UDP payloads from 0 to 1472 bytes, 32 TCP connections carrying 2048 bytes each, FIN/ACK teardown, reconnection using the same peer port, and restarting the service. It also verifies delivery of the first UDP packet after a lost ARP request and deliberately loses TCP SYN/ACK, handshake ACK, data, data ACK, FIN, and final ACK packets to exercise retransmission. It negotiates a 256-byte MSS, delivers TCP segments out of order and retransmits the missing suffix, then transfers 64 KiB over a connection held at a zero receive window for six backoff probes. A lost window update is recovered by a probe; subsequent sends respect the reopened 128-byte window. Serial commands execute during traffic and while the reader is stalled. The packet capture is `build/server-qemu-amd64/network-peer.pcap`.
 
 Use `--tcp-interop` instead of either isolated NIC flag to exercise the server with an independent TCP implementation. This mode requires approval for **localhost network access**: it binds a temporary TCP forwarding port and UDP relay port only on `127.0.0.1`, while QEMU user networking stays at `restrict=on`. The guest has no external network access. The host socket API talks to libslirp, which terminates TCP and opens a separate TCP connection to rucux. This validates interoperability with libslirp, not a direct wire connection to the host kernel or a Linux machine.
 
 ```sh
 python3 -B tools/test_console_smoke.py \
-  --build-dir builddir-server \
-  --bootloader builddir-server/BOOTX64.EFI \
+  --build-dir build/server-qemu-amd64 \
+  --bootloader build/server-qemu-amd64/BOOTX64.EFI \
   --uefi-code /path/to/edk2-x86_64-code.fd \
   --uefi-vars /path/to/edk2-i386-vars.fd \
   --tcp-interop
@@ -52,8 +52,8 @@ For an interactive session after generating the image:
 ```sh
 qemu-system-x86_64 \
   -drive if=pflash,format=raw,readonly=on,file=/path/to/edk2-x86_64-code.fd \
-  -drive if=pflash,format=raw,file=builddir-server/console-vars.fd \
-  -drive if=ide,format=raw,file=builddir-server/console-smoke.img \
+  -drive if=pflash,format=raw,file=build/server-qemu-amd64/console-vars.fd \
+  -drive if=ide,format=raw,file=build/server-qemu-amd64/console-smoke.img \
   -smp 1 -m 512M -serial stdio -monitor none -display none -nic none -no-reboot
 ```
 
@@ -85,8 +85,8 @@ make -C tests run
 c++ -std=c++23 -g -fsanitize=address,undefined \
   -Isrc/include -idirafter lib/include -I. tests/test_network.cpp \
   src/kernel/net/{netbuf,netif,ethernet,arp,ipv4,checksum,udp,tcp,socket}.cpp \
-  -o builddir-host-tests/test_network_sanitized
-./builddir-host-tests/test_network_sanitized
+  -o build/host-tests/test_network_sanitized
+./build/host-tests/test_network_sanitized
 ```
 
 The network suite uses production protocol/socket code with host allocation, scheduler and I/O boundaries. It checks length/checksum validation, bounded queues/backlogs, receive-buffer saturation, file-descriptor exhaustion, partial acknowledgements, congestion backpressure, RTT estimation and ambiguous ACK suppression, MSS option validation, sequence wraparound, zero-window recovery and silence expiry, retry exhaustion, simultaneous retransmissions, ARP queue expiry, timeout cleanup, and 100 TCP lifecycles with allocation counts and bytes returning to baseline. A zero-window peer answers 100 probes over several simulated minutes without increasing live allocations or bytes. These host checks do not establish DMA or SMP correctness.

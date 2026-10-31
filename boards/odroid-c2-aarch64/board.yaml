@@ -11,7 +11,7 @@ boot:
 runtime:
   hardware: odroid-c2
 artifacts:
-  kernel: builddir-aarch64/kernel.elf
+  kernel: kernel.elf
 platform:
   cpu_count: 4
   uart:

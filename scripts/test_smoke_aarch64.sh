@@ -5,11 +5,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PRODUCT="smoke-qemu-aarch64"
-BUILD_DIR="${RUCUX_AARCH64_BUILD_DIR:-builddir-aarch64-smoke}"
+BUILD_DIR="${RUCUX_AARCH64_BUILD_DIR:-build/${PRODUCT}}"
 KERNEL_PATH="${BUILD_DIR}/kernel.elf"
 TIMEOUT_SECS="${RUCUX_AARCH64_SMOKE_TIMEOUT:-40}"
-LOG_PATH="${RUCUX_AARCH64_SMOKE_LOG:-qemu_aarch64_smoke.log}"
-SMP_LOG_PATH="${RUCUX_AARCH64_SMP_LOG:-qemu_aarch64_smp.log}"
+LOG_PATH="${RUCUX_AARCH64_SMOKE_LOG:-build/logs/${PRODUCT}/boot.log}"
+SMP_LOG_PATH="${RUCUX_AARCH64_SMP_LOG:-build/logs/${PRODUCT}/smp.log}"
+mkdir -p "$(dirname "${LOG_PATH}")" "$(dirname "${SMP_LOG_PATH}")"
 
 # Asserted from the 4-core run. "3 of 3" proves PSCI CPU_ON succeeded for every
 # secondary, and an intact marker line proves console output is serialized —

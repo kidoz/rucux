@@ -1,132 +1,86 @@
 # Run clang-format on all C/C++ files
 format:
-    ninja -C builddir clang-format
+    ninja -C build/dev-qemu-amd64 clang-format
 
 # Run clang-tidy on all C/C++ files
 lint:
-    ninja -C builddir clang-tidy
+    ninja -C build/dev-qemu-amd64 clang-tidy
 
-# Run C++ quality checks and Python lint/type/format checks
-check: format lint py-check
+# Run C++ quality checks, Python checks, and manifest validation
+check: format lint py-check validate
 
-# Reconfigure the build directory
-reconfigure:
-    meson setup --reconfigure builddir
+# Validate every product, component policy, and assemblable image
+validate:
+    python3 tools/validate_manifests.py
 
-# Build the kernel (amd64)
-build:
-    meson setup builddir --cross-file cross_amd64.txt 2>/dev/null || true
-    meson compile -C builddir
+# Reconfigure an existing product build directory
+reconfigure product="dev-qemu-amd64":
+    meson setup --reconfigure build/{{product}}
 
-# Run the kernel in QEMU with E1000 NIC
-run: build
+# Configure and build a product with its architecture's cross file
+build product="dev-qemu-amd64":
     #!/usr/bin/env bash
-    set -e
+    set -euo pipefail
     cd "{{justfile_directory()}}"
-
-    # Build bootloader if needed
-    if [ ! -f bootloader/BOOTX64.EFI ]; then
-        echo "Building UEFI Bootloader..."
-        make -C bootloader ARCH=x86_64
+    arch=$(python3 tools/product_info.py get "{{product}}" arch)
+    case "${arch}" in
+        amd64) cross_file=cross_amd64.txt ;;
+        armv7) cross_file=cross_armv7.txt ;;
+        aarch64) cross_file=cross_aarch64.txt ;;
+        *) echo "unsupported product architecture: ${arch}" >&2; exit 1 ;;
+    esac
+    build_dir="build/{{product}}"
+    if [ -d "${build_dir}" ]; then
+        meson setup --reconfigure "${build_dir}" --cross-file "${cross_file}" -Dproduct="{{product}}"
+    else
+        meson setup "${build_dir}" --cross-file "${cross_file}" -Dproduct="{{product}}"
     fi
+    meson compile -C "${build_dir}"
 
-    # Create UEFI FAT32 disk image
-    echo "Creating UEFI disk image..."
-    dd if=/dev/zero of=uefi.img bs=1M count=48 status=none
-    mformat -i uefi.img -F ::
-    mmd -i uefi.img ::/EFI
-    mmd -i uefi.img ::/EFI/BOOT
-    mcopy -i uefi.img bootloader/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
-    mcopy -i uefi.img builddir/kernel.elf ::/kernel.elf
+# Assemble a declared product image
+assemble product="dev-qemu-amd64" image="uefi-disk":
+    python3 tools/assemble_image.py {{product}} {{image}} --build-dir build/{{product}}
 
-    # Prepare OVMF vars
-    if [ ! -s vars.fd ]; then
-        cp /opt/homebrew/share/qemu/edk2-i386-vars.fd vars.fd 2>/dev/null || \
-        dd if=/dev/zero of=vars.fd bs=1K count=128 status=none
-    fi
+# Run a product in QEMU
+run product="dev-qemu-amd64": (build product)
+    scripts/run_qemu.sh --product {{product}}
 
-    echo "Starting QEMU..."
-    qemu-system-x86_64 \
-        -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-x86_64-code.fd \
-        -drive if=pflash,format=raw,file=./vars.fd \
-        -drive file=uefi.img,if=ide,format=raw \
-        -device e1000,netdev=net0 \
-        -netdev user,id=net0 \
-        -serial stdio \
-        -vga std \
-        -no-reboot \
-        -m 256M
-
-# Run kernel in QEMU headless (serial output only, auto-exit after timeout)
-run-headless timeout="15": build
-    #!/usr/bin/env bash
-    set -e
-    cd "{{justfile_directory()}}"
-
-    if [ ! -f bootloader/BOOTX64.EFI ]; then
-        make -C bootloader ARCH=x86_64
-    fi
-
-    dd if=/dev/zero of=uefi.img bs=1M count=48 status=none
-    mformat -i uefi.img -F ::
-    mmd -i uefi.img ::/EFI
-    mmd -i uefi.img ::/EFI/BOOT
-    mcopy -i uefi.img bootloader/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
-    mcopy -i uefi.img builddir/kernel.elf ::/kernel.elf
-
-    if [ ! -s vars.fd ]; then
-        cp /opt/homebrew/share/qemu/edk2-i386-vars.fd vars.fd 2>/dev/null || \
-        dd if=/dev/zero of=vars.fd bs=1K count=128 status=none
-    fi
-
-    rm -f uefi_serial.log
-    TIMEOUT_CMD="timeout"
-    command -v gtimeout &>/dev/null && TIMEOUT_CMD="gtimeout"
-
-    $TIMEOUT_CMD {{timeout}} qemu-system-x86_64 \
-        -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-x86_64-code.fd \
-        -drive if=pflash,format=raw,file=./vars.fd \
-        -drive file=uefi.img,if=ide,format=raw \
-        -device e1000,netdev=net0 \
-        -netdev user,id=net0 \
-        -serial file:uefi_serial.log \
-        -vga std \
-        -display none \
-        -no-reboot \
-        -m 256M || true
-
-    echo "=== Serial Output ==="
-    cat uefi_serial.log
+# Run a product headless with a timeout
+run-headless timeout="15" product="dev-qemu-amd64": (build product)
+    scripts/run_qemu.sh --product {{product}} --headless --timeout {{timeout}}
 
 # Run all unit tests (host-compiled)
 test:
-    cd tests && make run
+    make -C tests run
 
 # Install Python tool dependencies into .venv (from uv.lock)
 py-sync:
-    uv --cache-dir builddir-python-tools/uv-cache sync --locked --all-groups
+    uv --cache-dir build/python-tools/uv-cache sync --locked --all-groups
 
 # Format project-owned Python scripts
 py-format:
-    uv --cache-dir builddir-python-tools/uv-cache run --offline --no-sync ruff format tools scripts
+    uv --cache-dir build/python-tools/uv-cache run --offline --no-sync ruff format tools scripts
 
 # Lint without changing files or downloading dependencies
 py-lint:
-    uv --cache-dir builddir-python-tools/uv-cache run --offline --no-sync ruff check tools scripts
+    uv --cache-dir build/python-tools/uv-cache run --offline --no-sync ruff check tools scripts
 
 # Type-check all project-owned Python scripts
 py-typecheck:
-    uv --cache-dir builddir-python-tools/uv-cache run --offline --no-sync mypy
+    uv --cache-dir build/python-tools/uv-cache run --offline --no-sync mypy
 
 # Check Python lint, types, and formatting without modifying source files
 py-check: py-lint py-typecheck
-    uv --cache-dir builddir-python-tools/uv-cache run --offline --no-sync ruff format --check tools scripts
+    uv --cache-dir build/python-tools/uv-cache run --offline --no-sync ruff format --check tools scripts
 
 # Run a project Python tool, e.g. `just py tools/product_info.py get dev-qemu-amd64 name`
 py *ARGS:
     uv run python {{ARGS}}
 
-# Clean build artifacts
+# Generate a concrete release manifest
+release-manifest release:
+    python3 tools/generate_release_manifest.py {{release}}
+
+# Clean current build artifacts
 clean:
-    rm -rf builddir builddir-test uefi.img uefi_serial.log vars.fd
-    cd tests && make clean 2>/dev/null || true
+    rm -rf build

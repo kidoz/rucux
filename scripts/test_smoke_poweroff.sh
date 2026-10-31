@@ -5,10 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PRODUCT="smoke-qemu-amd64"
-BUILD_DIR="builddir-smoke"
+BUILD_DIR="${RUCUX_BUILD_DIR:-build/${PRODUCT}}"
 KERNEL_PATH="${BUILD_DIR}/kernel.elf"
 TIMEOUT_SECS="${RUCUX_SMOKE_TIMEOUT:-40}"
-LOG_PATH="${RUCUX_SMOKE_LOG:-smoke_poweroff_run.log}"
+LOG_PATH="${RUCUX_SMOKE_LOG:-build/logs/${PRODUCT}/poweroff.log}"
+mkdir -p "$(dirname "${LOG_PATH}")"
 
 required_markers=(
     "unixsock_smoke: PASS"

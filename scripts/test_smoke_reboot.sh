@@ -5,13 +5,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PRODUCT="smoke-reboot-qemu-amd64"
-BUILD_DIR="builddir-reboot-smoke"
+BUILD_DIR="${RUCUX_BUILD_DIR:-build/${PRODUCT}}"
 KERNEL_PATH="${BUILD_DIR}/kernel.elf"
 TIMEOUT_SECS="${RUCUX_REBOOT_SMOKE_TIMEOUT:-40}"
-BOOT1_LOG="${RUCUX_REBOOT_SMOKE_BOOT1_LOG:-smoke_reboot_boot1.log}"
-BOOT2_LOG="${RUCUX_REBOOT_SMOKE_BOOT2_LOG:-smoke_reboot_boot2.log}"
-JOURNAL_LOG="${RUCUX_REBOOT_SMOKE_JOURNAL_LOG:-smoke_reboot_journal.log}"
-UEFI_IMAGE_PATH="$(python3 tools/product_info.py get-image "${PRODUCT}" qemu-dev board.artifacts.uefi_image)"
+BOOT1_LOG="${RUCUX_REBOOT_SMOKE_BOOT1_LOG:-build/logs/${PRODUCT}/boot1.log}"
+BOOT2_LOG="${RUCUX_REBOOT_SMOKE_BOOT2_LOG:-build/logs/${PRODUCT}/boot2.log}"
+JOURNAL_LOG="${RUCUX_REBOOT_SMOKE_JOURNAL_LOG:-build/logs/${PRODUCT}/journal.log}"
+UEFI_IMAGE_PATH="build/images/${PRODUCT}/uefi.img"
+mkdir -p "$(dirname "${BOOT1_LOG}")" "$(dirname "${BOOT2_LOG}")" "$(dirname "${JOURNAL_LOG}")"
 
 boot1_markers=(
     "unixsock_smoke: PASS"

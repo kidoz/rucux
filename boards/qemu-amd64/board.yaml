@@ -6,5 +6,5 @@ boot:
 runtime:
   emulator: qemu-system-x86_64
 artifacts:
-  kernel: builddir/kernel.elf
+  kernel: kernel.elf
   uefi_image: uefi.img
