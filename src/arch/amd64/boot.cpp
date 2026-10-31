@@ -155,6 +155,14 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     kernel::vfs::ramfs::create_directory(terminfo, "l");
     kernel::vfs::ramfs::create_directory(terminfo, "x");
 
+    auto* run = kernel::vfs::ramfs::create_directory(root, "run");
+    auto* log = kernel::vfs::ramfs::create_directory(run, "log");
+    kernel::vfs::ramfs::create_file(log, "journal.log", nullptr, 0);
+    kernel::vfs::ramfs::create_file(log, "dmesg_smoke.ok", nullptr, 0);
+    kernel::vfs::ramfs::create_file(log, "unixsock_smoke.ok", nullptr, 0);
+    kernel::vfs::ramfs::create_file(log, "poweroff_smoke.ok", nullptr, 0);
+    kernel::vfs::ramfs::create_file(log, "reboot_smoke.ok", nullptr, 0);
+
     auto* bin = kernel::vfs::ramfs::create_directory(root, "bin");
     kernel::boot::populate_embedded_binaries(bin);
 
