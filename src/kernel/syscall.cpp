@@ -6,6 +6,7 @@
 #include <kernel/time.hpp>
 #include <knew.hpp>
 #include <lib/string.hpp>
+#include <uapi/kernel/log.h>
 #include <uapi/kernel/net.h>
 #include <uapi/kernel/stat.h>
 #include <uapi/kernel/syscalls.h>
@@ -258,6 +259,39 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
     case SYS_GETSOCKOPT:
         ok = a.marshal(4, 4, INOUT);
         if (ok) ok = a.marshal(3, *reinterpret_cast<uint32_t*>(a.buffers[4].data), OUTPUT);
+        break;
+    case SYS_LOG_CTL:
+        switch (a1) {
+        case RUCUX_LOG_CTL_SUBMIT: {
+            ok = a.marshal(1, sizeof(rucux_log_submit_request), INPUT);
+            if (!ok) break;
+            auto* request = reinterpret_cast<rucux_log_submit_request*>(a.buffers[1].data);
+            a.value[4] = reinterpret_cast<long>(request->ident);
+            a.value[5] = reinterpret_cast<long>(request->message);
+            ok = a.marshal(4, request->ident_length, INPUT, true) && a.marshal(5, request->message_length, INPUT);
+            if (!ok) break;
+            request->ident = request->ident_length == 0 ? nullptr : reinterpret_cast<char*>(a.buffers[4].data);
+            request->message = reinterpret_cast<char*>(a.buffers[5].data);
+            break;
+        }
+        case RUCUX_LOG_CTL_CLEAR:
+            break;
+        case RUCUX_LOG_CTL_STATS:
+            ok = a.marshal(1, sizeof(rucux_log_stats), OUTPUT);
+            break;
+        case RUCUX_LOG_CTL_READ: {
+            ok = a.marshal(1, sizeof(rucux_log_read_request), INOUT);
+            if (!ok) break;
+            auto* request = reinterpret_cast<rucux_log_read_request*>(a.buffers[1].data);
+            a.value[4] = reinterpret_cast<long>(request->buffer);
+            ok = a.marshal(4, request->buffer_size, OUTPUT);
+            if (!ok) break;
+            request->buffer = reinterpret_cast<char*>(a.buffers[4].data);
+            break;
+        }
+        default:
+            return EINVAL_RESULT;
+        }
         break;
     case SYS_CLONE:
         if (!memory::user_accessible(reinterpret_cast<void*>(a1), 1, false) || a2 < 16 ||

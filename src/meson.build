@@ -19,6 +19,7 @@ kernel_common_sources = files(
     'kernel/process/credentials.cpp',
     'kernel/process/signal.cpp',
     'kernel/ipc/ipc.cpp',
+    'kernel/log.cpp',
     'kernel/trace.cpp',
     'kernel/time.cpp',
     'kernel/vfs/vfs.cpp',

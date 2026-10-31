@@ -19,6 +19,7 @@
 #include <arch/amd64/smp.hpp>
 #include <arch/amd64/syscall.hpp>
 #include <kernel/ipc/ipc.hpp>
+#include <kernel/log.hpp>
 #include <kernel/memory/heap.hpp>
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/slab.hpp>
@@ -72,6 +73,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     arch::amd64::idt_init();
     arch::amd64::pit::init(1000);
     arch::amd64::syscall_init();
+    kernel::log::init();
 
     kernel::print("rucux (amd64) Initialized (UEFI)!\n");
     kernel::print("Magic: 0x{x}, Info: {}\n", info->magic, (void*)info);
@@ -140,6 +142,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     auto* dev = kernel::vfs::ramfs::create_directory(root, "dev");
     kernel::vfs::ramfs::create_file(dev, "uart", nullptr, 0); // Special handle for UART
     kernel::vfs::ramfs::attach_node(dev, kernel::vfs::tty::create());
+    kernel::vfs::ramfs::attach_node(dev, kernel::log::create_kmsg_node());
 
     auto* etc = kernel::vfs::ramfs::create_directory(root, "etc");
     const uint8_t motd[] = "Welcome to rucux!\n";

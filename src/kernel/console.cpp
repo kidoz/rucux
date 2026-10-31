@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/console.hpp>
+#include <kernel/log.hpp>
 #include <kernel/print.hpp>
 #include <kernel/sync/spinlock.hpp>
 
@@ -55,6 +56,7 @@ void putc_unlocked(char c) noexcept {
     for (uint32_t i = 0; i < g_sink_count; ++i) {
         g_sinks[i].putc(c);
     }
+    log::capture_console_char(c);
 }
 
 void putc(char c) noexcept {
