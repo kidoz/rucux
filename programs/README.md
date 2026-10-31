@@ -10,4 +10,4 @@ This directory is the long-term home for user-facing programs and utilities such
 - `top`
 - `rtorrent`
 
-Migration should happen in small Meson-safe slices. During the transition, some programs will still live under `userspace/`.
+Each program has one authoritative `<program>/main.cpp` source. Programs managed by `init` can declare autostart, restart, and dependency policy in `<program>/app.yaml`; omitted fields default to disabled/zero and an empty dependency list. Product manifests select which programs are built and embedded; `userspace/` contains only shared startup and linker support.

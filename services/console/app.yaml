@@ -1,0 +1,4 @@
+autostart: true
+restart_on_failure: true
+max_restart_attempts: 8
+restart_delay_ms: 250

@@ -21,120 +21,13 @@ class ServicePolicy(TypedDict, total=False):
     dependencies: list[str]
 
 
-SERVICE_POLICIES: dict[str, ServicePolicy] = {
-    "console": {
-        "autostart": True,
-        "restart_on_failure": True,
-        "max_restart_attempts": 8,
-        "restart_delay_ms": 250,
-        "dependencies": [],
-    },
-    "traced": {
-        "autostart": True,
-        "restart_on_failure": True,
-        "max_restart_attempts": 8,
-        "restart_delay_ms": 250,
-        "dependencies": ["console"],
-    },
-    "logd": {
-        "autostart": True,
-        "restart_on_failure": True,
-        "max_restart_attempts": 8,
-        "restart_delay_ms": 250,
-        "dependencies": ["console"],
-    },
-    "net": {
-        "autostart": True,
-        "restart_on_failure": True,
-        "max_restart_attempts": 8,
-        "restart_delay_ms": 250,
-        "dependencies": ["console"],
-    },
-    "kbd": {
-        "autostart": True,
-        "restart_on_failure": True,
-        "max_restart_attempts": 8,
-        "restart_delay_ms": 250,
-        "dependencies": ["console"],
-    },
-    "sh": {
-        "restart_on_success": True,
-        "autostart": True,
-        "restart_on_failure": True,
-        "max_restart_attempts": 8,
-        "restart_delay_ms": 250,
-        "dependencies": ["console"],
-    },
-    "rtorrent": {
-        "autostart": False,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["net", "console"],
-    },
-    "trace": {
-        "autostart": False,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["traced", "console"],
-    },
-    "dmesg_smoke": {
-        "autostart": True,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["logd", "console"],
-    },
-    "cred_smoke": {
-        "autostart": True,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["console"],
-    },
-    "gui_smoke": {
-        "autostart": True,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["console"],
-    },
-    "unixsock_smoke": {
-        "autostart": True,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["console"],
-    },
-    "poweroff_smoke": {
-        "autostart": True,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["console", "logd"],
-    },
-    "reboot_smoke": {
-        "autostart": True,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["console", "logd"],
-    },
-    "wm": {
-        "autostart": True,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["console"],
-    },
-    "wm_client": {
-        "autostart": True,
-        "restart_on_failure": False,
-        "max_restart_attempts": 0,
-        "restart_delay_ms": 0,
-        "dependencies": ["wm", "console"],
-    },
+DEFAULT_SERVICE_POLICY: dict[str, object] = {
+    "autostart": False,
+    "restart_on_failure": False,
+    "restart_on_success": False,
+    "max_restart_attempts": 0,
+    "restart_delay_ms": 0,
+    "dependencies": [],
 }
 
 
@@ -142,6 +35,53 @@ def normalize_list(value: object) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return []
+
+
+def policy_path(kind: str, app: str) -> Path:
+    return REPO_ROOT / kind / app / "app.yaml"
+
+
+def policy_bool(data: dict[str, object], key: str, path: Path) -> bool:
+    value = data.get(key, DEFAULT_SERVICE_POLICY[key])
+    if isinstance(value, bool):
+        return value
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise RuntimeError(f"{path}: {key} must be true or false")
+
+
+def policy_int(data: dict[str, object], key: str, path: Path) -> int:
+    value = data.get(key, DEFAULT_SERVICE_POLICY[key])
+    try:
+        parsed = int(str(value))
+    except ValueError as error:
+        raise RuntimeError(f"{path}: {key} must be a non-negative integer") from error
+    if parsed < 0:
+        raise RuntimeError(f"{path}: {key} must be a non-negative integer")
+    return parsed
+
+
+def load_service_policy(kind: str, app: str) -> ServicePolicy | None:
+    path = policy_path(kind, app)
+    if not path.is_file():
+        return None
+    data = product_info.parse_simple_yaml(path)
+    unknown_keys = set(data) - set(DEFAULT_SERVICE_POLICY)
+    if unknown_keys:
+        raise RuntimeError(f"{path}: unknown policy keys: {', '.join(sorted(unknown_keys))}")
+    dependencies = data.get("dependencies", [])
+    if not isinstance(dependencies, list):
+        raise RuntimeError(f"{path}: dependencies must be a list")
+    return ServicePolicy(
+        autostart=policy_bool(data, "autostart", path),
+        restart_on_failure=policy_bool(data, "restart_on_failure", path),
+        restart_on_success=policy_bool(data, "restart_on_success", path),
+        max_restart_attempts=policy_int(data, "max_restart_attempts", path),
+        restart_delay_ms=policy_int(data, "restart_delay_ms", path),
+        dependencies=normalize_list(dependencies),
+    )
 
 
 def resolve_product(product_name: str) -> tuple[list[str], list[str], list[str]]:
@@ -204,8 +144,22 @@ def dependency_slots(dependencies: list[str]) -> tuple[list[str], int]:
 
 
 def write_init_config_header(path: Path, services: list[str], programs: list[str]) -> None:
-    selected = services + [program for program in programs if program not in services]
-    managed = [app for app in selected if app != "init" and app in SERVICE_POLICIES]
+    selected = [("services", app) for app in services]
+    selected += [("programs", program) for program in programs if program not in services]
+    selected_apps = {app for _, app in selected}
+    managed: list[tuple[str, ServicePolicy]] = []
+    for kind, app in selected:
+        if app == "init":
+            continue
+        policy = load_service_policy(kind, app)
+        if policy is None:
+            continue
+        missing_dependencies = [dep for dep in policy["dependencies"] if dep not in selected_apps]
+        if missing_dependencies:
+            raise RuntimeError(
+                f"{policy_path(kind, app)}: dependencies not selected: {', '.join(missing_dependencies)}"
+            )
+        managed.append((app, policy))
 
     with path.open("w", encoding="utf-8") as out:
         out.write("// SPDX-License-Identifier: MIT\n")
@@ -214,29 +168,32 @@ def write_init_config_header(path: Path, services: list[str], programs: list[str
         out.write("\n")
         out.write(f"static constexpr unsigned k_service_config_count = {len(managed)};\n")
         out.write(f"static constexpr service_config k_service_configs[{max(1, len(managed))}] = {{\n")
-        for app in managed:
-            policy = SERVICE_POLICIES[app]
+        for app, policy in managed:
             deps, dep_count = dependency_slots(list(policy["dependencies"]))
             out.write(
-                f'    {{"{app}", "/bin/{app}", {cpp_bool(bool(policy["autostart"]))}, '
-                f"{cpp_bool(bool(policy['restart_on_failure']))}, "
-                f"{cpp_bool(bool(policy.get('restart_on_success', False)))}, "
-                f"{int(policy['max_restart_attempts'])}, {int(policy['restart_delay_ms'])}, "
+                f'    {{"{app}", "/bin/{app}", {cpp_bool(policy["autostart"])}, '
+                f"{cpp_bool(policy['restart_on_failure'])}, "
+                f"{cpp_bool(policy['restart_on_success'])}, "
+                f"{policy['max_restart_attempts']}, {policy['restart_delay_ms']}, "
                 f"{{{deps[0]}, {deps[1]}, {deps[2]}}}, {dep_count}}},\n"
             )
         out.write("};\n")
 
 
 def main() -> int:
-    if len(sys.argv) == 3 and sys.argv[1] == "--sources":
+    if len(sys.argv) == 3 and sys.argv[1] in ("--sources", "--metadata"):
         services, programs, apps = resolve_product(sys.argv[2])
         for app in apps:
             kind = "services" if app in services else "programs"
+            if sys.argv[1] == "--metadata":
+                path = policy_path(kind, app)
+                if path.is_file():
+                    load_service_policy(kind, app)
+                    print(path.relative_to(REPO_ROOT))
+                continue
             source = Path(kind) / app / "main.cpp"
             if not (REPO_ROOT / source).is_file():
-                source = Path("userspace") / app / "main.cpp"
-            if not (REPO_ROOT / source).is_file():
-                raise RuntimeError(f"missing source for application {app}")
+                raise RuntimeError(f"missing source for application {app}: {source}")
             print(f"{app}:{source}")
         return 0
     if len(sys.argv) != 4:
