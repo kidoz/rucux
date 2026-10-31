@@ -234,4 +234,15 @@ rb_node* rb_tree::last() const noexcept {
     return x;
 }
 
+rb_node* rb_tree::next(rb_node* node) const noexcept {
+    if (!node) return nullptr;
+    if (node->right) return tree_minimum(node->right);
+    rb_node* parent = node->parent;
+    while (parent && node == parent->right) {
+        node = parent;
+        parent = parent->parent;
+    }
+    return parent;
+}
+
 } // namespace kernel

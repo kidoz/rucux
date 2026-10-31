@@ -42,6 +42,7 @@ public:
 
     rb_node* first() const noexcept; // Leftmost (smallest)
     rb_node* last() const noexcept;  // Rightmost (largest)
+    rb_node* next(rb_node* node) const noexcept;
     bool empty() const noexcept { return root_ == nullptr; }
 
     rb_node* root() const noexcept { return root_; }

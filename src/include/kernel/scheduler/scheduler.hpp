@@ -7,6 +7,10 @@
 #include <arch/amd64/fpu.hpp>
 #endif
 
+namespace kernel::memory {
+struct address_space;
+}
+
 namespace kernel::scheduler {
 
 void idle_task() noexcept;
@@ -30,6 +34,7 @@ struct thread {
     uintptr_t stack_base;
     size_t stack_size;
     uintptr_t pml4_phys;
+    memory::address_space* mm; // Shared with clone siblings. Null for kernel threads.
     process::credentials creds;
 
     // IPC (legacy)

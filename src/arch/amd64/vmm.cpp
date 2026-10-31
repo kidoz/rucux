@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
+#include <kernel/memory/mmap.hpp>
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/user_access.hpp>
-#include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <lib/string.hpp>
@@ -148,6 +148,32 @@ void vmm::unmap(uintptr_t virt) noexcept {
     asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
 }
 
+bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
+    const size_t pml4_idx = (virt >> 39) & 0x1FF;
+    const size_t pdpt_idx = (virt >> 30) & 0x1FF;
+    const size_t pd_idx = (virt >> 21) & 0x1FF;
+    const size_t pt_idx = (virt >> 12) & 0x1FF;
+
+    auto* pml4 = reinterpret_cast<uintptr_t*>(get_active_page_table() & ~0xFFFULL);
+    uintptr_t* pdpt = get_next_table(pml4, pml4_idx, false);
+    if (!pdpt) return false;
+    uintptr_t* pd = get_next_table(pdpt, pdpt_idx, false);
+    if (!pd || (pd[pd_idx] & PAGE_SIZE_BIT)) return false;
+    uintptr_t* pt = get_next_table(pd, pd_idx, false);
+    if (!pt) return false;
+
+    uint64_t entry = pt[pt_idx];
+    if ((entry & static_cast<uint64_t>(page_flags::PRESENT)) == 0) return false;
+
+    constexpr uint64_t permission_mask =
+        static_cast<uint64_t>(page_flags::PRESENT) | static_cast<uint64_t>(page_flags::WRITABLE) |
+        static_cast<uint64_t>(page_flags::USER) | static_cast<uint64_t>(page_flags::NO_EXECUTE);
+    pt[pt_idx] = (entry & ~permission_mask) | (static_cast<uint64_t>(flags) & permission_mask);
+    asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+    return true;
+}
+
 void vmm::switch_to(uintptr_t pml4_phys) noexcept {
     asm volatile("mov %0, %%cr3" : : "r"(pml4_phys) : "memory");
 }
@@ -215,37 +241,10 @@ void vmm::enable_write_protect() noexcept {
     asm volatile("mov %0, %%cr0" : : "r"(cr0 | (1ULL << 16)));
 }
 
-// ─── Demand Paging ─────────────────────────────────────────────────────────
-
-// External VMA manager (defined in mmap.cpp — in a full implementation,
-// this would be per-process, accessed via the current thread's mm struct)
-extern vma_manager g_vma;
-extern bool g_vma_initialized;
-
 bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t error_code) noexcept {
-    // Only handle user-space faults for pages that are not present
     // error_code bit 0: 0 = not present, 1 = protection violation
-    if (error_code & 1) return false; // Protection violation — kill process
-
-    if (!g_vma_initialized) return false;
-
-    // Look up the VMA for this address
-    vma* v = g_vma.find(fault_addr);
-    if (!v) return false; // No VMA — segfault
-
-    // Allocate a physical page and map it
-    void* phys = pmm::alloc_page();
-    if (!phys) return false; // OOM
-
-    lib::memset(phys, 0, pmm::PAGE_SIZE);
-
-    page_flags flags = page_flags::PRESENT | page_flags::USER;
-    if (v->prot & 0x02) flags = flags | page_flags::WRITABLE; // PROT_WRITE
-
-    uintptr_t page_virt = fault_addr & ~0xFFFULL;
-    vmm::map(page_virt, reinterpret_cast<uintptr_t>(phys), flags);
-
-    return true;
+    if (error_code & 1) return false;
+    return mmap_manager::handle_fault(fault_addr);
 }
 
 } // namespace kernel::memory

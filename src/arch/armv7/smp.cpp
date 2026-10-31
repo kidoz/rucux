@@ -36,6 +36,7 @@ extern "C" void ap_entry_arm(uint32_t cpu_id) {
     idle->stack_size = 4096;
     idle->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[idle->stack_size]);
     idle->pml4_phys = 0;
+    idle->mm = nullptr;
 
     // Set up initial stack frame for ARMv7 context switch
     uint32_t* stack = reinterpret_cast<uint32_t*>(idle->stack_base + idle->stack_size);

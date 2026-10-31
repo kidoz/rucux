@@ -11,9 +11,9 @@
 // 512 GiB — far beyond the 2 GiB on an Odroid C2. TTBR0_EL1 holds the active
 // table; the kernel currently runs identity-mapped, so TTBR1 is unused.
 
+#include <kernel/memory/mmap.hpp>
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/user_access.hpp>
-#include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <lib/string.hpp>
@@ -300,6 +300,23 @@ void vmm::unmap(uintptr_t virt) noexcept {
     invalidate(virt);
 }
 
+bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
+    const size_t l1_idx = (virt >> 30) & 0x1FF;
+    const size_t l2_idx = (virt >> 21) & 0x1FF;
+    const size_t l3_idx = (virt >> 12) & 0x1FF;
+
+    auto* l2 = next_table(active_l1(), l1_idx, false);
+    if (!l2 || ((l2[l2_idx] & DESC_VALID) && !(l2[l2_idx] & DESC_TABLE))) return false;
+    auto* l3 = next_table(l2, l2_idx, false);
+    if (!l3 || !(l3[l3_idx] & DESC_VALID)) return false;
+
+    constexpr uint64_t permission_mask = (3ULL << 6) | DESC_UXN | DESC_PXN;
+    l3[l3_idx] = (l3[l3_idx] & ~permission_mask) | (flags_to_desc(flags) & permission_mask);
+    invalidate(virt);
+    return true;
+}
+
 void vmm::switch_to(uintptr_t l1_phys) noexcept {
     asm volatile("msr ttbr0_el1, %0" ::"r"(static_cast<uint64_t>(l1_phys)) : "memory");
     asm volatile("dsb ish" ::: "memory");
@@ -357,24 +374,7 @@ void vmm::enable_write_protect() noexcept {
 }
 
 bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t) noexcept {
-    extern vma_manager g_vma;
-    extern bool g_vma_initialized;
-    if (!g_vma_initialized) return false;
-
-    // No VMA covers the address: a genuine fault. Report it rather than
-    // silently backing it with a zero page.
-    vma* v = g_vma.find(fault_addr);
-    if (!v) return false;
-
-    void* phys = pmm::alloc_page();
-    if (!phys) return false;
-    lib::memset(phys, 0, PAGE_SIZE);
-
-    page_flags flags = page_flags::PRESENT | page_flags::USER;
-    if (v->prot & 0x02) flags = flags | page_flags::WRITABLE;
-
-    vmm::map(fault_addr & ~0xFFFULL, reinterpret_cast<uintptr_t>(phys), flags);
-    return true;
+    return mmap_manager::handle_fault(fault_addr);
 }
 
 } // namespace kernel::memory

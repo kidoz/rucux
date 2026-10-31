@@ -27,6 +27,9 @@ public:
     static void map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept;
     static void map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept;
     static void unmap(uintptr_t virt) noexcept;
+    // Replace permission bits of one present 4 KiB leaf and invalidate it.
+    // The frame and non-permission bits stay. A miss or a large page returns false.
+    static bool protect(uintptr_t virt, page_flags flags) noexcept;
     static void switch_to(uintptr_t pml4_phys) noexcept;
     static uintptr_t get_active_page_table() noexcept;
     static uintptr_t get_phys(uintptr_t virt) noexcept;

@@ -51,6 +51,7 @@ extern "C" void ap_main() {
     idle->stack_size = 4096;
     idle->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[idle->stack_size]);
     idle->pml4_phys = 0;
+    idle->mm = nullptr;
     idle->state = kernel::scheduler::thread_state::READY;
     pcpu->idle_thread = idle;
     pcpu->current_thread = nullptr;

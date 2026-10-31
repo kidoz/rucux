@@ -5,43 +5,82 @@
 
 namespace kernel::memory {
 
-// RB-tree comparator: compare VMAs by start address
-static int vma_cmp(const kernel::rb_node* a, const kernel::rb_node* b) noexcept {
-    auto* va = kernel::container_of(const_cast<kernel::rb_node*>(a), &vma::tree_node);
-    auto* vb = kernel::container_of(const_cast<kernel::rb_node*>(b), &vma::tree_node);
+namespace {
+
+vma* node_vma(kernel::rb_node* node) noexcept {
+    return kernel::container_of(node, &vma::tree_node);
+}
+
+int vma_cmp(const kernel::rb_node* a, const kernel::rb_node* b) noexcept {
+    auto* va = node_vma(const_cast<kernel::rb_node*>(a));
+    auto* vb = node_vma(const_cast<kernel::rb_node*>(b));
     if (va->start < vb->start) return -1;
     if (va->start > vb->start) return 1;
     return 0;
 }
 
-// For find: key is a vma with start = target address.
-// Returns 0 if addr is within [start, end), <0 if below, >0 if above.
-static int vma_find_cmp(const kernel::rb_node* key, const kernel::rb_node* node) noexcept {
-    auto* k = kernel::container_of(const_cast<kernel::rb_node*>(key), &vma::tree_node);
-    auto* n = kernel::container_of(const_cast<kernel::rb_node*>(node), &vma::tree_node);
+// key->start is the address being looked up.
+int vma_find_cmp(const kernel::rb_node* key, const kernel::rb_node* node) noexcept {
+    auto* k = node_vma(const_cast<kernel::rb_node*>(key));
+    auto* n = node_vma(const_cast<kernel::rb_node*>(node));
     if (k->start < n->start) return -1;
     if (k->start >= n->end) return 1;
-    return 0; // k->start is within [n->start, n->end)
+    return 0;
 }
+
+} // namespace
 
 void vma_manager::init() noexcept {
     tree_ = kernel::rb_tree{};
 }
 
+vma* vma_manager::advance(vma* region) const noexcept {
+    if (!region) return nullptr;
+    auto* node = tree_.next(&region->tree_node);
+    return node ? node_vma(node) : nullptr;
+}
+
+vma* vma_manager::first_overlap(uintptr_t start, uintptr_t end) const noexcept {
+    if (start >= end) return nullptr;
+    for (auto* node = tree_.first(); node; node = tree_.next(node)) {
+        vma* region = node_vma(node);
+        if (region->start >= end) return nullptr;
+        if (region->end > start) return region;
+    }
+    return nullptr;
+}
+
+vma* vma_manager::split(vma* region, uintptr_t at) noexcept {
+    if (!region || at <= region->start || at >= region->end) return region;
+    auto* right = new vma();
+    if (!right) return nullptr;
+    right->start = at;
+    right->end = region->end;
+    right->prot = region->prot;
+    right->flags = region->flags;
+    right->fd = region->fd;
+    right->file_offset = region->file_offset + static_cast<long>(at - region->start);
+    right->tree_node.init();
+    region->end = at;
+    tree_.insert(&right->tree_node, vma_cmp);
+    return right;
+}
+
 vma* vma_manager::insert(uintptr_t start, uintptr_t end, uint32_t prot, uint32_t flags, int fd, long offset) noexcept {
-    auto* v = new vma();
-    if (!v) return nullptr;
+    if (start >= end || first_overlap(start, end)) return nullptr;
+    auto* region = new vma();
+    if (!region) return nullptr;
 
-    v->start = start;
-    v->end = end;
-    v->prot = prot;
-    v->flags = flags;
-    v->fd = fd;
-    v->file_offset = offset;
-    v->tree_node.init();
+    region->start = start;
+    region->end = end;
+    region->prot = prot;
+    region->flags = flags;
+    region->fd = fd;
+    region->file_offset = offset;
+    region->tree_node.init();
 
-    tree_.insert(&v->tree_node, vma_cmp);
-    return v;
+    tree_.insert(&region->tree_node, vma_cmp);
+    return region;
 }
 
 vma* vma_manager::find(uintptr_t addr) const noexcept {
@@ -51,63 +90,131 @@ vma* vma_manager::find(uintptr_t addr) const noexcept {
 
     auto* node = tree_.find_containing(&key.tree_node, vma_find_cmp);
     if (!node) return nullptr;
-    return kernel::container_of(node, &vma::tree_node);
+    return node_vma(node);
 }
 
-void vma_manager::remove(uintptr_t start, size_t length) noexcept {
+bool vma_manager::covers(uintptr_t start, uintptr_t end) const noexcept {
+    if (start >= end) return false;
+    uintptr_t cursor = start;
+    while (cursor < end) {
+        vma* region = find(cursor);
+        if (!region || region->end <= cursor) return false;
+        cursor = region->end;
+    }
+    return true;
+}
+
+bool vma_manager::isolate(uintptr_t start, uintptr_t end) noexcept {
+    if (start >= end) return false;
+    vma* first = first_overlap(start, end);
+    if (!first) return true;
+    if (first->start < start && !split(first, start)) return false;
+    vma* last = find(end - 1);
+    if (last && last->end > end && !split(last, end)) return false;
+    return true;
+}
+
+bool vma_manager::set_prot(uintptr_t start, uintptr_t end, uint32_t prot) noexcept {
+    if (!covers(start, end)) return false;
+    vma* region = find(start);
+    if (!region) return false;
+    if (region->start < start) {
+        region = split(region, start);
+        if (!region) return false;
+    }
+
+    vma* crossing = nullptr;
+    for (vma* cur = region; cur && cur->start < end; cur = advance(cur)) {
+        if (cur->end > end) {
+            crossing = cur;
+            break;
+        }
+    }
+    if (crossing && !split(crossing, end)) return false;
+
+    for (vma* cur = region; cur && cur->start < end; cur = advance(cur))
+        cur->prot = prot;
+    return true;
+}
+
+bool vma_manager::remove(uintptr_t start, size_t length) noexcept {
+    if (length == 0) return true;
+    if (start + length < start) return false;
     uintptr_t end = start + length;
 
-    // Find and remove all VMAs that overlap [start, end)
-    while (true) {
-        vma key{};
-        key.start = start;
-        key.tree_node.init();
-
-        auto* node = tree_.find_containing(&key.tree_node, vma_find_cmp);
-        if (!node) break;
-
-        auto* v = kernel::container_of(node, &vma::tree_node);
-
-        if (v->start >= start && v->end <= end) {
-            // VMA is fully contained — remove entirely
-            tree_.remove(&v->tree_node);
-            delete v;
-        } else if (v->start < start && v->end > end) {
-            // VMA spans both sides — split into two
-            auto* right = new vma();
-            right->start = end;
-            right->end = v->end;
-            right->prot = v->prot;
-            right->flags = v->flags;
-            right->fd = v->fd;
-            right->file_offset = v->file_offset + static_cast<long>(end - v->start);
-            right->tree_node.init();
-
-            v->end = start; // Shrink left part
-            tree_.insert(&right->tree_node, vma_cmp);
+    vma* span = nullptr;
+    for (auto* node = tree_.first(); node; node = tree_.next(node)) {
+        vma* region = node_vma(node);
+        if (region->start >= end) break;
+        if (region->start < start && region->end > end) {
+            span = region;
             break;
-        } else if (v->start < start) {
-            // Overlap on the right — shrink
-            v->end = start;
-        } else {
-            // Overlap on the left — shrink
-            v->file_offset += static_cast<long>(end - v->start);
-            v->start = end;
         }
-
-        // Keep searching for more overlapping VMAs
-        if (start >= end) break;
     }
+
+    vma* right = nullptr;
+    if (span) {
+        right = new vma();
+        if (!right) return false;
+        right->start = end;
+        right->end = span->end;
+        right->prot = span->prot;
+        right->flags = span->flags;
+        right->fd = span->fd;
+        right->file_offset = span->file_offset + static_cast<long>(end - span->start);
+        right->tree_node.init();
+    }
+
+    while (vma* region = first_overlap(start, end)) {
+        if (region->start >= start && region->end <= end) {
+            tree_.remove(&region->tree_node);
+            delete region;
+            continue;
+        }
+        if (region->start < start && region->end > end) {
+            region->end = start;
+            tree_.insert(&right->tree_node, vma_cmp);
+            right = nullptr;
+            continue;
+        }
+        if (region->start < start) {
+            region->end = start;
+            continue;
+        }
+        region->file_offset += static_cast<long>(end - region->start);
+        region->start = end;
+    }
+
+    delete right;
+    return true;
 }
 
 void vma_manager::destroy_all() noexcept {
-    // Walk the tree and delete all VMAs
     while (!tree_.empty()) {
         auto* node = tree_.first();
         tree_.remove(node);
-        auto* v = kernel::container_of(node, &vma::tree_node);
-        delete v;
+        delete node_vma(node);
     }
+}
+
+address_space* create_mm() noexcept {
+    auto* mm = new address_space();
+    if (!mm) return nullptr;
+    mm->vmas.init();
+#if defined(__x86_64__)
+    mm->next_mmap = 0xA000000000ULL;
+#elif defined(__aarch64__)
+    mm->next_mmap = 0x2000000000ULL;
+#else
+    mm->next_mmap = 0x80000000UL;
+#endif
+    return mm;
+}
+
+void destroy_mm(address_space* mm) noexcept {
+    if (!mm) return;
+    mm->vmas.destroy_all();
+    delete mm;
 }
 
 } // namespace kernel::memory

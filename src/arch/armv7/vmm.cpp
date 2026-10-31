@@ -11,9 +11,9 @@
 // For simplicity in this implementation, we use a single TTBR0 mapping
 // covering both kernel and user, with domain/permission-based separation.
 
+#include <kernel/memory/mmap.hpp>
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/user_access.hpp>
-#include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <lib/string.hpp>
@@ -270,6 +270,28 @@ void vmm::unmap(uintptr_t virt) noexcept {
     asm volatile("dsb sy; isb" ::: "memory");
 }
 
+bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
+    const size_t l1_idx = (virt >> 30) & 0x3;
+    const size_t l2_idx = (virt >> 21) & 0x1FF;
+    const size_t l3_idx = (virt >> 12) & 0x1FF;
+
+    uint32_t lo, hi;
+    asm volatile("mrrc p15, 0, %0, %1, c2" : "=r"(lo), "=r"(hi));
+    auto* l1 = reinterpret_cast<uint64_t*>(lo);
+
+    auto* l2 = get_next_table(l1, l1_idx, false);
+    if (!l2 || ((l2[l2_idx] & LPAE_VALID) && !(l2[l2_idx] & LPAE_TABLE))) return false;
+    auto* l3 = get_next_table(l2, l2_idx, false);
+    if (!l3 || !(l3[l3_idx] & LPAE_VALID)) return false;
+
+    constexpr uint64_t permission_mask = (3ULL << 6) | LPAE_XN | LPAE_PXN;
+    l3[l3_idx] = (l3[l3_idx] & ~permission_mask) | (flags_to_lpae(flags) & permission_mask);
+    asm volatile("mcr p15, 0, %0, c8, c7, 1" ::"r"(virt));
+    asm volatile("dsb sy; isb" ::: "memory");
+    return true;
+}
+
 void vmm::switch_to(uintptr_t l1_phys) noexcept {
     uint32_t lo = static_cast<uint32_t>(l1_phys);
     uint32_t hi = 0;
@@ -338,25 +360,7 @@ void vmm::enable_write_protect() noexcept {
 }
 
 bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t) noexcept {
-    // Look up VMA for demand paging
-    extern vma_manager g_vma;
-    extern bool g_vma_initialized;
-    if (!g_vma_initialized) return false;
-
-    vma* v = g_vma.find(fault_addr);
-    if (!v) return false;
-
-    void* phys = pmm::alloc_page();
-    if (!phys) return false;
-
-    lib::memset(phys, 0, PAGE_SIZE);
-
-    page_flags flags = page_flags::PRESENT | page_flags::USER;
-    if (v->prot & 0x02) flags = flags | page_flags::WRITABLE;
-
-    uintptr_t page_virt = fault_addr & ~0xFFFULL;
-    vmm::map(page_virt, reinterpret_cast<uintptr_t>(phys), flags);
-    return true;
+    return mmap_manager::handle_fault(fault_addr);
 }
 
 } // namespace kernel::memory

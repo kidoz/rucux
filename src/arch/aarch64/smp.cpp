@@ -57,6 +57,7 @@ extern "C" void aarch64_ap_main(uint64_t cpu_id) {
     idle->stack_size = 4096;
     idle->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[idle->stack_size]);
     idle->pml4_phys = 0;
+    idle->mm = nullptr;
 
     uint64_t* stack = reinterpret_cast<uint64_t*>((idle->stack_base + idle->stack_size) & ~0xFULL);
     stack -= 12;
