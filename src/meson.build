@@ -37,6 +37,7 @@ kernel_net_sources = files(
     'kernel/net/udp.cpp',
 )
 
+kernel_local_socket_sources = files('kernel/ipc/local_socket.cpp')
 kernel_ramfs_sources = files('kernel/vfs/ramfs.cpp')
 kernel_storage_sources = files(
     'kernel/vfs/ata.cpp',

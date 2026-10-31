@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/ipc/local_socket.hpp>
 
-#include <kernel/print.hpp>
 #include <kernel/vfs/vfs.hpp>
 #include <lib/string.hpp>
 #include <uapi/kernel/unix_ipc.h>
@@ -180,14 +179,12 @@ static int local_poll(kernel::vfs::vfs_node* node) noexcept {
 static kernel::vfs::vfs_ops g_local_socket_ops = {
     .read = local_read,
     .write = local_write,
-    .truncate = nullptr,
     .open = local_open,
     .close = local_close,
     .ioctl = nullptr,
     .readdir = nullptr,
     .finddir = nullptr,
     .mmap = nullptr,
-    .fsync = nullptr,
     .poll = local_poll,
 };
 
@@ -398,8 +395,9 @@ static LocalSocket* find_listener(const rucux_unix_ipc_address& address, uint32_
 }
 
 static int install_new_socket_fd(int slot, int flags) noexcept {
+    (void)flags;
     auto& socket = g_local_sockets[slot];
-    int fd = kernel::vfs::vfs_manager::install_fd(&socket.vnode, flags);
+    int fd = kernel::vfs::vfs_manager::alloc_fd(&socket.vnode);
     if (fd < 0) {
         release_socket_index(slot);
     }
@@ -436,8 +434,8 @@ static int handle_socketpair(const rucux_unix_ipc_socket_request* request,
 
     auto& first = g_local_sockets[first_slot];
     auto& second = g_local_sockets[second_slot];
-    first.type = request->type;
-    second.type = request->type;
+    first.type = type;
+    second.type = type;
     first.peer_index = second_slot;
     second.peer_index = first_slot;
 
@@ -480,35 +478,25 @@ int local_socket_manager::sys_socket(int type, int protocol) noexcept {
 }
 
 int local_socket_manager::sys_bind(int sockfd, const void* addr, uint32_t addrlen) noexcept {
-    kernel::print("sys_bind: fd={}, addrlen={}\n", sockfd, addrlen);
     auto* socket = socket_from_fd(sockfd);
     rucux_unix_ipc_address address = {};
     if (!socket || !translate_address_in(addr, static_cast<uint32_t>(addrlen), address) || !valid_address(address) ||
-        socket->has_address) {
-        kernel::print("sys_bind failed early\n");
-        return -1;
-    }
-    if (address_in_use(address)) {
-        kernel::print("sys_bind failed in use\n");
+        socket->has_address || address_in_use(address)) {
         return -1;
     }
 
     copy_address(socket->address, address);
     socket->has_address = true;
-    kernel::print("sys_bind SUCCESS\n");
     return 0;
 }
 
 int local_socket_manager::sys_listen(int sockfd, int backlog) noexcept {
-    kernel::print("sys_listen: fd={}\n", sockfd);
     auto* socket = socket_from_fd(sockfd);
     if (!socket || !socket->has_address || socket->type != RUCUX_UNIX_IPC_SOCK_STREAM) {
-        kernel::print("sys_listen failed\n");
         return -1;
     }
     socket->listening = true;
     socket->vnode.flags = static_cast<uint16_t>(backlog < 0 ? 0 : backlog);
-    kernel::print("sys_listen SUCCESS\n");
     return 0;
 }
 
@@ -522,7 +510,7 @@ int local_socket_manager::sys_accept(int sockfd, void* addr, uint32_t* addrlen) 
     listener->pending_index = -1;
 
     auto& child = g_local_sockets[child_index];
-    int fd = kernel::vfs::vfs_manager::install_fd(&child.vnode, 0);
+    int fd = kernel::vfs::vfs_manager::alloc_fd(&child.vnode);
     if (fd < 0) {
         release_socket_index(child_index);
         return -1;
@@ -541,17 +529,11 @@ int local_socket_manager::sys_connect(int sockfd, const void* addr, uint32_t add
     rucux_unix_ipc_address address = {};
     if (!client || client->type != RUCUX_UNIX_IPC_SOCK_STREAM || client->peer_index >= 0 ||
         !translate_address_in(addr, addrlen, address) || !valid_address(address)) {
-        kernel::print("sys_connect: failed validation fd={} addrlen={}\n", sockfd, addrlen);
         return -1;
     }
 
     auto* listener = find_listener(address, client->type);
-    if (!listener) {
-        kernel::print("sys_connect: no listener found\n");
-        return -1;
-    }
-    if (listener->pending_index >= 0) {
-        kernel::print("sys_connect: listener busy\n");
+    if (!listener || listener->pending_index >= 0) {
         return -1;
     }
 

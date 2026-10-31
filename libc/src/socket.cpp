@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/unix_ipc.h>
 #include <uapi/kernel/syscalls.h>
 #include <unistd.h>
 
@@ -11,18 +12,33 @@ extern "C" {
 const struct in6_addr in6addr_any = {{0}};
 
 int socket(int domain, int type, int protocol) {
+    if (domain == AF_UNIX) {
+        rucux_unix_ipc_socket_request request = {};
+        request.type = static_cast<uint32_t>(type);
+        return rucux_unix_socket(&request);
+    }
     return (int)__syscall(SYS_SOCKET, (long)domain, (long)type, (long)protocol);
 }
 
 int socketpair(int domain, int type, int protocol, int sv[2]) {
-    (void)domain;
-    (void)type;
-    (void)protocol;
-    if (sv) {
-        sv[0] = -1;
-        sv[1] = -1;
+    if (!sv) {
+        return -1;
     }
-    return -1; // stub
+    sv[0] = -1;
+    sv[1] = -1;
+    if (domain != AF_UNIX || protocol != 0) {
+        return -1;
+    }
+
+    rucux_unix_ipc_socket_request request = {};
+    request.type = static_cast<uint32_t>(type);
+    rucux_unix_ipc_pair_response response = {};
+    if (rucux_unix_socketpair(&request, &response) < 0) {
+        return -1;
+    }
+    sv[0] = response.first_fd;
+    sv[1] = response.second_fd;
+    return 0;
 }
 
 int bind(int sockfd, const struct sockaddr* addr, unsigned int addrlen) {

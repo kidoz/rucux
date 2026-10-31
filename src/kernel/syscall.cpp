@@ -9,6 +9,7 @@
 #include <uapi/kernel/net.h>
 #include <uapi/kernel/stat.h>
 #include <uapi/kernel/syscalls.h>
+#include <uapi/kernel/unix_ipc.h>
 
 namespace kernel {
 namespace {
@@ -68,17 +69,18 @@ struct arguments {
         return marshal(index, static_cast<size_t>(count) * element, mode);
     }
 
-    // Snapshot the caller's length once. Backends always receive storage large
-    // enough for sockaddr_in, while copyout respects the caller's capacity.
+    // Snapshot the caller's length once. Backends receive storage for either
+    // sockaddr_in or sockaddr_un, while copyout respects the returned length.
     bool socket_address(unsigned addr, unsigned len, bool optional) noexcept {
         if (optional && !value[addr]) {
             value[len] = 0;
             return true;
         }
         if (!marshal(len, sizeof(uint32_t), INOUT)) return false;
+        constexpr size_t max_address_size = sizeof(uint16_t) + RUCUX_UNIX_IPC_PATH_MAX;
         uint32_t capacity = *reinterpret_cast<uint32_t*>(buffers[len].data);
-        size_t copied = capacity < 16 ? capacity : 16;
-        return marshal(addr, copied, OUTPUT, false, 16);
+        size_t copied = capacity < max_address_size ? capacity : max_address_size;
+        return marshal(addr, copied, OUTPUT, false, max_address_size);
     }
 };
 } // namespace
@@ -187,10 +189,53 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
         ok = a.array(1, a3, 12, OUTPUT);
         break;
     case SYS_BIND:
-    case SYS_CONNECT:
-        if (a3 < 16) return EINVAL_RESULT;
-        ok = a.marshal(1, 16, INPUT);
-        a.value[2] = 16;
+    case SYS_CONNECT: {
+        if (a3 < static_cast<long>(sizeof(uint16_t))) return EINVAL_RESULT;
+        uint16_t family = 0;
+        if (!memory::copy_from_user(&family, reinterpret_cast<void*>(a2), sizeof(family))) return EFAULT_RESULT;
+        size_t address_size = 16;
+        if (family == 1) {
+            constexpr size_t max_address_size = sizeof(uint16_t) + RUCUX_UNIX_IPC_PATH_MAX;
+            if (a3 < 3 || static_cast<size_t>(a3) > max_address_size) return EINVAL_RESULT;
+            address_size = static_cast<size_t>(a3);
+        } else if (a3 < 16) {
+            return EINVAL_RESULT;
+        }
+        ok = a.marshal(1, address_size, INPUT);
+        a.value[2] = static_cast<long>(address_size);
+        break;
+    }
+    case SYS_UNIX_IPC:
+        switch (a1) {
+        case RUCUX_UNIX_IPC_OP_SOCKET:
+            ok = a.marshal(1, sizeof(rucux_unix_ipc_socket_request), INPUT);
+            break;
+        case RUCUX_UNIX_IPC_OP_BIND:
+        case RUCUX_UNIX_IPC_OP_CONNECT:
+            ok = a.marshal(2, sizeof(rucux_unix_ipc_address), INPUT);
+            break;
+        case RUCUX_UNIX_IPC_OP_LISTEN:
+            ok = a.marshal(2, sizeof(rucux_unix_ipc_listen_request), INPUT);
+            break;
+        case RUCUX_UNIX_IPC_OP_ACCEPT:
+            ok = a.marshal(2, sizeof(rucux_unix_ipc_address), OUTPUT, true);
+            break;
+        case RUCUX_UNIX_IPC_OP_SOCKETPAIR:
+            ok = a.marshal(1, sizeof(rucux_unix_ipc_socket_request), INPUT) &&
+                 a.marshal(2, sizeof(rucux_unix_ipc_pair_response), OUTPUT);
+            break;
+        case RUCUX_UNIX_IPC_OP_SHUTDOWN:
+            ok = a.marshal(2, sizeof(rucux_unix_ipc_shutdown_request), INPUT);
+            break;
+        case RUCUX_UNIX_IPC_OP_SENDMSG:
+            ok = a.array(2, a4, 1, INPUT);
+            break;
+        case RUCUX_UNIX_IPC_OP_RECVMSG:
+            ok = a.array(2, a4, 1, OUTPUT);
+            break;
+        default:
+            return EINVAL_RESULT;
+        }
         break;
     case SYS_ACCEPT:
         ok = a.socket_address(1, 2, true);
@@ -263,6 +308,14 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
     if (number == SYS_GETSOCKOPT) {
         size_t count = *reinterpret_cast<uint32_t*>(a.buffers[4].data);
         if (count < a.buffers[3].output_size) a.buffers[3].output_size = count;
+    }
+    if (number == SYS_ACCEPT || number == SYS_GETSOCKNAME || number == SYS_GETPEERNAME || number == SYS_RECVFROM) {
+        unsigned addr_index = number == SYS_RECVFROM ? 4 : 1;
+        unsigned len_index = number == SYS_RECVFROM ? 5 : 2;
+        if (a.buffers[addr_index].data && a.buffers[len_index].data) {
+            size_t count = *reinterpret_cast<uint32_t*>(a.buffers[len_index].data);
+            if (count < a.buffers[addr_index].output_size) a.buffers[addr_index].output_size = count;
+        }
     }
     for (auto& b : a.buffers) {
         if (b.output_size && !memory::copy_to_user(b.user, b.data, b.output_size)) return EFAULT_RESULT;

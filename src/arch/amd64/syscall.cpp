@@ -8,6 +8,7 @@
 #include <uapi/kernel/syscalls.h>
 
 #include <kernel/ipc/ipc.hpp>
+#include <kernel/ipc/local_socket.hpp>
 #include <kernel/memory/mmap.hpp>
 #include <kernel/net/socket.hpp>
 #include <kernel/process/signal.hpp>
@@ -225,23 +226,47 @@ static long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a
         return kernel::process::signal_manager::sys_sigprocmask(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
                                                                 reinterpret_cast<void*>(a3));
     case SYS_SOCKET:
+        if (a1 == 1) return kernel::ipc::local_socket_manager::sys_socket(static_cast<int>(a2), static_cast<int>(a3));
         return kernel::net::socket_manager::sys_socket(static_cast<int>(a1), static_cast<int>(a2),
                                                        static_cast<int>(a3));
     case SYS_BIND:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_bind(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
+                                                               static_cast<uint32_t>(a3));
+        }
         return kernel::net::socket_manager::sys_bind(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
                                                      static_cast<uint32_t>(a3));
     case SYS_LISTEN:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_listen(static_cast<int>(a1), static_cast<int>(a2));
+        }
         return kernel::net::socket_manager::sys_listen(static_cast<int>(a1), static_cast<int>(a2));
     case SYS_ACCEPT:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_accept(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                                 reinterpret_cast<uint32_t*>(a3));
+        }
         return kernel::net::socket_manager::sys_accept(static_cast<int>(a1), reinterpret_cast<void*>(a2),
                                                        reinterpret_cast<uint32_t*>(a3));
     case SYS_CONNECT:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_connect(
+                static_cast<int>(a1), reinterpret_cast<const void*>(a2), static_cast<uint32_t>(a3));
+        }
         return kernel::net::socket_manager::sys_connect(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
                                                         static_cast<uint32_t>(a3));
     case SYS_SEND:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_send(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
+                                                               static_cast<size_t>(a3), static_cast<int>(a4));
+        }
         return kernel::net::socket_manager::sys_send(static_cast<int>(a1), reinterpret_cast<const void*>(a2),
                                                      static_cast<size_t>(a3), static_cast<int>(a4));
     case SYS_RECV:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_recv(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                               static_cast<size_t>(a3), static_cast<int>(a4));
+        }
         return kernel::net::socket_manager::sys_recv(static_cast<int>(a1), reinterpret_cast<void*>(a2),
                                                      static_cast<size_t>(a3), static_cast<int>(a4));
     case SYS_SENDTO:
@@ -253,19 +278,41 @@ static long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a
                                                          static_cast<size_t>(a3), static_cast<int>(a4),
                                                          reinterpret_cast<void*>(a5), reinterpret_cast<uint32_t*>(a6));
     case SYS_SETSOCKOPT:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_setsockopt(
+                static_cast<int>(a1), static_cast<int>(a2), static_cast<int>(a3), reinterpret_cast<const void*>(a4),
+                static_cast<uint32_t>(a5));
+        }
         return kernel::net::socket_manager::sys_setsockopt(static_cast<int>(a1), static_cast<int>(a2),
                                                            static_cast<int>(a3), reinterpret_cast<const void*>(a4),
                                                            static_cast<uint32_t>(a5));
     case SYS_GETSOCKOPT:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_getsockopt(static_cast<int>(a1), static_cast<int>(a2),
+                                                                     static_cast<int>(a3), reinterpret_cast<void*>(a4),
+                                                                     reinterpret_cast<uint32_t*>(a5));
+        }
         return kernel::net::socket_manager::sys_getsockopt(static_cast<int>(a1), static_cast<int>(a2),
                                                            static_cast<int>(a3), reinterpret_cast<void*>(a4),
                                                            reinterpret_cast<uint32_t*>(a5));
     case SYS_GETSOCKNAME:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_getsockname(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                                      reinterpret_cast<uint32_t*>(a3));
+        }
         return kernel::net::socket_manager::sys_getsockname(static_cast<int>(a1), reinterpret_cast<void*>(a2),
                                                             reinterpret_cast<uint32_t*>(a3));
     case SYS_GETPEERNAME:
+        if (kernel::ipc::local_socket_manager::handles_fd(static_cast<int>(a1))) {
+            return kernel::ipc::local_socket_manager::sys_getpeername(static_cast<int>(a1), reinterpret_cast<void*>(a2),
+                                                                      reinterpret_cast<uint32_t*>(a3));
+        }
         return kernel::net::socket_manager::sys_getpeername(static_cast<int>(a1), reinterpret_cast<void*>(a2),
                                                             reinterpret_cast<uint32_t*>(a3));
+    case SYS_UNIX_IPC:
+        return kernel::ipc::local_socket_manager::sys_unix_ipc(static_cast<uint32_t>(a1), static_cast<uintptr_t>(a2),
+                                                               static_cast<uintptr_t>(a3), static_cast<uintptr_t>(a4),
+                                                               static_cast<uintptr_t>(a5), static_cast<uintptr_t>(a6));
     case SYS_WAITPID:
         return kernel::scheduler::scheduler::sys_waitpid(static_cast<int>(a1), reinterpret_cast<int*>(a2),
                                                          static_cast<int>(a3));
