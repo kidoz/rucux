@@ -34,4 +34,5 @@ arch_kernel_sources = files(
     'smp_trampoline.S',
     'scheduler/switch.S',
     'e1000.cpp',
+    'ata.cpp',
 )

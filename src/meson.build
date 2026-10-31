@@ -42,7 +42,6 @@ kernel_local_socket_sources = files('kernel/ipc/local_socket.cpp')
 kernel_runtime_services_sources = files('kernel/power.cpp')
 kernel_ramfs_sources = files('kernel/vfs/ramfs.cpp')
 kernel_storage_sources = files(
-    'kernel/vfs/ata.cpp',
     'kernel/vfs/fat32.cpp',
 )
 kernel_fdt_sources = files('kernel/fdt.cpp')

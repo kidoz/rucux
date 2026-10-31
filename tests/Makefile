@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++23 -Wall -Wextra -g
 CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
 LDLIBS = -lpthread
 OBJDIR ?= ../build/host-tests
-TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials
+TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_ata
 TESTS = $(addprefix $(OBJDIR)/,$(TEST_NAMES))
 LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
 LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
@@ -33,6 +33,10 @@ $(OBJDIR)/libc_%.o: ../libc/src/%.cpp | $(OBJDIR)
 $(OBJDIR)/test_atomic: $(OBJDIR)/test_atomic.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/test_spinlock: $(OBJDIR)/test_spinlock.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+$(OBJDIR)/ata.o: ../src/arch/amd64/ata.cpp | $(OBJDIR)
+	$(CXX) -Isupport $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_ata: $(OBJDIR)/test_ata.o $(OBJDIR)/ata.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/test_buddy: $(OBJDIR)/test_buddy.o $(OBJDIR)/buddy.o
 	$(CXX) -o $@ $^ $(LDLIBS)
