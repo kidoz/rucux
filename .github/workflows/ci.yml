@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+      - name: Install locked Python development tools
+        run: uv sync --locked --group dev
+      - name: Check Python lint, types, and formatting
+        run: |
+          uv run --offline --no-sync ruff check tools scripts
+          uv run --offline --no-sync mypy
+          uv run --offline --no-sync ruff format --check tools scripts
+      - name: Validate product, board, image, and component manifests
+        run: python3 tools/validate_manifests.py
+      - name: Build and run host tests
+        run: make -C tests run
+
+  cross-build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: smoke-qemu-amd64
+            cross_file: cross_amd64.txt
+            tool_prefix: x86_64-elf-
+            replacement_prefix: ''
+            packages: build-essential
+          - product: bringup-qemu-armv7
+            cross_file: cross_armv7.txt
+            tool_prefix: arm-none-eabi-
+            replacement_prefix: arm-none-eabi-
+            packages: gcc-arm-none-eabi g++-arm-none-eabi binutils-arm-none-eabi
+          - product: smoke-qemu-aarch64
+            cross_file: cross_aarch64.txt
+            tool_prefix: aarch64-elf-
+            replacement_prefix: aarch64-linux-gnu-
+            packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes meson ninja-build ${{ matrix.packages }}
+      - name: Select CI toolchain binaries
+        run: |
+          mkdir -p build/ci
+          sed 's/${{ matrix.tool_prefix }}/${{ matrix.replacement_prefix }}/g' \
+            '${{ matrix.cross_file }}' > 'build/ci/${{ matrix.product }}.txt'
+      - name: Configure and compile product
+        run: |
+          meson setup 'build/${{ matrix.product }}' \
+            --cross-file 'build/ci/${{ matrix.product }}.txt' \
+            -Dproduct='${{ matrix.product }}'
+          meson compile -C 'build/${{ matrix.product }}'
