@@ -16,6 +16,7 @@ mkdir -p "$(dirname "${LOG_PATH}")" "$(dirname "${SMP_LOG_PATH}")"
 # secondary, and an intact marker line proves console output is serialized —
 # without the console lock these interleave and the line is unmatchable.
 smp_markers=(
+    "MMU: replacement and permissions verified"
     "SMP: 3 of 3 secondary cores online"
     "rucux (aarch64) boot complete, 4 CPUs online"
     "AP1: timer IRQ verified"
@@ -33,6 +34,7 @@ required_markers=(
     "Per-CPU: BSP (cpu_id=0) initialized, TPIDR_EL1 set"
     "AArch64 VMM: MMU enabled"
     "MMU: identity translation verified"
+    "MMU: replacement and permissions verified"
     "Scheduler initialized"
     "Scheduler: context switch round-trip verified"
     "rucux (aarch64) boot complete, 1 CPUs online"
@@ -46,6 +48,7 @@ required_markers=(
 # A translation mismatch still boots, so assert its absence explicitly rather
 # than relying on the positive markers alone.
 forbidden_markers=(
+    "MMU: REPLACEMENT FAILED"
     "syscall safety: FAIL"
     "*** EL0"
     "ELF load failed"

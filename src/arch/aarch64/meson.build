@@ -4,6 +4,9 @@ kernel_linker_script = meson.current_source_dir() + '/linker.ld'
 
 common_cpp_args += ['-mstrict-align']
 kernel_args += ['-mgeneral-regs-only']
+if product_name == 'smoke-qemu-aarch64'
+    kernel_args += ['-DRUCUX_VM_SELF_TEST=1']
+endif
 user_c_args += ['-DRUCUX_ARCH="aarch64"']
 user_cpp_args += ['-DRUCUX_ARCH="aarch64"']
 

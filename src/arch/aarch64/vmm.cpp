@@ -112,21 +112,42 @@ uint64_t* active_l1() noexcept {
     return reinterpret_cast<uint64_t*>(static_cast<uintptr_t>(ttbr0 & ADDR_MASK));
 }
 
+void invalidate(uintptr_t virt, bool whole_space = false) noexcept {
+    asm volatile("dsb ishst" ::: "memory");
+    if (whole_space) {
+        // A block/table change affects more than one 4 KiB translation. Flush
+        // all ASIDs and all levels on every CPU in the shareability domain.
+        asm volatile("tlbi vmalle1is" ::: "memory");
+    } else {
+        asm volatile("tlbi vaae1is, %0" ::"r"(virt >> 12U) : "memory");
+    }
+    asm volatile("dsb ish; isb" ::: "memory");
+}
+
+// Caller holds user_mapping_lock and must exclude accesses to the mapping
+// during the transient invalid interval. Kernel identity mappings stay intact.
+void replace_descriptor(uint64_t& entry, uint64_t replacement, uintptr_t virt, bool whole_space = false) noexcept {
+    if (entry == replacement) return;
+    if (entry & DESC_VALID) {
+        __atomic_store_n(&entry, 0, __ATOMIC_RELAXED);
+        invalidate(virt, whole_space); // Break completes before make.
+    }
+    // Finish initialization of any child table before publishing its parent.
+    asm volatile("dsb ishst" ::: "memory");
+    __atomic_store_n(&entry, replacement, __ATOMIC_RELAXED);
+    invalidate(virt, whole_space);
+}
+
 uint64_t* next_table(uint64_t* table, size_t index, bool create) noexcept {
     if ((table[index] & DESC_VALID) && (table[index] & DESC_TABLE))
         return reinterpret_cast<uint64_t*>(static_cast<uintptr_t>(table[index] & ADDR_MASK));
-    if (!create) return nullptr;
+    if (!create || (table[index] & DESC_VALID)) return nullptr;
 
     auto* fresh = alloc_table();
     if (!fresh) return nullptr;
-    table[index] = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(fresh)) | DESC_VALID | DESC_TABLE;
+    replace_descriptor(table[index],
+                       static_cast<uint64_t>(reinterpret_cast<uintptr_t>(fresh)) | DESC_VALID | DESC_TABLE, 0, true);
     return fresh;
-}
-
-void invalidate(uintptr_t virt) noexcept {
-    asm volatile("dsb ishst" ::: "memory");
-    asm volatile("tlbi vaae1is, %0" ::"r"(virt >> 12) : "memory");
-    asm volatile("dsb ish; isb" ::: "memory");
 }
 
 } // namespace
@@ -241,6 +262,9 @@ void vmm::discard_address_space(uintptr_t root) noexcept {
 }
 
 void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
+    // Splitting a live identity block could unmap the executing code, stack or
+    // page tables halfway through break-before-make. This API maps user VAs.
+    if (!user_range(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1)) || (phys & (PAGE_SIZE - 1))) return;
     irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x1FF;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
@@ -258,18 +282,20 @@ void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
         const uint64_t attrs = l2[l2_idx] & ~ADDR_MASK & ~DESC_TABLE;
         for (size_t i = 0; i < ENTRIES; ++i)
             l3[i] = (block_phys + i * PAGE_SIZE) | attrs | DESC_VALID | DESC_TABLE;
-        l2[l2_idx] = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(l3)) | DESC_VALID | DESC_TABLE;
+        replace_descriptor(l2[l2_idx], static_cast<uint64_t>(reinterpret_cast<uintptr_t>(l3)) | DESC_VALID | DESC_TABLE,
+                           virt, true);
     }
 
     auto* l3 = next_table(l2, l2_idx, true);
     if (!l3) return;
 
     // At L3, bit 1 set means "page" rather than "reserved".
-    l3[l3_idx] = (static_cast<uint64_t>(phys) & ADDR_MASK) | DESC_VALID | DESC_TABLE | flags_to_desc(flags);
-    invalidate(virt);
+    replace_descriptor(
+        l3[l3_idx], (static_cast<uint64_t>(phys) & ADDR_MASK) | DESC_VALID | DESC_TABLE | flags_to_desc(flags), virt);
 }
 
 void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
+    if (!user_range(virt, BLOCK_2MB) || (virt & (BLOCK_2MB - 1)) || (phys & (BLOCK_2MB - 1))) return;
     irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x1FF;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
@@ -277,11 +303,17 @@ void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
     auto* l2 = next_table(active_l1(), l1_idx, true);
     if (!l2) return;
 
-    l2[l2_idx] = (static_cast<uint64_t>(phys) & ~(BLOCK_2MB - 1)) | DESC_VALID | DESC_BLOCK | flags_to_desc(flags);
-    invalidate(virt);
+    // Coalescing a table requires ownership/reclamation of its pages. Do not
+    // silently discard existing leaves or leak their table through this API.
+    if ((l2[l2_idx] & DESC_VALID) && (l2[l2_idx] & DESC_TABLE)) return;
+    replace_descriptor(l2[l2_idx],
+                       (static_cast<uint64_t>(phys) & ADDR_MASK & ~(BLOCK_2MB - 1)) | DESC_VALID | DESC_BLOCK |
+                           flags_to_desc(flags),
+                       virt, true);
 }
 
 void vmm::unmap(uintptr_t virt) noexcept {
+    if (!user_range(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1))) return;
     irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x1FF;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
@@ -291,16 +323,17 @@ void vmm::unmap(uintptr_t virt) noexcept {
     if (!l2) return;
 
     if ((l2[l2_idx] & DESC_VALID) && !(l2[l2_idx] & DESC_TABLE)) {
-        l2[l2_idx] = 0;
+        // Existing API removes a block at block granularity.
+        replace_descriptor(l2[l2_idx], 0, virt, true);
     } else {
         auto* l3 = next_table(l2, l2_idx, false);
         if (!l3) return;
-        l3[l3_idx] = 0;
+        replace_descriptor(l3[l3_idx], 0, virt);
     }
-    invalidate(virt);
 }
 
 bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
+    if (!user_range(virt, PAGE_SIZE) || (virt & (PAGE_SIZE - 1))) return false;
     irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x1FF;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
@@ -312,8 +345,7 @@ bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
     if (!l3 || !(l3[l3_idx] & DESC_VALID)) return false;
 
     constexpr uint64_t permission_mask = (3ULL << 6) | DESC_UXN | DESC_PXN;
-    l3[l3_idx] = (l3[l3_idx] & ~permission_mask) | (flags_to_desc(flags) & permission_mask);
-    invalidate(virt);
+    replace_descriptor(l3[l3_idx], (l3[l3_idx] & ~permission_mask) | (flags_to_desc(flags) & permission_mask), virt);
     return true;
 }
 

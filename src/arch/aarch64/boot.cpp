@@ -129,6 +129,74 @@ void verify_mmu() noexcept {
     }
 }
 
+#ifdef RUCUX_VM_SELF_TEST
+// Runs before secondary CPUs/preemption, in a private address space. Exercise
+// the hardware translation path, not just the software page-table walker.
+void verify_mapping_replacement() noexcept {
+    using namespace kernel::memory;
+    constexpr uintptr_t alias = 0x120000000ULL;
+    constexpr uintptr_t block_alias = alias + 0x200000;
+    const auto rw = page_flags::PRESENT | page_flags::USER | page_flags::WRITABLE | page_flags::NO_EXECUTE;
+    const auto ro = page_flags::PRESENT | page_flags::USER | page_flags::NO_EXECUTE;
+    auto* first = static_cast<volatile uint64_t*>(pmm::alloc_page());
+    auto* second = static_cast<volatile uint64_t*>(pmm::alloc_page());
+    const auto root = vmm::create_address_space();
+    bool passed = first && second && root;
+    if (passed) {
+        *first = 0x12345678;
+        *second = 0x76543210;
+        const auto original = vmm::get_active_page_table();
+        vmm::switch_to(root);
+        // User mapping operations must leave the live identity map intact.
+        const auto identity = reinterpret_cast<uintptr_t>(first);
+        vmm::map(identity, reinterpret_cast<uintptr_t>(second), rw);
+        vmm::unmap(identity);
+        passed = vmm::get_phys(identity) == identity && !vmm::protect(identity, ro);
+        vmm::map(alias, reinterpret_cast<uintptr_t>(first), rw);
+        auto* view = reinterpret_cast<volatile uint64_t*>(alias);
+        passed = passed && *view == *first;
+        vmm::map(alias, reinterpret_cast<uintptr_t>(second), rw);
+        passed = passed && *view == *second;
+        passed = vmm::protect(alias, ro) && passed;
+        uint64_t result;
+        asm volatile("at s1e1w, %1; isb; mrs %0, par_el1" : "=r"(result) : "r"(alias) : "memory");
+        passed = passed && (result & 1ULL); // A write must fault after permission removal.
+        passed = vmm::protect(alias, rw) && passed;
+        asm volatile("at s1e1w, %1; isb; mrs %0, par_el1" : "=r"(result) : "r"(alias) : "memory");
+        passed = passed && !(result & 1ULL);
+        vmm::unmap(alias);
+        asm volatile("at s1e1r, %1; isb; mrs %0, par_el1" : "=r"(result) : "r"(alias) : "memory");
+        passed = passed && (result & 1ULL);
+
+        const auto block_phys = reinterpret_cast<uintptr_t>(first) & ~uintptr_t{0x1FFFFF};
+        const auto offset = reinterpret_cast<uintptr_t>(first) - block_phys;
+        vmm::map_2mb(block_alias, block_phys, rw);
+        auto* block_view = reinterpret_cast<volatile uint64_t*>(block_alias + offset);
+        passed = passed && *block_view == *first; // Prime a block translation.
+        vmm::map_2mb(block_alias, block_phys + 0x200000, rw);
+        asm volatile("at s1e1r, %1; isb; mrs %0, par_el1" : "=r"(result) : "r"(block_alias) : "memory");
+        passed = passed && !(result & 1ULL) && (result & 0x0000FFFFFFFFF000ULL) == block_phys + 0x200000;
+        vmm::map_2mb(block_alias, block_phys, rw);
+        passed = passed && *block_view == *first;
+        vmm::map(block_alias + offset, reinterpret_cast<uintptr_t>(second), rw);
+        passed = passed && *block_view == *second;
+        const auto neighbor = (offset + 4096) % 0x200000;
+        passed = passed && vmm::get_phys(block_alias + neighbor) == block_phys + neighbor;
+        vmm::map_2mb(block_alias, block_phys, rw); // Table coalescing is explicitly unsupported.
+        passed = passed && *block_view == *second;
+        // These aliases do not own the identity-mapped frames. Remove every
+        // leaf before discard_address_space reclaims the private table pages.
+        for (uintptr_t i = 0; i < 0x200000; i += 4096)
+            vmm::unmap(block_alias + i);
+        vmm::switch_to(original);
+    }
+    if (root) vmm::discard_address_space(root);
+    if (first) pmm::free_page(const_cast<uint64_t*>(first));
+    if (second) pmm::free_page(const_cast<uint64_t*>(second));
+    kernel::print(passed ? "MMU: replacement and permissions verified\n" : "MMU: REPLACEMENT FAILED\n");
+}
+#endif
+
 } // namespace
 
 extern "C" {
@@ -201,6 +269,9 @@ void kernel_main(uint64_t fdt_addr) {
         kernel::cpu::bsp_init();
         kernel::memory::vmm::init();
         verify_mmu();
+#ifdef RUCUX_VM_SELF_TEST
+        verify_mapping_replacement();
+#endif
     } else {
         kernel::print("WARNING: RAM window too small; PMM and MMU not initialized\n");
     }
