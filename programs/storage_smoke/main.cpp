@@ -46,6 +46,56 @@ bool verify_file(const char* path, size_t size, bool seed) {
     return ok;
 }
 
+bool lookup_error(const char* path, int expected) {
+    errno = 123;
+    const int fd = open(path, O_RDONLY);
+    if (fd >= 0) {
+        close(fd);
+        return false;
+    }
+    if (fd != -1 || errno != expected) return false;
+    struct stat info{};
+    info.st_size = -123;
+    errno = 123;
+    return stat(path, &info) == -1 && errno == expected && info.st_size == -123;
+}
+
+bool verify_lookup() {
+    if (!lookup_error("/fat32/missing.bin", ENOENT) || !lookup_error("/run/log/missing", ENOENT) ||
+        !lookup_error("/fat32/faultdir/known.bin", EIO) || !lookup_error("/fat32/shrink.bin/child", ENOTDIR) ||
+        !lookup_error("/fat32/shrink.bin/", ENOTDIR) || !lookup_error("/fat32/toolongname.bin", ENAMETOOLONG) ||
+        !lookup_error("/fat32/a.b.c", EINVAL) || !lookup_error("relative", EINVAL) || !lookup_error("", ENOENT) ||
+        !lookup_error("/fat32/../shrink.bin", EOPNOTSUPP))
+        return false;
+    char component[135] = "/run/";
+    memset(component + 5, 'x', 128);
+    component[133] = 0;
+    if (!lookup_error(component, ENAMETOOLONG)) return false;
+    char path[1025];
+    memset(path, '/', 1024);
+    path[1024] = 0;
+    if (!lookup_error(path, ENAMETOOLONG)) return false;
+    errno = 123;
+    int fd = open("//fat32//shrink.bin", O_RDONLY);
+    if (fd < 0) return false;
+    bool ok = errno == 123;
+    close(fd);
+    errno = 123;
+    fd = open("/fat32/", O_DIRECTORY);
+    if (fd < 0) return false;
+    ok = ok && errno == 123;
+    close(fd);
+    errno = 123;
+    fd = open("/fat32/shrink.bin", O_DIRECTORY);
+    if (fd >= 0) {
+        close(fd);
+        return false;
+    }
+    ok = ok && fd == -1 && errno == ENOTDIR;
+    if (ok) printf("storage_smoke: lookup errno and path validation PASS\n");
+    return ok;
+}
+
 bool verify_ramfs() {
     int fd = open("/run/log/journal.log", O_RDWR);
     if (fd < 0) return false;
@@ -197,6 +247,7 @@ int main() {
     REQUIRE(stage_fd >= 0);
     char stage = 0;
     REQUIRE(read(stage_fd, &stage, 1) == 1 && stage >= '0' && stage <= '2');
+    REQUIRE(verify_lookup());
     REQUIRE(verify_ramfs());
     REQUIRE(verify_mmap());
     if (stage == '0') {

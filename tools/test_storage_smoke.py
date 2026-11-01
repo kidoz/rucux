@@ -25,15 +25,22 @@ def extract(image: Path, work: Path, name: str, stage: int) -> bytes:
     return output.read_bytes()
 
 
-def file_sector(image: Path, short_name: bytes, offset: int) -> int:
-    """Find a sector in a task-created short-name FAT32 fixture without modifying it."""
+def file_sector(image: Path, short_name: bytes, offset: int, *, directory: bool = False) -> int:
+    """Find a file sector or the first sector of a fixture directory without modifying it."""
     data = image.read_bytes()
     sector_size = int(struct.unpack_from("<H", data, 11)[0])
     sectors_per_cluster = data[13]
     reserved = int(struct.unpack_from("<H", data, 14)[0])
     fat_size = int(struct.unpack_from("<I", data, 36)[0])
     root = int(struct.unpack_from("<I", data, 44)[0])
-    if sector_size != 512 or not sectors_per_cluster or offset % sector_size or len(short_name) != 11:
+    if (
+        sector_size != 512
+        or not sectors_per_cluster
+        or offset < 0
+        or offset % sector_size
+        or len(short_name) != 11
+        or (directory and offset != 0)
+    ):
         raise RuntimeError("unsupported storage-smoke fixture geometry")
     cluster_bytes = sectors_per_cluster * sector_size
     fat_start = reserved * sector_size
@@ -60,7 +67,9 @@ def file_sector(image: Path, short_name: bytes, offset: int) -> int:
             if data[entry : entry + 11] != short_name:
                 continue
             size = struct.unpack_from("<I", data, entry + 28)[0]
-            if offset >= size:
+            if bool(data[entry + 11] & 0x10) != directory:
+                raise RuntimeError("storage-smoke fixture has the wrong entry type")
+            if not directory and offset >= size:
                 raise RuntimeError("storage-smoke fixture offset is beyond EOF")
             cluster = (int(struct.unpack_from("<H", data, entry + 20)[0]) << 16) | int(
                 struct.unpack_from("<H", data, entry + 26)[0]
@@ -123,22 +132,26 @@ def main() -> int:
         source = work / name
         source.write_bytes(contents)
         run(["mcopy", "-i", str(image), str(source), f"::/{name}"])
+    run(["mmd", "-i", str(image), "::/faultdir"])
+    run(["mcopy", "-i", str(image), str(work / "stage.bin"), "::/faultdir/known.bin"])
     variables = work / "uefi-vars.fd"
     shutil.copyfile(args.uefi_vars, variables)
     payload = bytes((i * 29 + 101) % 256 for i in range(700))
     fault_sector = file_sector(image, b"MMAPERR BIN", 4096)
+    lookup_fault_sector = file_sector(image, b"FAULTDIR   ", 0, directory=True)
     disk = {
         "driver": "raw",
         "node-name": "storage",
         "file": {
             "driver": "blkdebug",
             "inject-error": [
-                {"event": "read_aio", "errno": 5, "sector": fault_sector, "once": False, "immediately": True}
+                {"event": "read_aio", "errno": 5, "sector": sector, "once": False, "immediately": True}
+                for sector in (fault_sector, lookup_fault_sector)
             ],
             "image": {"driver": "file", "filename": str(image)},
         },
     }
-    (work / "mmap-fault.json").write_text(json.dumps(disk, indent=2) + "\n")
+    (work / "storage-faults.json").write_text(json.dumps(disk, indent=2) + "\n")
     for stage in (1, 2, 3):
         log = work / f"boot-{stage}.log"
         with log.open("wb") as stream:
@@ -180,6 +193,7 @@ def main() -> int:
             result.returncode
             or f"storage_smoke: PASS stage={stage}" not in text
             or "storage_smoke: mmap read-error rollback PASS" not in text
+            or "storage_smoke: lookup errno and path validation PASS" not in text
             or any(marker in text for marker in ("storage_smoke: FAIL", "PANIC", "Page Fault", "Exception"))
         ):
             raise RuntimeError(f"stage {stage}: runtime check failed; see {log}")

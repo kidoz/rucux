@@ -115,7 +115,8 @@ struct Fixture {
     static vfs_node* open() {
         auto* root = fat32::mount(PARTITION);
         ASSERT(root);
-        auto* file = root->ops->finddir(root, "journal.log");
+        vfs_node* file = nullptr;
+        ASSERT_EQ(vfs_manager::lookup(root, "journal.log", file), 0);
         ASSERT(file);
         return file;
     }
@@ -212,6 +213,90 @@ TEST(fat32_stops_at_first_data_read_failure) {
     fail_read = ROOT + 3;
     ASSERT_EQ(file->ops->write(file, 0, data.size(), data.data()), 512L);
     ASSERT_EQ(write_attempts, 1UL);
+}
+
+TEST(fat32_checked_lookup_distinguishes_missing_names_and_invalid_short_names) {
+    Fixture fixture;
+    auto* root = fat32::mount(PARTITION);
+    ASSERT(root);
+    vfs_node* result = root;
+    ASSERT_EQ(vfs_manager::lookup(root, "missing.bin", result), -2);
+    ASSERT(result == nullptr);
+    ASSERT_EQ(vfs_manager::lookup(root, "long-name.bin", result), -36);
+    ASSERT_EQ(vfs_manager::lookup(root, "file.long", result), -36);
+    ASSERT_EQ(vfs_manager::lookup(root, "a.b.c", result), -22);
+    ASSERT_EQ(vfs_manager::lookup(root, "JOURNAL.LOG", result), 0);
+    ASSERT(result);
+    ASSERT_EQ(result->length, 128UL);
+    ASSERT(!invalid_io);
+}
+
+TEST(fat32_lookup_contention_reaches_open_and_stat_without_changing_outputs) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    on_read = [] {
+        ASSERT_EQ(vfs_manager::sys_open("/journal.log", 0), -16);
+        ASSERT(vfs_manager::get_fd_node(0) == nullptr);
+        struct stat info{};
+        info.st_size = -123;
+        ASSERT_EQ(vfs_manager::sys_stat("/journal.log", &info), -16);
+        ASSERT_EQ(info.st_size, -123);
+    };
+    const int fd = vfs_manager::sys_open("/journal.log", 0);
+    ASSERT_EQ(fd, 0);
+    ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+}
+
+TEST(fat32_directory_chain_errors_are_not_missing_entries) {
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        Fixture fixture;
+        auto* root = fat32::mount(PARTITION);
+        ASSERT(root);
+        // No end marker: both directory sectors must be scanned before FAT advance.
+        for (size_t offset = 0; offset < 1024; offset += 32)
+            disk[ROOT * SECTOR + offset] = 0xE5;
+        if (mode == 0) fail_read = ROOT + 1;
+        if (mode == 1) fail_read = PARTITION + 2;
+        if (mode == 2) put32(disk.data() + (PARTITION + 2) * SECTOR + 8, 2); // Cycle.
+        if (mode == 3) put32(disk.data() + (PARTITION + 2) * SECTOR + 8, 0x0FFFFFF7);
+        vfs_node* result = root;
+        ASSERT_EQ(vfs_manager::lookup(root, "missing.bin", result), -5);
+        ASSERT(result == nullptr);
+        ASSERT(!invalid_io);
+    }
+    Fixture fixture;
+    auto* root = fat32::mount(PARTITION);
+    ASSERT(root);
+    for (size_t offset = 0; offset < 1024; offset += 32)
+        disk[ROOT * SECTOR + offset] = 0xE5;
+    vfs_node* result = root;
+    ASSERT_EQ(vfs_manager::lookup(root, "missing.bin", result), -2); // Genuine EOC.
+    ASSERT(result == nullptr);
+}
+
+TEST(fat32_lookup_allocation_failure_reaches_open_and_stat) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    allocation_limit = allocation_count;
+    ASSERT_EQ(vfs_manager::sys_open("/journal.log", 0), -12);
+    ASSERT(vfs_manager::get_fd_node(0) == nullptr);
+    struct stat info{};
+    info.st_size = -123;
+    ASSERT_EQ(vfs_manager::sys_stat("/journal.log", &info), -12);
+    ASSERT_EQ(info.st_size, -123);
+}
+
+TEST(fat32_directory_read_failure_reaches_open_and_stat_instead_of_missing_path) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    fail_read = ROOT;
+    ASSERT_EQ(vfs_manager::sys_open("/journal.log", 0), -5);
+    ASSERT(vfs_manager::get_fd_node(0) == nullptr);
+    struct stat info{};
+    info.st_size = -123;
+    fail_read = ROOT;
+    ASSERT_EQ(vfs_manager::sys_stat("/journal.log", &info), -5);
+    ASSERT_EQ(info.st_size, -123);
 }
 
 TEST(fat32_vfs_first_read_failure_is_not_eof_and_does_not_move_the_offset) {
@@ -433,7 +518,9 @@ TEST(fat32_rejects_cyclic_out_of_range_and_unreadable_chains) {
         if (mode == 2) put32(disk.data() + (PARTITION + 2) * SECTOR + 12, 0x0FFFFFF7);
         if (mode == 3) put32(disk.data() + ROOT * SECTOR + 28, CAPACITY + 1);
         if (mode == 4) fail_read = PARTITION + 2;
-        ASSERT(!root->ops->finddir(root, "journal.log"));
+        vfs_node* file = root;
+        ASSERT_EQ(vfs_manager::lookup(root, "journal.log", file), -5);
+        ASSERT(file == nullptr);
         ASSERT(!invalid_io);
     }
     Fixture fixture;
@@ -482,7 +569,9 @@ TEST(fat32_allocation_failures_release_partial_nodes) {
     const auto baseline = allocation_count;
     for (size_t extra = 0; extra < 4; ++extra) {
         allocation_limit = baseline + extra;
-        ASSERT(!root->ops->finddir(root, "journal.log"));
+        vfs_node* file = root;
+        ASSERT_EQ(vfs_manager::lookup(root, "journal.log", file), -12);
+        ASSERT(file == nullptr);
         ASSERT_EQ(allocation_count, baseline);
     }
 }

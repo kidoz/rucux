@@ -21,6 +21,7 @@ bool has_current;
 int callback_result;
 unsigned truncated, synced;
 unsigned refreshed;
+unsigned looked_up, opened;
 size_t refreshed_length;
 int refresh_result;
 uint64_t ticks;
@@ -70,8 +71,9 @@ struct MetadataMount {
     MetadataMount() {
         root.type = file_type::DIRECTORY;
         root.ops = &root_ops;
-        root_ops.finddir = [](vfs_node*, const char* name) -> vfs_node* {
-            return std::strcmp(name, "file") == 0 ? &node : nullptr;
+        root_ops.lookup = [](vfs_node*, const char* name, vfs_node*& result) {
+            result = std::strcmp(name, "file") == 0 ? &node : nullptr;
+            return result ? 0 : -2;
         };
         vfs_manager::set_root(&root);
     }
@@ -114,6 +116,166 @@ void scheduler::sleep_until(uint64_t tick) noexcept {
 }
 } // namespace scheduler
 } // namespace kernel
+
+TEST(vfs_lookup_errors_reach_open_and_stat_without_publishing_outputs) {
+    reset();
+    MetadataMount mount;
+    opened = 0;
+    ops.open = [](vfs_node*) { ++opened; };
+    mount.root_ops.lookup = [](vfs_node*, const char*, vfs_node*& result) {
+        result = &node; // Even a broken callback cannot publish a node on error.
+        return callback_result;
+    };
+    for (int error : {-2, -5, -12, -16, -20, -22, -36, -95}) {
+        callback_result = error;
+        vfs_node* result = &node;
+        ASSERT_EQ(vfs_manager::resolve_path("/file", result), error);
+        ASSERT(result == nullptr);
+        ASSERT_EQ(vfs_manager::sys_open("/file", 0), error);
+        ASSERT(descriptors[0].node == nullptr);
+        struct stat info{};
+        info.st_size = -123;
+        ASSERT_EQ(vfs_manager::sys_stat("/file", &info), error);
+        ASSERT_EQ(info.st_size, -123);
+    }
+    ASSERT_EQ(opened, 0U);
+}
+
+TEST(vfs_lookup_rejects_invalid_callback_results_and_missing_operations) {
+    reset();
+    MetadataMount mount;
+    vfs_node* result = &node;
+    mount.root_ops.lookup = [](vfs_node*, const char*, vfs_node*& child) {
+        child = nullptr;
+        return 0;
+    };
+    ASSERT_EQ(vfs_manager::resolve_path("/file", result), -5);
+    ASSERT(result == nullptr);
+    mount.root_ops.lookup = [](vfs_node*, const char*, vfs_node*& child) {
+        child = &node;
+        return 1;
+    };
+    ASSERT_EQ(vfs_manager::resolve_path("/file", result), -5);
+    ASSERT(result == nullptr);
+    mount.root_ops.lookup = nullptr;
+    ASSERT_EQ(vfs_manager::resolve_path("/file", result), -95);
+    ASSERT(result == nullptr);
+    ASSERT_EQ(vfs_manager::lookup(&node, "child", result), -20);
+    ASSERT_EQ(vfs_manager::lookup(&mount.root, nullptr, result), -14);
+    ASSERT_EQ(vfs_manager::lookup(&mount.root, "", result), -22);
+    ASSERT_EQ(vfs_manager::lookup(&mount.root, "a/b", result), -22);
+}
+
+TEST(vfs_absolute_paths_preserve_directory_requirements) {
+    reset();
+    MetadataMount mount;
+    vfs_node* result = nullptr;
+    ASSERT_EQ(vfs_manager::resolve_path("/", result), 0);
+    ASSERT(result == &mount.root);
+    ASSERT_EQ(vfs_manager::resolve_path("///", result), 0);
+    ASSERT(result == &mount.root);
+    ASSERT_EQ(vfs_manager::resolve_path("//file", result), 0);
+    ASSERT(result == &node);
+    ASSERT_EQ(vfs_manager::resolve_path("/file/", result), -20);
+    ASSERT(result == nullptr);
+    ASSERT_EQ(vfs_manager::sys_open("/file/child", 0), -20);
+    ASSERT_EQ(vfs_manager::sys_open("/file", 00200000), -20);
+    const int fd = vfs_manager::sys_open("///", 00200000);
+    ASSERT_EQ(fd, 0);
+    ASSERT(vfs_manager::get_fd_node(fd) == &mount.root);
+    ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+}
+
+TEST(vfs_prevalidates_complete_paths_before_any_lookup) {
+    reset();
+    MetadataMount mount;
+    looked_up = 0;
+    mount.root_ops.lookup = [](vfs_node* directory, const char*, vfs_node*& child) {
+        ++looked_up;
+        child = directory;
+        return 0;
+    };
+    vfs_node* result = &node;
+    ASSERT_EQ(vfs_manager::resolve_path(nullptr, result), -14);
+    ASSERT_EQ(vfs_manager::resolve_path("", result), -2);
+    ASSERT_EQ(vfs_manager::resolve_path("relative", result), -22);
+    ASSERT_EQ(vfs_manager::resolve_path("/good/./bad", result), -95);
+    ASSERT_EQ(vfs_manager::resolve_path("/good/../bad", result), -95);
+    char component[135] = "/good/";
+    std::memset(component + 6, 'x', 128);
+    component[134] = 0;
+    ASSERT_EQ(vfs_manager::resolve_path(component, result), -36);
+    ASSERT_EQ(looked_up, 0U);
+    ASSERT(result == nullptr);
+    component[133] = 0; // A 127-byte component is accepted without truncation.
+    ASSERT_EQ(vfs_manager::resolve_path(component, result), 0);
+    ASSERT_EQ(looked_up, 2U);
+    char path[1025];
+    std::memset(path, '/', 1024);
+    for (unsigned i = 1; i < 1024; i += 2)
+        path[i] = 'x';
+    path[1024] = 0;
+    looked_up = 0;
+    ASSERT_EQ(vfs_manager::resolve_path(path, result), -36);
+    ASSERT_EQ(looked_up, 0U);
+    path[1023] = 0;
+    ASSERT_EQ(vfs_manager::resolve_path(path, result), 0);
+    ASSERT_EQ(looked_up, 511U);
+    ASSERT(result == &mount.root);
+}
+
+TEST(vfs_failed_open_does_not_invoke_open_or_consume_a_descriptor) {
+    reset();
+    MetadataMount mount;
+    opened = 0;
+    ops.open = [](vfs_node*) { ++opened; };
+    ASSERT_EQ(vfs_manager::sys_open("/file", 3), -22);
+    ASSERT_EQ(vfs_manager::sys_open(nullptr, 0), -14);
+    for (auto& fd : descriptors)
+        fd.node = &node;
+    ASSERT_EQ(vfs_manager::sys_open("/file", 0), -12); // Injected table growth failure.
+    current.fd_table = nullptr;
+    ASSERT_EQ(vfs_manager::sys_open("/file", 0), -12); // Nonzero count, absent allocation.
+    ASSERT(vfs_manager::get_fd_node(1) == nullptr);
+    current.fd_count = 0;
+    ASSERT_EQ(vfs_manager::sys_open("/file", 0), -12); // Initial table allocation failure.
+    kernel::scheduler::thread::file_descriptor full[kernel::scheduler::thread::MAX_FDS]{};
+    for (auto& fd : full)
+        fd.node = &node;
+    current.fd_table = full;
+    current.fd_count = kernel::scheduler::thread::MAX_FDS;
+    ASSERT_EQ(vfs_manager::sys_open("/file", 0), -24);
+    ASSERT_EQ(opened, 0U);
+    reset();
+    opened = 0;
+    ops.open = [](vfs_node*) { ++opened; };
+    const int fd = vfs_manager::sys_open("/file", 2 | 0x0400);
+    ASSERT_EQ(fd, 0);
+    ASSERT_EQ(opened, 1U);
+    ASSERT_EQ(descriptors[fd].offset, 0UL);
+    ASSERT_EQ(descriptors[fd].flags, 2 | 0x0400);
+    ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+}
+
+TEST(ramfs_checked_lookup_returns_children_and_missing_entries) {
+    reset();
+    auto* root = vfs_manager::get_root();
+    if (!root) {
+        root = ramfs::create_root();
+        vfs_manager::set_root(root);
+    }
+    auto* directory = ramfs::create_directory(root, "lookup-dir");
+    ASSERT(directory);
+    auto* file = ramfs::create_file(directory, "lookup-file", nullptr, 0);
+    ASSERT(file);
+    vfs_node* result = nullptr;
+    ASSERT_EQ(vfs_manager::resolve_path("/lookup-dir//lookup-file", result), 0);
+    ASSERT(result == file);
+    ASSERT_EQ(vfs_manager::resolve_path("/lookup-dir/", result), 0);
+    ASSERT(result == directory);
+    ASSERT_EQ(vfs_manager::resolve_path("/lookup-dir/missing", result), -2);
+    ASSERT(result == nullptr);
+}
 
 TEST(vfs_dispatches_truncate_without_changing_the_offset) {
     reset();

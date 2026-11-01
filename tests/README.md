@@ -198,9 +198,9 @@ cluster allocation, sparse writes, or full POSIX filesystem semantics.
 FAT32 truncation now durably shrinks EOF while retaining its allocated chain;
 truncate growth returns `EOPNOTSUPP`. Fsync explicitly checks ATA flush completion.
 RAMFS supports logical shrinking and volatile-memory fsync. FAT32 contention
-returns `EBUSY` for read/write/append/truncate/fsync/metadata refresh; operations
-do not wait. Lookup retains its null-result interface. Stat/fstat and SEEK_END refresh EOF
-before using it; seeking from start/current position needs no metadata I/O.
+returns `EBUSY` for lookup/read/write/append/truncate/fsync/metadata refresh;
+operations do not wait. Stat/fstat and SEEK_END refresh EOF before using it;
+seeking from start/current position needs no metadata I/O.
 Refresh failures preserve stat buffers and descriptor offsets. O_APPEND selects
 EOF and writes under one filesystem reservation, independent of the FD offset.
 Full allocated FAT32 capacity returns `ENOSPC`; an append can acknowledge a
@@ -208,12 +208,51 @@ short prefix. Missing regular-file append support returns `EOPNOTSUPP`.
 RAMFS remains volatile; busy read/write/append callbacks return `EBUSY` and
 allocation failure returns `ENOMEM`. Hosted reservations do not prove target SMP
 storage, concurrent metadata queries, or physical power-loss behavior. Whole
-writes are not crash-atomic. The legacy lookup interface still collapses lookup
-failures into a missing-path result. File-backed mmap error handling is covered
-below; stream readiness semantics remain a separate concern.
+writes are not crash-atomic. Checked lookup preserves negative errors through
+open/stat and libc errno, as described below. File-backed mmap error handling
+is also covered below; stream readiness semantics remain a separate concern.
 
 For real libc/kernel and clean shutdown/remount coverage, see the three-boot
 [storage smoke product](../products/smoke-storage-qemu-amd64/README.md).
+
+## Checked pathname lookup
+
+`vfs_ops::lookup` returns zero with a node or negative errno with a null result.
+The VFS validates absolute paths before traversal: at most 1023 bytes plus NUL
+and 127 bytes per component. Repeated slashes are accepted. A regular file in
+an intermediate component or followed by a slash returns `ENOTDIR`;
+`O_DIRECTORY` requires a directory. Relative paths return `EINVAL`, and dot and
+parent components explicitly return `EOPNOTSUPP`. No symlink/creation semantics
+are added. FAT32 retains case-insensitive 8.3 lookup: excess base/extension length
+returns `ENAMETOOLONG`, malformed short names return `EINVAL`.
+
+`test_vfs` checks path boundaries, prevalidation before callbacks, missing lookup
+operations, malformed callback results, unchanged stat buffers, and descriptor
+allocation/exhaustion. Failed opens invoke no open callback and publish no FD.
+`test_fat32` checks absence versus read/FAT-chain/corruption/allocation/contention
+errors, plus cleanup of partial node allocations. `test_file_metadata` links the
+actual libc open wrapper and verifies syscall arguments, FD zero, successful
+errno preservation, and -1/errno translation. Run these focused suites with:
+
+```sh
+make -C tests test_fat32 test_vfs test_file_metadata
+build/host-tests/test_fat32
+build/host-tests/test_vfs
+build/host-tests/test_file_metadata
+```
+
+The storage QEMU smoke creates `faultdir/known.bin` and injects EIO into that
+directory's first data sector. Every boot requires open/stat to return EIO for
+that valid child path and ENOENT for healthy-directory missing entries, with
+unchanged stat output on errors. It also checks component/path limits,
+non-directory traversal, repeated slashes, directory-only opens, and libc errno.
+The exact block graph is `storage-faults.json`; the serial marker is
+`storage_smoke: lookup errno and path validation PASS`.
+
+RAMFS namespace mutation and FD tables have no new concurrency guarantee.
+FAT32 still creates fresh lookup nodes without VFS reference counting/reclamation;
+this delivery preserves that existing ownership model. Hosted cleanup checks
+cover partial allocation failures, not a complete vnode lifecycle.
 
 ## File-backed mmap population and rollback
 

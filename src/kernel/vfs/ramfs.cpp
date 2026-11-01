@@ -39,7 +39,7 @@ static vfs_ops g_ramfs_ops = {.read = ramfs::read,
                               .close = nullptr,
                               .ioctl = nullptr,
                               .readdir = ramfs::readdir,
-                              .finddir = ramfs::finddir,
+                              .lookup = ramfs::lookup,
                               .mmap = nullptr,
                               .fsync = ramfs::fsync,
                               .poll = nullptr,
@@ -228,15 +228,21 @@ vfs_node* ramfs::readdir(vfs_node* node, size_t index) noexcept {
     return cur ? cur->vnode : nullptr;
 }
 
-vfs_node* ramfs::finddir(vfs_node* node, const char* name) noexcept {
-    ramfs_node_internal* internal = reinterpret_cast<ramfs_node_internal*>(node->ptr);
-    uint32_t hash = vfs_node::hash_name(name);
-    ramfs_node_internal* cur = internal->first_child;
+int ramfs::lookup(vfs_node* node, const char* name, vfs_node*& result) noexcept {
+    result = nullptr;
+    if (!node || !name || !*name || !node->ptr) return -22;
+    if (node->type != file_type::DIRECTORY) return -20;
+    auto* internal = reinterpret_cast<ramfs_node_internal*>(node->ptr);
+    const uint32_t hash = vfs_node::hash_name(name);
+    auto* cur = internal->first_child;
     while (cur) {
-        if (cur->vnode->name_hash == hash && lib::strcmp(cur->vnode->name, name) == 0) return cur->vnode;
+        if (cur->vnode->name_hash == hash && lib::strcmp(cur->vnode->name, name) == 0) {
+            result = cur->vnode;
+            return 0;
+        }
         cur = cur->next;
     }
-    return nullptr;
+    return -2;
 }
 
 } // namespace kernel::vfs

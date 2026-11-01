@@ -26,10 +26,20 @@ boot to check their exact length and contents independently.
 
 The task-owned image includes `mmap.bin` and `mmaperr.bin`. The tool follows the
 latter's FAT chain to locate its second page and puts QEMU's blkdebug filter
-under the raw disk driver. Only reads of that sector receive EIO; other files
-and image contents are unchanged. A padding fixture separates boot-file reads
-from the fault sector. The exact block graph is saved as `mmap-fault.json`.
+under the raw disk driver. Reads of that sector and the first data sector of a
+dedicated `faultdir` directory receive EIO; image contents are unchanged. A padding
+fixture separates boot-file reads from the fault sectors. The exact block graph is saved as `storage-faults.json`.
 Host extraction uses the raw image directly and bypasses fault injection.
+
+Every boot also checks `open`/`stat` errno for a missing file and the valid path
+`/fat32/faultdir/known.bin` whose directory read fails. Missing entries report
+ENOENT, failed reads EIO, and failed stat calls preserve the output buffer.
+Path tests check excessive component/path lengths, malformed FAT32 short names,
+non-directory traversal and trailing slashes, repeated slashes, and O_DIRECTORY.
+Paths remain absolute, with 127-byte components and a 1024-byte total limit
+including NUL; FAT32 retains 8.3 names. Relative paths return EINVAL and dot/parent
+components EOPNOTSUPP. The serial marker is
+`storage_smoke: lookup errno and path validation PASS`.
 
 Every boot checks an eager private file mapping, snapshot-EOF zero filling,
 independent FD offsets, private-copy writes and errno for invalid descriptors

@@ -6,6 +6,7 @@
 
 struct rucux_stat;
 extern "C" int rucux_stat(const char*, struct rucux_stat*);
+extern "C" int rucux_open(const char*, int, ...);
 extern "C" int rucux_fstat(int, struct rucux_stat*);
 extern "C" long rucux_lseek(int, long, int);
 
@@ -73,6 +74,31 @@ TEST(libc_lseek_translates_refresh_and_overflow_errors) {
     for (long error : {5, 9, 16, 22, 75}) {
         result = -error;
         ASSERT_EQ(rucux_lseek(7, -1, 2), -1L);
+        ASSERT_EQ(error_number, error);
+    }
+}
+
+TEST(libc_open_forwards_path_flags_and_preserves_success_errno) {
+    reset();
+    const char* path = "/file";
+    for (long fd : {0, 7}) {
+        result = fd;
+        ASSERT_EQ(rucux_open(path, 2 | 0x0400), fd);
+        ASSERT_EQ(number, SYS_OPEN);
+        ASSERT_EQ(arguments[0], reinterpret_cast<long>(path));
+        ASSERT_EQ(arguments[1], 2 | 0x0400);
+        ASSERT_EQ(error_number, 123);
+    }
+    // The optional mode does not change the existing non-creating syscall ABI.
+    ASSERT_EQ(rucux_open(path, 0x0040, 0600), 7);
+    ASSERT_EQ(arguments[1], 0x0040);
+}
+
+TEST(libc_open_translates_lookup_and_descriptor_errors) {
+    reset();
+    for (long error : {2, 5, 12, 14, 16, 20, 22, 24, 36, 95}) {
+        result = -error;
+        ASSERT_EQ(rucux_open("/file", 0), -1);
         ASSERT_EQ(error_number, error);
     }
 }

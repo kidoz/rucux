@@ -29,45 +29,99 @@ void vfs_manager::set_root(vfs_node* node) noexcept {
     g_root = node;
 }
 
-vfs_node* vfs_manager::resolve_path(const char* path) noexcept {
-    if (!g_root || path[0] != '/') return nullptr;
+namespace {
+int validate_component(const char* name, size_t length) noexcept {
+    if (!length) return -22;
+    if (length > 127) return -36;
+    // Parent traversal needs namespace/mount ancestry, which is not implemented.
+    if ((length == 1 && name[0] == '.') || (length == 2 && name[0] == '.' && name[1] == '.')) return -95;
+    return 0;
+}
+} // namespace
 
-    vfs_node* current = g_root;
-    char buffer[128];
-    size_t path_idx = 1;
-
-    while (path[path_idx] != '\0') {
-        size_t buf_idx = 0;
-        while (path[path_idx] != '/' && path[path_idx] != '\0' && buf_idx < 127) {
-            buffer[buf_idx++] = path[path_idx++];
-        }
-        buffer[buf_idx] = '\0';
-
-        if (path[path_idx] == '/') path_idx++;
-
-        if (buf_idx > 0) {
-            if (!current->ops || !current->ops->finddir) return nullptr;
-            current = current->ops->finddir(current, buffer);
-            if (!current) return nullptr;
-        }
+int vfs_manager::lookup(vfs_node* directory, const char* name, vfs_node*& result) noexcept {
+    result = nullptr;
+    if (!name) return -14;
+    size_t length = 0;
+    while (name[length]) {
+        if (name[length] == '/') return -22;
+        if (++length > 127) return -36;
     }
-    return current;
+    const int validation = validate_component(name, length);
+    if (validation < 0) return validation;
+    if (!directory) return -2;
+    if (directory->type != file_type::DIRECTORY) return -20;
+    if (!directory->ops || !directory->ops->lookup) return -95;
+    vfs_node* child = nullptr;
+    const int error = directory->ops->lookup(directory, name, child);
+    if (error < 0) return error;
+    if (error || !child) return -5;
+    result = child;
+    return 0;
+}
+
+int vfs_manager::resolve_path(const char* path, vfs_node*& result) noexcept {
+    result = nullptr;
+    if (!path) return -14;
+    if (!*path) return -2;
+    if (*path != '/') return -22;
+    // Validate the whole path before invoking a filesystem or allocating nodes.
+    size_t length = 0;
+    while (length < 1024 && path[length])
+        ++length;
+    if (length == 1024) return -36;
+    for (size_t i = 1; i < length;) {
+        if (path[i] == '/') {
+            ++i;
+            continue;
+        }
+        const size_t begin = i;
+        while (i < length && path[i] != '/')
+            ++i;
+        const int error = validate_component(path + begin, i - begin);
+        if (error < 0) return error;
+    }
+    if (!g_root) return -2;
+    vfs_node* current = g_root;
+    size_t i = 0;
+    while (i < length) {
+        if (path[i] == '/') {
+            if (current->type != file_type::DIRECTORY) return -20;
+            ++i;
+            continue;
+        }
+        char component[128];
+        size_t count = 0;
+        while (i < length && path[i] != '/')
+            component[count++] = path[i++];
+        component[count] = '\0';
+        vfs_node* child = nullptr;
+        const int error = lookup(current, component, child);
+        if (error < 0) return error;
+        current = child;
+    }
+    result = current;
+    return 0;
 }
 
 // Helper: get fd entry, ensuring capacity exists. Returns nullptr on bad fd.
 using fd_t = scheduler::thread::file_descriptor;
 static fd_t* get_fd(scheduler::thread* t, int fd) {
-    if (!t || fd < 0 || static_cast<size_t>(fd) >= t->fd_count) return nullptr;
+    if (!t || !t->fd_table || fd < 0 || static_cast<size_t>(fd) >= t->fd_count) return nullptr;
     return &t->fd_table[fd];
 }
 
 int vfs_manager::alloc_fd(vfs_node* node) noexcept {
     auto* t = scheduler::scheduler::current_thread();
-    if (!t) return -1;
+    if (!t) return -3;
+    if (!node) return -22;
     // Socket/accept create duplex streams; sys_open replaces the default mode.
-    const int flags = node && node->type == file_type::SOCKET ? 2 : 0;
+    const int flags = node->type == file_type::SOCKET ? 2 : 0;
 
-    if (!t->fd_table) t->ensure_fd_capacity(scheduler::thread::INITIAL_FDS);
+    if (!t->fd_table) {
+        if (t->fd_count || !t->ensure_fd_capacity(scheduler::thread::INITIAL_FDS)) return -12;
+    }
+    if (!t->fd_table) return -12;
 
     for (size_t i = 0; i < t->fd_count; ++i) {
         if (t->fd_table[i].node == nullptr) {
@@ -79,7 +133,7 @@ int vfs_manager::alloc_fd(vfs_node* node) noexcept {
     }
     if (t->fd_count < scheduler::thread::MAX_FDS) {
         size_t old = t->fd_count;
-        t->ensure_fd_capacity(t->fd_count + 1);
+        if (!t->ensure_fd_capacity(t->fd_count + 1)) return -12;
         if (old < t->fd_count) {
             t->fd_table[old].node = node;
             t->fd_table[old].offset = 0;
@@ -87,7 +141,7 @@ int vfs_manager::alloc_fd(vfs_node* node) noexcept {
             return static_cast<int>(old);
         }
     }
-    return -1;
+    return t->fd_count >= scheduler::thread::MAX_FDS ? -24 : -12;
 }
 
 void vfs_manager::free_fd(int fd) noexcept {
@@ -104,17 +158,17 @@ vfs_node* vfs_manager::get_fd_node(int fd) noexcept {
 
 int vfs_manager::sys_open(const char* path, int flags) noexcept {
     auto* t = scheduler::scheduler::current_thread();
-    if (!t) return -1;
-
-    vfs_node* node = resolve_path(path);
-    if (!node) return -1;
-
+    if (!t) return -3;
+    if ((flags & ACCESS_MODE) == ACCESS_MODE) return -22;
+    vfs_node* node = nullptr;
+    const int error = resolve_path(path, node);
+    if (error < 0) return error;
+    constexpr int DIRECTORY = 00200000;
+    if ((flags & DIRECTORY) && node->type != file_type::DIRECTORY) return -20;
+    const int fd = alloc_fd(node);
+    if (fd < 0) return fd;
+    get_fd(t, fd)->flags = flags;
     if (node->ops && node->ops->open) node->ops->open(node);
-
-    int fd = alloc_fd(node);
-    if (fd >= 0) {
-        get_fd(t, fd)->flags = flags;
-    }
     return fd;
 }
 
@@ -287,8 +341,9 @@ static void fill_stat(const vfs_node* node, void* buffer) noexcept {
 
 int vfs_manager::sys_stat(const char* path, void* statbuf) noexcept {
     if (!path || !statbuf) return -14;
-    vfs_node* node = resolve_path(path);
-    if (!node) return -2;
+    vfs_node* node = nullptr;
+    const int error = resolve_path(path, node);
+    if (error < 0) return error;
     const int result = refresh_metadata(node);
     if (result < 0) return result;
     fill_stat(node, statbuf);

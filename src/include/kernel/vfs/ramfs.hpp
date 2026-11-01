@@ -18,7 +18,7 @@ public:
     static int truncate(vfs_node* node, size_t length) noexcept;
     static int fsync(vfs_node* node) noexcept;
     static vfs_node* readdir(vfs_node* node, size_t index) noexcept;
-    static vfs_node* finddir(vfs_node* node, const char* name) noexcept;
+    static int lookup(vfs_node* node, const char* name, vfs_node*& result) noexcept;
 
 private:
     struct ramfs_node {

@@ -99,7 +99,7 @@ int fat32_truncate(vfs_node*, size_t) noexcept;
 int fat32_fsync(vfs_node*) noexcept;
 int fat32_refresh_metadata(vfs_node*) noexcept;
 int read_file_entry(vfs_node*, uint8_t (&)[SECTOR_SIZE], uint32_t&) noexcept;
-vfs_node* fat32_finddir(vfs_node*, const char*) noexcept;
+int fat32_lookup(vfs_node*, const char*, vfs_node*&) noexcept;
 
 vfs_node* make_node(fat32_info* info, uint32_t cluster, uint64_t capacity, uint32_t length, file_type type,
                     const char* name, uint32_t directory_lba = 0, uint16_t directory_offset = 0) noexcept {
@@ -125,7 +125,7 @@ vfs_node* make_node(fat32_info* info, uint32_t cluster, uint64_t capacity, uint3
     *internal = {info, capacity, cluster, directory_lba, directory_offset};
     ops->fsync = fat32_fsync;
     if (type == file_type::DIRECTORY) {
-        ops->finddir = fat32_finddir;
+        ops->lookup = fat32_lookup;
     } else {
         ops->read = fat32_read;
         ops->write = fat32_write;
@@ -322,32 +322,36 @@ int fat32_fsync(vfs_node* node) noexcept {
     return 0;
 }
 
-bool short_name(const char* name, uint8_t (&target)[11]) noexcept {
-    if (!name || !*name) return false;
+int short_name(const char* name, uint8_t (&target)[11]) noexcept {
+    if (!name || !*name) return -22;
     lib::memset(target, ' ', sizeof(target));
     size_t base = 0, extension = 0;
     bool dot = false;
     for (size_t i = 0; i < 13; ++i) {
         const auto c = static_cast<uint8_t>(name[i]);
-        if (!c) return base != 0;
-        if (c == '/') return false;
+        if (!c) return base ? 0 : -22;
+        if (c == '/') return -22;
         if (c == '.') {
-            if (!base || dot) return false;
+            if (!base || dot) return -22;
             dot = true;
             continue;
         }
-        if ((!dot && base == 8) || (dot && extension == 3)) return false;
+        if ((!dot && base == 8) || (dot && extension == 3)) return -36;
         const auto index = dot ? 8 + extension++ : base++;
         target[index] = c >= 'a' && c <= 'z' ? static_cast<uint8_t>(c - 'a' + 'A') : c;
     }
-    return false;
+    return -36;
 }
 
-vfs_node* fat32_finddir(vfs_node* node, const char* name) noexcept {
-    operation_guard guard;
+int fat32_lookup(vfs_node* node, const char* name, vfs_node*& result) noexcept {
+    result = nullptr;
+    if (!node || !node->ptr) return -22;
+    if (node->type != file_type::DIRECTORY) return -20;
     uint8_t target[11];
-    if (!guard.acquired || !node || node->type != file_type::DIRECTORY || !node->ptr || !short_name(name, target))
-        return nullptr;
+    const int validation = short_name(name, target);
+    if (validation < 0) return validation;
+    operation_guard guard;
+    if (!guard.acquired) return -16;
     auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
     auto* info = internal->info;
     auto cluster = internal->start_cluster;
@@ -355,10 +359,10 @@ vfs_node* fat32_finddir(vfs_node* node, const char* name) noexcept {
     for (uint32_t visited = 0; valid_cluster(*info, cluster) && visited < info->cluster_count; ++visited) {
         const auto lba = cluster_to_lba(*info, cluster);
         for (uint32_t sec = 0; sec < info->sectors_per_cluster; ++sec) {
-            if (!ata::read_sectors(lba + sec, 1, sector)) return nullptr;
+            if (!ata::read_sectors(lba + sec, 1, sector)) return -5;
             for (uint16_t offset = 0; offset < SECTOR_SIZE; offset += 32) {
                 const auto* entry = sector + offset;
-                if (!entry[0]) return nullptr;
+                if (!entry[0]) return -2;
                 if (entry[0] == 0xE5 || entry[11] == 0x0F || (entry[11] & 0x08U)) continue;
                 if (lib::memcmp(entry, target, 11) != 0) continue;
                 const auto start =
@@ -368,13 +372,17 @@ vfs_node* fat32_finddir(vfs_node* node, const char* name) noexcept {
                 uint64_t capacity;
                 if ((!start && (type == file_type::DIRECTORY || length)) || !chain_capacity(*info, start, capacity) ||
                     length > capacity)
-                    return nullptr;
-                return make_node(info, start, capacity, length, type, name, lba + sec, offset);
+                    return -5;
+                auto* child = make_node(info, start, capacity, length, type, name, lba + sec, offset);
+                if (!child) return -12;
+                result = child;
+                return 0;
             }
         }
-        if (!next_cluster(*info, cluster, cluster)) return nullptr;
+        if (!next_cluster(*info, cluster, cluster)) return -5;
+        if (!cluster) return -2;
     }
-    return nullptr;
+    return -5;
 }
 
 } // namespace

@@ -228,7 +228,7 @@ vfs_node* create() noexcept {
     node->ops->open = nullptr;
     node->ops->close = nullptr;
     node->ops->readdir = nullptr;
-    node->ops->finddir = nullptr;
+    node->ops->lookup = nullptr;
     node->ops->mmap = nullptr;
     node->ops->poll = tty_poll_ready;
     return node;

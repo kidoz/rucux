@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <uapi/kernel/syscalls.h>
@@ -20,4 +21,8 @@ extern "C" int stat(const char* path, struct stat* buffer) {
 
 extern "C" int fstat(int fd, struct stat* buffer) {
     return checked_result(syscall(SYS_FSTAT, fd, reinterpret_cast<long>(buffer)));
+}
+
+extern "C" int open(const char* path, int flags, ...) {
+    return checked_result(syscall(SYS_OPEN, reinterpret_cast<long>(path), flags));
 }

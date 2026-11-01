@@ -20,7 +20,8 @@ struct vfs_ops {
     void (*close)(vfs_node* node);
     int (*ioctl)(vfs_node* node, unsigned long request, void* argp);
     vfs_node* (*readdir)(vfs_node* node, size_t index);
-    vfs_node* (*finddir)(vfs_node* node, const char* name);
+    // Return 0 and a non-null node, or negative errno and a null result.
+    int (*lookup)(vfs_node* node, const char* name, vfs_node*& result);
     uintptr_t (*mmap)(vfs_node* node, size_t offset); // Returns physical address
     int (*fsync)(vfs_node* node);
     // poll: returns bitmask of ready events (POLLIN=1, POLLOUT=4)
@@ -59,7 +60,9 @@ public:
     static void init() noexcept;
     static vfs_node* get_root() noexcept;
     static void set_root(vfs_node* node) noexcept;
-    static vfs_node* resolve_path(const char* path) noexcept;
+    // Absolute paths only; 1024 bytes including NUL, components at most 127 bytes.
+    static int lookup(vfs_node* directory, const char* name, vfs_node*& result) noexcept;
+    static int resolve_path(const char* path, vfs_node*& result) noexcept;
 
     // FD Management
     static int alloc_fd(vfs_node* node) noexcept;

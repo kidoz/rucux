@@ -70,7 +70,7 @@ $(OBJDIR)/libc_file_sync.o: ../libc/src/file_sync.cpp | $(OBJDIR)
 	$(CXX) $(CXXFLAGS) -I../libc/include -I.. -Dfsync=rucux_fsync -Dftruncate=rucux_ftruncate -Dsyscall=rucux_test_syscall -D__errno_location=rucux_test_errno_location -MMD -MP -c -o $@ $<
 $(OBJDIR)/test_file_sync: $(OBJDIR)/test_file_sync.o $(OBJDIR)/libc_file_sync.o
 	$(CXX) -o $@ $^ $(LDLIBS)
-METADATA_RENAMES = -Dstat=rucux_stat -Dfstat=rucux_fstat -Dlseek=rucux_lseek -Dsyscall=rucux_test_syscall -D__errno_location=rucux_test_errno_location
+METADATA_RENAMES = -Dopen=rucux_open -Dstat=rucux_stat -Dfstat=rucux_fstat -Dlseek=rucux_lseek -Dsyscall=rucux_test_syscall -D__errno_location=rucux_test_errno_location
 $(OBJDIR)/metadata_%.o: ../libc/src/%.cpp | $(OBJDIR)
 	$(CXX) $(CXXFLAGS) -I../libc/include -I.. $(METADATA_RENAMES) -MMD -MP -c -o $@ $<
 $(OBJDIR)/test_file_metadata: $(OBJDIR)/test_file_metadata.o $(OBJDIR)/metadata_file_metadata.o $(OBJDIR)/metadata_lseek.o
