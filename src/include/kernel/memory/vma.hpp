@@ -10,6 +10,9 @@ namespace kernel::memory {
 // Set on VMAs whose frames this address space allocated. File ops->mmap
 // frames stay clear so munmap drops the translation without freeing them.
 inline constexpr uint32_t VMA_OWNS_FRAMES = 0x80000000u;
+// Eager population owns this range until success or rollback. Overlapping
+// unmap/protect operations must wait for the caller to retry after completion.
+inline constexpr uint32_t VMA_POPULATING = 0x40000000u;
 
 // Virtual Memory Area — tracks a contiguous mapped region in an address space.
 struct vma {

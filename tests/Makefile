@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++23 -Wall -Wextra -g
 CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
 LDLIBS = -lpthread
 OBJDIR ?= ../build/host-tests
-TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write
+TEST_NAMES = test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write test_mmap test_vma test_file_mmap
 TESTS = $(addprefix $(OBJDIR)/,$(TEST_NAMES))
 LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
 LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
@@ -50,6 +50,20 @@ $(OBJDIR)/vfs.o: ../src/kernel/vfs/vfs.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 $(OBJDIR)/ramfs.o: ../src/kernel/vfs/ramfs.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/mmap.o: ../src/kernel/memory/mmap.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/vma.o: ../src/kernel/memory/vma.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/rbtree.o: ../src/kernel/ds/rbtree.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_mmap: $(OBJDIR)/test_mmap.o $(OBJDIR)/mmap.o $(OBJDIR)/vma.o $(OBJDIR)/rbtree.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+$(OBJDIR)/test_vma: $(OBJDIR)/test_vma.o $(OBJDIR)/vma.o $(OBJDIR)/rbtree.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+$(OBJDIR)/libc_mmap.o: ../libc/src/mmap.cpp | $(OBJDIR)
+	$(CXX) $(CXXFLAGS) -I../libc/include -I.. -Dmmap=rucux_mmap -Dsyscall=rucux_test_syscall -D__errno_location=rucux_test_errno_location -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_file_mmap: $(OBJDIR)/test_file_mmap.o $(OBJDIR)/libc_mmap.o
+	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/test_vfs: $(OBJDIR)/test_vfs.o $(OBJDIR)/vfs.o $(OBJDIR)/ramfs.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/libc_file_sync.o: ../libc/src/file_sync.cpp | $(OBJDIR)

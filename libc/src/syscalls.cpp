@@ -31,10 +31,6 @@ int ioctl(int fd, unsigned long request, ...) {
     return (int)__syscall(SYS_IOCTL, (long)fd, (long)request, (long)argp);
 }
 
-void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
-    return (void*)__syscall(SYS_MMAP, (long)addr, (long)length, (long)prot, (long)flags, (long)fd, (long)offset);
-}
-
 int munmap(void* addr, size_t length) {
     return (int)__syscall(SYS_MUNMAP, (long)addr, (long)length);
 }

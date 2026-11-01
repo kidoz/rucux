@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -18,6 +19,11 @@ constexpr const char* APPEND_SECOND = "first\nsecond\nthird\nboot2\n";
 constexpr const char* APPEND_THIRD = "first\nsecond\nthird\nboot2\nboot3\n";
 constexpr int READ_WRITE_APPEND = static_cast<int>(static_cast<unsigned>(O_RDWR) | static_cast<unsigned>(O_APPEND));
 constexpr int WRITE_APPEND = static_cast<int>(static_cast<unsigned>(O_WRONLY) | static_cast<unsigned>(O_APPEND));
+constexpr int READ_WRITE = static_cast<int>(static_cast<unsigned>(PROT_READ) | static_cast<unsigned>(PROT_WRITE));
+constexpr int PRIVATE_ANON =
+    static_cast<int>(static_cast<unsigned>(MAP_PRIVATE) | static_cast<unsigned>(MAP_ANONYMOUS));
+constexpr int PRIVATE_FIXED = static_cast<int>(static_cast<unsigned>(MAP_PRIVATE) | static_cast<unsigned>(MAP_FIXED));
+constexpr int ANON_FIXED = static_cast<int>(static_cast<unsigned>(PRIVATE_ANON) | static_cast<unsigned>(MAP_FIXED));
 constexpr size_t PAYLOAD_SIZE = 700;
 uint8_t payload[PAYLOAD_SIZE];
 
@@ -120,6 +126,59 @@ bool verify_append(const char* expected) {
     close(fd);
     return ok;
 }
+
+bool verify_mmap() {
+    constexpr size_t PAGE = 4096, SIZE = 2 * PAGE + 37;
+    int fd = open("/fat32/mmap.bin", O_RDONLY);
+    if (fd < 0) return false;
+    bool ok = lseek(fd, 13, SEEK_SET) == 13;
+    errno = 123;
+    auto* mapping = static_cast<uint8_t*>(mmap(nullptr, SIZE, READ_WRITE, MAP_PRIVATE, fd, 0));
+    ok = ok && mapping != MAP_FAILED && errno == 123;
+    if (mapping != MAP_FAILED) {
+        for (size_t i = 0; ok && i < 3 * PAGE; ++i)
+            ok = mapping[i] == (i < SIZE ? static_cast<uint8_t>(i * 7 + 11) : 0);
+        mapping[0] = 0; // Private copies must not write back into the fixture.
+        ok = ok && munmap(mapping, SIZE) == 0;
+    }
+    ok = ok && lseek(fd, 0, SEEK_CUR) == 13 && lseek(fd, 0, SEEK_SET) == 0;
+    uint8_t byte = 0;
+    ok = ok && read(fd, &byte, 1) == 1 && byte == 11;
+    close(fd);
+    fd = open("/fat32/mmap.bin", O_WRONLY);
+    if (fd < 0) return false;
+    errno = 0;
+    ok = ok && mmap(nullptr, PAGE, PROT_READ, MAP_PRIVATE, fd, 0) == MAP_FAILED && errno == EACCES;
+    close(fd);
+    errno = 0;
+    ok = ok && mmap(nullptr, PAGE, PROT_READ, MAP_PRIVATE, -1, 0) == MAP_FAILED && errno == EBADF;
+    fd = open("/fat32/mmaperr.bin", O_RDONLY);
+    if (fd < 0) return false;
+    void* target = mmap(nullptr, 2 * PAGE, READ_WRITE, PRIVATE_ANON, -1, 0);
+    if (target == MAP_FAILED) {
+        close(fd);
+        return false;
+    }
+    ok = ok && munmap(target, 2 * PAGE) == 0;
+    for (unsigned attempt = 0; ok && attempt < 16; ++attempt) {
+        errno = 0;
+        ok = mmap(target, 2 * PAGE, PROT_READ, PRIVATE_FIXED, fd, 0) == MAP_FAILED && errno == EIO;
+        errno = 0;
+        ok = ok && mmap(target, PAGE, PROT_READ, PRIVATE_FIXED, fd, PAGE) == MAP_FAILED && errno == EIO;
+        auto* probe = static_cast<uint8_t*>(mmap(target, 2 * PAGE, READ_WRITE, ANON_FIXED, -1, 0));
+        if (probe == MAP_FAILED) {
+            ok = false;
+            break;
+        }
+        ok = ok && probe == target && probe[0] == 0 && probe[PAGE] == 0;
+        probe[0] = 1;
+        probe[PAGE] = 2;
+        ok = ok && munmap(probe, 2 * PAGE) == 0;
+    }
+    close(fd);
+    if (ok) printf("storage_smoke: mmap read-error rollback PASS\n");
+    return ok;
+}
 } // namespace
 
 #define REQUIRE(condition)                                                                                             \
@@ -139,6 +198,7 @@ int main() {
     char stage = 0;
     REQUIRE(read(stage_fd, &stage, 1) == 1 && stage >= '0' && stage <= '2');
     REQUIRE(verify_ramfs());
+    REQUIRE(verify_mmap());
     if (stage == '0') {
         REQUIRE(verify_file(SHRINK, 1024, true));
         int fd = open(SHRINK, O_RDWR);

@@ -15,6 +15,7 @@ libc_sources = files(
     'src/snprintf.cpp',
     'src/fseeko.cpp',
     'src/lseek.cpp',
+    'src/mmap.cpp',
     'src/strerror.cpp',
     'src/vsprintf.cpp',
     'src/sprintf.cpp',

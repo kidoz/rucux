@@ -209,9 +209,59 @@ RAMFS remains volatile; busy read/write/append callbacks return `EBUSY` and
 allocation failure returns `ENOMEM`. Hosted reservations do not prove target SMP
 storage, concurrent metadata queries, or physical power-loss behavior. Whole
 writes are not crash-atomic. The legacy lookup interface still collapses lookup
-failures into a missing-path result. File-backed mmap still ignores backend read
-errors. This milestone covers ordinary read/write and the loader's signed-result
-handling; mmap fault propagation and stream readiness remain separate concerns.
+failures into a missing-path result. File-backed mmap error handling is covered
+below; stream readiness semantics remain a separate concern.
 
 For real libc/kernel and clean shutdown/remount coverage, see the three-boot
 [storage smoke product](../products/smoke-storage-qemu-amd64/README.md).
+
+## File-backed mmap population and rollback
+
+```sh
+make -C tests test_mmap test_vma test_file_mmap
+build/host-tests/test_mmap
+build/host-tests/test_vma
+build/host-tests/test_file_mmap
+```
+
+`test_mmap` links production mmap, VMA and red-black-tree code. Only scheduler,
+physical allocation and page-table edges are replaced. The tracked allocator
+rejects freeing live mappings, unowned frames or the same frame twice. Tests
+check errors on first/later reads, partial-read retries, unexpected early EOF,
+zero-filled snapshot-EOF tails, frame/map OOM, borrowed device frames and retries
+after failure. Failed calls remove their VMA and installed leaves, release owned
+frames and restore the allocation hint when no other mapping advanced it.
+
+Pending VMAs exclude overlapping mmap/unmap/protect while population or rollback
+runs. Reentrant and sibling-thread tests exercise this boundary; another test
+replaces a range during an older unmap to check late pending-state validation.
+File-backed faults cannot allocate anonymous zero pages. Anonymous mappings
+remain eagerly allocated for clone-stack validation and have a zero-fill fault
+fallback after population.
+
+`test_vma` runs the existing interval/split/protection regressions. The actual
+libc mmap wrapper is exercised by `test_file_mmap`, including errno, six syscall
+arguments and sign-extended ARMv7 addresses outside the reserved error range.
+
+```sh
+make -C tests OBJDIR=../build/host-tests/mmap-sanitized \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=address,undefined' \
+  LDLIBS='-lpthread -fsanitize=address,undefined' test_mmap test_vma test_file_mmap
+build/host-tests/mmap-sanitized/test_mmap
+build/host-tests/mmap-sanitized/test_vma
+build/host-tests/mmap-sanitized/test_file_mmap
+
+make -C tests OBJDIR=../build/host-tests/mmap-tsan \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=thread' \
+  LDLIBS='-lpthread -fsanitize=thread' test_mmap
+build/host-tests/mmap-tsan/test_mmap
+```
+
+The storage smoke injects actual QEMU block read errors for the second page of
+`mmaperr.bin`, with no kernel test hook. Each of three boots checks first/later
+page failures 16 times and reuses the same fixed address with anonymous mappings.
+The hosted tests provide exact frame/VMA accounting; the QEMU test exercises
+real ATA, FAT32, mappings and libc errno. Hosted MMU stubs do not prove hardware
+TLB invalidation or remote CPU reclamation. This eager profile still zero-fills
+beyond snapshot EOF, rejects occupied MAP_FIXED ranges, and provides no regular
+file shared writeback or SIGBUS-on-EOF implementation.

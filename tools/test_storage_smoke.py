@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 import shutil
+import struct
 import subprocess
 from pathlib import Path
 
@@ -22,6 +23,57 @@ def extract(image: Path, work: Path, name: str, stage: int) -> bytes:
     output = work / f"stage-{stage}-{name}"
     run(["mcopy", "-o", "-i", str(image), f"::/{name}", str(output)])
     return output.read_bytes()
+
+
+def file_sector(image: Path, short_name: bytes, offset: int) -> int:
+    """Find a sector in a task-created short-name FAT32 fixture without modifying it."""
+    data = image.read_bytes()
+    sector_size = int(struct.unpack_from("<H", data, 11)[0])
+    sectors_per_cluster = data[13]
+    reserved = int(struct.unpack_from("<H", data, 14)[0])
+    fat_size = int(struct.unpack_from("<I", data, 36)[0])
+    root = int(struct.unpack_from("<I", data, 44)[0])
+    if sector_size != 512 or not sectors_per_cluster or offset % sector_size or len(short_name) != 11:
+        raise RuntimeError("unsupported storage-smoke fixture geometry")
+    cluster_bytes = sectors_per_cluster * sector_size
+    fat_start = reserved * sector_size
+    data_sector = reserved + data[16] * fat_size
+
+    def cluster_position(cluster: int) -> int:
+        position = (data_sector + (cluster - 2) * sectors_per_cluster) * sector_size
+        if cluster < 2 or position < 0 or position + cluster_bytes > len(data):
+            raise RuntimeError("storage-smoke fixture cluster is out of range")
+        return position
+
+    def next_cluster(cluster: int) -> int:
+        if cluster * 4 + 4 > fat_size * sector_size:
+            raise RuntimeError("storage-smoke FAT lookup is out of range")
+        return int(struct.unpack_from("<I", data, fat_start + cluster * 4)[0]) & 0x0FFFFFFF
+
+    visited: set[int] = set()
+    while root < 0x0FFFFFF8 and root not in visited:
+        visited.add(root)
+        position = cluster_position(root)
+        for entry in range(position, position + cluster_bytes, 32):
+            if not data[entry]:
+                raise RuntimeError("storage-smoke fixture entry was not found")
+            if data[entry : entry + 11] != short_name:
+                continue
+            size = struct.unpack_from("<I", data, entry + 28)[0]
+            if offset >= size:
+                raise RuntimeError("storage-smoke fixture offset is beyond EOF")
+            cluster = (int(struct.unpack_from("<H", data, entry + 20)[0]) << 16) | int(
+                struct.unpack_from("<H", data, entry + 26)[0]
+            )
+            file_visited: set[int] = set()
+            for _ in range(offset // cluster_bytes):
+                if cluster in file_visited or cluster >= 0x0FFFFFF8:
+                    raise RuntimeError("invalid storage-smoke fixture chain")
+                file_visited.add(cluster)
+                cluster = next_cluster(cluster)
+            return (cluster_position(cluster) + offset % cluster_bytes) // sector_size
+        root = next_cluster(root)
+    raise RuntimeError("storage-smoke fixture entry was not found")
 
 
 def main() -> int:
@@ -63,6 +115,10 @@ def main() -> int:
         ("rewrite.bin", seed),
         ("append.bin", seed),
         ("stage.bin", b"0"),
+        ("mmap.bin", bytes((i * 7 + 11) % 256 for i in range(8192 + 37))),
+        # Keep firmware read-ahead for boot files away from the injected sector.
+        ("mmapgap.bin", bytes(1024 * 1024)),
+        ("mmaperr.bin", bytes((i * 19 + 73) % 256 for i in range(8192))),
     ):
         source = work / name
         source.write_bytes(contents)
@@ -70,6 +126,19 @@ def main() -> int:
     variables = work / "uefi-vars.fd"
     shutil.copyfile(args.uefi_vars, variables)
     payload = bytes((i * 29 + 101) % 256 for i in range(700))
+    fault_sector = file_sector(image, b"MMAPERR BIN", 4096)
+    disk = {
+        "driver": "raw",
+        "node-name": "storage",
+        "file": {
+            "driver": "blkdebug",
+            "inject-error": [
+                {"event": "read_aio", "errno": 5, "sector": fault_sector, "once": False, "immediately": True}
+            ],
+            "image": {"driver": "file", "filename": str(image)},
+        },
+    }
+    (work / "mmap-fault.json").write_text(json.dumps(disk, indent=2) + "\n")
     for stage in (1, 2, 3):
         log = work / f"boot-{stage}.log"
         with log.open("wb") as stream:
@@ -81,8 +150,10 @@ def main() -> int:
                         f"if=pflash,format=raw,readonly=on,file={args.uefi_code}",
                         "-drive",
                         f"if=pflash,format=raw,file={variables}",
-                        "-drive",
-                        f"file={image},if=ide,format=raw",
+                        "-blockdev",
+                        json.dumps(disk),
+                        "-device",
+                        "ide-hd,drive=storage,bus=ide.0,unit=0",
                         "-smp",
                         "1",
                         "-m",
@@ -108,6 +179,7 @@ def main() -> int:
         if (
             result.returncode
             or f"storage_smoke: PASS stage={stage}" not in text
+            or "storage_smoke: mmap read-error rollback PASS" not in text
             or any(marker in text for marker in ("storage_smoke: FAIL", "PANIC", "Page Fault", "Exception"))
         ):
             raise RuntimeError(f"stage {stage}: runtime check failed; see {log}")

@@ -1,7 +1,7 @@
 # Storage persistence smoke
 
 This amd64 product runs `storage_smoke` through the public custom-libc API.
-It needs local Meson/cross-compiler, QEMU, mtools, UEFI firmware, and the existing
+It needs local Meson/cross-compiler, QEMU with blkdebug, mtools, UEFI firmware, and the existing
 `bootloader/BOOTX64.EFI`; the test does not install or fetch prerequisites.
 
 From the repository root:
@@ -23,6 +23,19 @@ on every invocation, replacing that test image and its firmware variables/logs.
 It boots the same image three times with one CPU and `-nic none`, requires the
 guest PASS marker and successful QEMU poweroff, and extracts files after each
 boot to check their exact length and contents independently.
+
+The task-owned image includes `mmap.bin` and `mmaperr.bin`. The tool follows the
+latter's FAT chain to locate its second page and puts QEMU's blkdebug filter
+under the raw disk driver. Only reads of that sector receive EIO; other files
+and image contents are unchanged. A padding fixture separates boot-file reads
+from the fault sector. The exact block graph is saved as `mmap-fault.json`.
+Host extraction uses the raw image directly and bypasses fault injection.
+
+Every boot checks an eager private file mapping, snapshot-EOF zero filling,
+independent FD offsets, private-copy writes and errno for invalid descriptors
+and write-only access. It then repeats first/later-page EIO mappings 16 times,
+reusing the same fixed span with zeroed anonymous pages after every failure.
+The serial marker is `storage_smoke: mmap read-error rollback PASS`.
 
 1. Shrink 1024 bytes to 37 without a later write to that file. Truncate another
    preallocated file to zero, rewrite 700 bytes, and fsync. Check descriptor
@@ -50,8 +63,9 @@ clusters. Growth via `ftruncate` returns `EOPNOTSUPP`; writes can reuse the
 retained capacity. Fsync reports device flush failures. RAMFS remains volatile.
 Stat/fstat and SEEK_END refresh FAT32 EOF; failed refreshes propagate through
 libc as -1/errno. Ordinary reads/writes also report signed errors, with successful
-prefix counts advancing only by acknowledged bytes. Disk failure injection is
-covered by the hosted tests; QEMU checks access modes, EOF and capacity errors.
+prefix counts advancing only by acknowledged bytes. Disk failures for mmap are
+injected through QEMU blkdebug; hosted tests account for exact frame/VMA cleanup
+and cover allocation and installation failures.
 Append positioning and writing share one filesystem reservation;
 partial writes remain possible within fixed allocated capacity. This QEMU test
 uses sequential operations across separate opens. Hosted tests exercise reentrant
