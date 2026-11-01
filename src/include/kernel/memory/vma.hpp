@@ -72,7 +72,11 @@ private:
 struct address_space {
     vma_manager vmas{};
     uintptr_t next_mmap = 0;
+    // Serializes VMA reservations and complete unmap/protect operations. Eager
+    // population drops it for allocation/I/O while VMA_POPULATING excludes peers.
     irq_spinlock lock{};
+    uint64_t cpus_seen = 0; // Protected by user_mapping_lock.
+    bool smp_probe = false; // Smoke product only; set before first enqueue.
 };
 
 address_space* create_mm() noexcept;

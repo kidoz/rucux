@@ -13,6 +13,7 @@
 
 #include <kernel/memory/mmap.hpp>
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/tlb.hpp>
 #include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
@@ -125,8 +126,9 @@ void invalidate(uintptr_t virt, bool whole_space = false) noexcept {
     asm volatile("dsb ish; isb" ::: "memory");
 }
 
-// Caller holds user_mapping_lock and must exclude accesses to the mapping
-// during the transient invalid interval. Kernel identity mappings stay intact.
+// Caller holds user_mapping_lock. VMA mutators additionally hold mm->lock;
+// permitted user faults wait for that operation before retrying a transient
+// invalid descriptor. Kernel identity mappings stay intact.
 void replace_descriptor(uint64_t& entry, uint64_t replacement, uintptr_t virt, bool whole_space = false) noexcept {
     if (entry == replacement) return;
     if (entry & DESC_VALID) {
@@ -257,8 +259,9 @@ static void discard_private_table(uintptr_t address, unsigned depth, uintptr_t b
 }
 
 void vmm::discard_address_space(uintptr_t root, const vma_manager* areas) noexcept {
-    if (!root || root == get_active_page_table()) return;
+    if (!root) return;
     irq_lock_guard guard(user_mapping_lock);
+    if (root == get_active_page_table() || tlb::active.mask(root)) return;
     auto* table = reinterpret_cast<uint64_t*>(root);
     for (size_t i = 4; i < 512; ++i) {
         if (table[i] & 1)
@@ -356,11 +359,15 @@ bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
     return true;
 }
 
-void vmm::switch_to(uintptr_t l1_phys) noexcept {
+void vmm::switch_to(uintptr_t l1_phys, address_space* mm) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
     asm volatile("msr ttbr0_el1, %0" ::"r"(static_cast<uint64_t>(l1_phys)) : "memory");
     asm volatile("dsb ish" ::: "memory");
     asm volatile("tlbi vmalle1" ::: "memory");
     asm volatile("dsb ish; isb" ::: "memory");
+    const uint32_t id = tlb::current_cpu();
+    tlb::active.enter(id, l1_phys);
+    if (mm) mm->cpus_seen |= uint64_t{1} << id;
 }
 
 uintptr_t vmm::get_active_page_table() noexcept {
@@ -368,6 +375,7 @@ uintptr_t vmm::get_active_page_table() noexcept {
 }
 
 uintptr_t vmm::get_phys(uintptr_t virt) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x1FF;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
     const size_t l3_idx = (virt >> 12) & 0x1FF;
@@ -412,8 +420,11 @@ void vmm::enable_write_protect() noexcept {
     // See above.
 }
 
-bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t) noexcept {
-    return mmap_manager::handle_fault(fault_addr);
+bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t esr) noexcept {
+    const uint64_t status = esr & 0x3F;
+    if (status < 4 || status > 15) return false; // Translation/access/permission faults only.
+    const bool execute = ((esr >> 26) & 0x3F) == 0x20;
+    return mmap_manager::handle_fault(fault_addr, !execute && (esr & (1U << 6)), execute);
 }
 
 } // namespace kernel::memory

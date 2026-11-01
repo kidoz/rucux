@@ -52,7 +52,7 @@ extern "C" void prefetch_abort_handler(uint32_t fault_addr, uint32_t ifsr) noexc
     bool is_translation = (status == 0x05 || status == 0x06 || status == 0x07);
 
     if (is_translation) {
-        if (kernel::memory::vmm::handle_page_fault(fault_addr, 0)) return;
+        if (kernel::memory::vmm::handle_page_fault(fault_addr, 16)) return;
     }
 
     kernel::print("Prefetch Abort: addr=0x{x} IFSR=0x{x}\n",

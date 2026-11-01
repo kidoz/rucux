@@ -137,6 +137,11 @@ void assert_clean() {
 } // namespace
 
 namespace kernel::scheduler {
+void scheduler::publish_termination(thread* owner, int status) noexcept {
+    owner->exit_code = status;
+    owner->exited = true;
+    owner->state.store(thread_state::TERMINATED, kernel::release);
+}
 thread* scheduler::current_thread() noexcept {
     return has_thread ? &current : nullptr;
 }
@@ -177,6 +182,11 @@ void unlock_output(uintptr_t) noexcept {}
 } // namespace kernel
 
 namespace kernel::memory {
+bool user_accessible(const void* address, size_t, bool write) noexcept {
+    const auto found = leaves.find(reinterpret_cast<uintptr_t>(address));
+    const uint64_t required = 5 | (write ? 2 : 0);
+    return found != leaves.end() && (static_cast<uint64_t>(found->second.flags) & required) == required;
+}
 void* pmm::alloc_page() noexcept {
     if (alloc_calls++ == fail_alloc) return nullptr;
     void* frame = std::aligned_alloc(PAGE, PAGE);
@@ -479,42 +489,32 @@ TEST(mmap_pending_population_excludes_mutation_from_a_sibling_thread) {
     ASSERT(!bad_free);
 }
 
-TEST(mmap_unmap_rechecks_a_replaced_range_before_touching_pending_pages) {
-    for (size_t old_pages : {1UL, 2UL}) {
-        Fixture fixture;
-        ASSERT_EQ(reinterpret_cast<uintptr_t>(
-                      mmap_manager::sys_mmap(nullptr, old_pages * PAGE, READ | WRITE, PRIVATE | ANONYMOUS, -1, 0)),
-                  START);
-        read_entered.store(false);
-        read_release.store(false);
-        intptr_t result = 0;
-        int nested_unmap = -1;
-        std::thread worker;
-        on_free = [&] {
-            nested_unmap = mmap_manager::sys_munmap(reinterpret_cast<void*>(START), old_pages * PAGE);
-            on_read = [] {
-                read_entered.store(true);
-                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-                while (!read_release.load() && std::chrono::steady_clock::now() < deadline)
-                    std::this_thread::yield();
-            };
-            worker =
-                std::thread([&] { result = map_file(2 * PAGE, 0, PRIVATE | FIXED, reinterpret_cast<void*>(START)); });
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            while (!read_entered.load() && std::chrono::steady_clock::now() < deadline)
-                std::this_thread::yield();
-        };
-        const int outer_unmap = mmap_manager::sys_munmap(reinterpret_cast<void*>(START), old_pages * PAGE);
-        read_release.store(true);
-        if (worker.joinable()) worker.join();
-        ASSERT(read_entered.load());
-        ASSERT_EQ(nested_unmap, 0);
-        ASSERT_EQ(outer_unmap, -16);
-        ASSERT_EQ(result, static_cast<intptr_t>(START));
-        ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START), 2 * PAGE), 0);
-        ASSERT(frames.empty() && leaves.empty());
-        ASSERT(!bad_free);
-    }
+TEST(mmap_unmap_serializes_a_whole_range_against_sibling_replacement) {
+    Fixture fixture;
+    ASSERT_EQ(reinterpret_cast<uintptr_t>(
+                  mmap_manager::sys_mmap(nullptr, PAGE * 2, READ | WRITE, PRIVATE | ANONYMOUS, -1, 0)),
+              START);
+    std::atomic<bool> attempted{false};
+    std::thread worker;
+    intptr_t result = 0;
+    on_free = [&] {
+        worker = std::thread([&] {
+            attempted.store(true);
+            result = map_file(2 * PAGE, 0, PRIVATE | FIXED, reinterpret_cast<void*>(START));
+        });
+        while (!attempted.load())
+            std::this_thread::yield();
+        // Return while holding the operation lock. The replacement must wait
+        // until both old leaves and their VMA have been removed.
+    };
+    ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START), 2 * PAGE), 0);
+    worker.join();
+    ASSERT_EQ(result, static_cast<intptr_t>(START));
+    ASSERT_EQ(leaves.size(), 2UL);
+    ASSERT_EQ(*reinterpret_cast<const uint8_t*>(leaves.at(START).phys), contents[0]);
+    ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START), 2 * PAGE), 0);
+    ASSERT(frames.empty() && leaves.empty());
+    ASSERT(!bad_free);
 }
 
 TEST(mmap_rollback_does_not_touch_an_unrelated_mapping) {
@@ -578,6 +578,22 @@ TEST(mmap_file_pages_never_fall_back_to_anonymous_zero_faults) {
     ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START), PAGE), 0);
     ASSERT(frames.empty() && leaves.empty());
 }
+TEST(mmap_fault_retry_requires_current_vma_and_leaf_permissions) {
+    Fixture fixture;
+    ASSERT_EQ(
+        reinterpret_cast<uintptr_t>(mmap_manager::sys_mmap(nullptr, PAGE, READ | WRITE, PRIVATE | ANONYMOUS, -1, 0)),
+        START);
+    ASSERT(mmap_manager::handle_fault(START, true));
+    ASSERT_EQ(mmap_manager::sys_mprotect(reinterpret_cast<void*>(START), PAGE, READ), 0);
+    ASSERT(mmap_manager::handle_fault(START));
+    ASSERT(!mmap_manager::handle_fault(START, true));
+    ASSERT(!mmap_manager::handle_fault(START, false, true));
+    ASSERT_EQ(mmap_manager::sys_mprotect(reinterpret_cast<void*>(START), PAGE, 0), 0);
+    ASSERT(!mmap_manager::handle_fault(START));
+    ASSERT(!user_accessible(reinterpret_cast<void*>(START), 1, false));
+    ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START), PAGE), 0);
+    ASSERT(!mmap_manager::handle_fault(START));
+}
 
 TEST(mmap_anonymous_mappings_remain_eager_and_zero_filled_for_clone_stacks) {
     Fixture fixture;
@@ -585,7 +601,7 @@ TEST(mmap_anonymous_mappings_remain_eager_and_zero_filled_for_clone_stacks) {
         reinterpret_cast<uintptr_t>(mmap_manager::sys_mmap(nullptr, PAGE, READ | WRITE, PRIVATE | ANONYMOUS, -1, 0)),
         START);
     ASSERT_EQ(alloc_calls, 1UL);
-    ASSERT(!mmap_manager::handle_fault(START));
+    ASSERT(mmap_manager::handle_fault(START)); // A completed BBM miss may retry.
     const auto* bytes = reinterpret_cast<const uint8_t*>(leaves.at(START).phys);
     for (size_t i = 0; i < PAGE; ++i)
         ASSERT_EQ(bytes[i], 0);

@@ -232,11 +232,9 @@ int mmap_manager::sys_munmap(void* addr, size_t length) noexcept {
     if (!user_range(virt, aligned)) return -22;
 
     address_space* mm = thread->mm;
-    {
-        irq_lock_guard guard(mm->lock);
-        if (population_in_range(mm, virt, pages)) return -16;
-        if (!mm->vmas.isolate(virt, virt + aligned)) return -12;
-    }
+    irq_lock_guard operation(mm->lock);
+    if (population_in_range(mm, virt, pages)) return -16;
+    if (!mm->vmas.isolate(virt, virt + aligned)) return -12;
 
     // Pages with no VMA are left mapped. ELF and stack frames are not in the tree,
     // and a shared file frame is unmapped here without being freed.
@@ -244,7 +242,6 @@ int mmap_manager::sys_munmap(void* addr, size_t length) noexcept {
         const uintptr_t page = virt + i * pmm::PAGE_SIZE;
         void* owned = nullptr;
         {
-            irq_lock_guard guard(mm->lock);
             vma* region = mm->vmas.find(page);
             if (!region) continue;
             if (region->flags & VMA_POPULATING) return -16;
@@ -256,7 +253,6 @@ int mmap_manager::sys_munmap(void* addr, size_t length) noexcept {
         if (owned) pmm::free_page(owned);
     }
 
-    irq_lock_guard guard(mm->lock);
     if (population_in_range(mm, virt, pages)) return -16;
     if (!mm->vmas.remove(virt, aligned)) return -12;
     return 0;
@@ -274,8 +270,8 @@ int mmap_manager::sys_mprotect(void* addr, size_t len, int prot) noexcept {
     if (!user_range(virt, aligned)) return -22;
 
     address_space* mm = thread->mm;
+    irq_lock_guard operation(mm->lock);
     {
-        irq_lock_guard guard(mm->lock);
         if (population_in_range(mm, virt, pages)) return -16;
         if (!mm->vmas.covers(virt, virt + aligned)) return -12;
         if (!mm->vmas.set_prot(virt, virt + aligned, static_cast<uint32_t>(prot))) return -12;
@@ -283,7 +279,6 @@ int mmap_manager::sys_mprotect(void* addr, size_t len, int prot) noexcept {
 
     for (size_t i = 0; i < pages; ++i) {
         const uintptr_t page = virt + i * pmm::PAGE_SIZE;
-        irq_lock_guard guard(mm->lock);
         const auto* region = mm->vmas.find(page);
         if (!region) return -12;
         if (region->flags & VMA_POPULATING) return -16;
@@ -307,17 +302,23 @@ int mmap_manager::sys_madvise(void* addr, size_t length, int advice) noexcept {
     return 0;
 }
 
-bool mmap_manager::handle_fault(uintptr_t fault_addr) noexcept {
+bool mmap_manager::handle_fault(uintptr_t fault_addr, bool write, bool execute) noexcept {
     auto* thread = scheduler::scheduler::current_thread();
     if (!thread || !thread->mm) return false;
     fault_addr &= ~(static_cast<uintptr_t>(pmm::PAGE_SIZE) - 1);
 
     {
         irq_lock_guard guard(thread->mm->lock);
-        vma* region = thread->mm->vmas.find(fault_addr);
-        if (!region || (region->flags & VMA_OWNS_FRAMES) == 0 || (region->flags & VMA_POPULATING) != 0 ||
-            (region->flags & MAP_ANONYMOUS) == 0 || vmm::get_phys(fault_addr) != 0)
+        const auto* region = thread->mm->vmas.find(fault_addr);
+        if (!region || (region->flags & VMA_POPULATING) ||
+            !(region->prot & (execute ? PROT_EXEC
+                              : write ? PROT_WRITE
+                                      : PROT_READ)))
             return false;
+        // A concurrent BBM/protection operation may have completed while the
+        // fault waited for mm->lock. Retry only if the VMA now permits access.
+        if (vmm::get_phys(fault_addr)) return user_accessible(reinterpret_cast<const void*>(fault_addr), 1, write);
+        if ((region->flags & VMA_OWNS_FRAMES) == 0 || (region->flags & MAP_ANONYMOUS) == 0) return false;
     }
 
     void* page = pmm::alloc_page();
@@ -329,13 +330,14 @@ bool mmap_manager::handle_fault(uintptr_t fault_addr) noexcept {
     {
         irq_lock_guard guard(thread->mm->lock);
         vma* region = thread->mm->vmas.find(fault_addr);
-        if (region && (region->flags & VMA_OWNS_FRAMES) != 0 && (region->flags & VMA_POPULATING) == 0 &&
+        const bool permitted = region && (region->prot & (execute ? PROT_EXEC : write ? PROT_WRITE : PROT_READ));
+        if (permitted && (region->flags & VMA_OWNS_FRAMES) != 0 && (region->flags & VMA_POPULATING) == 0 &&
             (region->flags & MAP_ANONYMOUS) != 0 && vmm::get_phys(fault_addr) == 0) {
             vmm::map(fault_addr, reinterpret_cast<uintptr_t>(page), flags_for_prot(region->prot));
             mapped = vmm::get_phys(fault_addr) != 0;
             resolved = mapped;
-        } else if (region && vmm::get_phys(fault_addr) != 0) {
-            resolved = true;
+        } else if (permitted && vmm::get_phys(fault_addr) != 0) {
+            resolved = user_accessible(reinterpret_cast<const void*>(fault_addr), 1, write);
         }
     }
     if (!mapped) pmm::free_page(page);

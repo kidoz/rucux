@@ -24,6 +24,11 @@ It boots the same image three times with one CPU and `-nic none`, requires the
 guest PASS marker and successful QEMU poweroff, and extracts files after each
 boot to check their exact length and contents independently.
 
+The boot also requires `TLB: NMI self-check PASS (IRQs masked)`. This smoke-only
+request exercises the lock-free amd64 TLB acknowledgement path using a real
+self-directed xAPIC NMI while ordinary interrupts are disabled. It does not
+establish remote AP or multi-CPU amd64 runtime coverage.
+
 The task-owned image includes `mmap.bin` and `mmaperr.bin`. The tool follows the
 latter's FAT chain to locate its second page and puts QEMU's blkdebug filter
 under the raw disk driver. Reads of that sector and the first data sector of a

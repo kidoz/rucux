@@ -197,6 +197,7 @@ def main() -> int:
             or "storage_smoke: vnode references and thread cleanup PASS" not in text
             or "storage_smoke: safe fatal syscall cancellation PASS" not in text
             or "storage_smoke: IPC cancellation and peer teardown PASS" not in text
+            or "TLB: NMI self-check PASS (IRQs masked)" not in text
             or any(marker in text for marker in ("storage_smoke: FAIL", "PANIC", "Page Fault", "Exception"))
         ):
             raise RuntimeError(f"stage {stage}: runtime check failed; see {log}")

@@ -101,6 +101,11 @@ void operator delete[](void* ptr, size_t) noexcept {
     ::operator delete(ptr);
 }
 namespace kernel::scheduler {
+void scheduler::publish_termination(thread* owner, int status) noexcept {
+    owner->exit_code = status;
+    owner->exited = true;
+    owner->state.store(thread_state::TERMINATED, kernel::release);
+}
 thread* scheduler::current_thread() noexcept {
     return &current;
 }

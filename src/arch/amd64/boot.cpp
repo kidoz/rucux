@@ -203,6 +203,14 @@ extern "C" void kernel_main(rucux_boot_info* info) {
         }
     }
 
+#ifdef RUCUX_TLB_SELF_TEST
+    if (!kernel::memory::vmm::verify_tlb_nmi()) {
+        kernel::print("TLB: NMI self-check FAIL\n");
+        for (;;)
+            asm volatile("hlt");
+    }
+    kernel::print("TLB: NMI self-check PASS (IRQs masked)\n");
+#endif
     kernel::pci::init();
 
     // Initialize network stack

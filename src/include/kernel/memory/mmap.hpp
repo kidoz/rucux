@@ -9,7 +9,8 @@ namespace kernel::memory {
 inline page_flags flags_for_prot(uint32_t prot) noexcept {
     constexpr uint32_t k_write = 0x02;
     constexpr uint32_t k_exec = 0x04;
-    page_flags flags = page_flags::PRESENT | page_flags::USER;
+    page_flags flags = page_flags::PRESENT;
+    if (prot != 0) flags = flags | page_flags::USER;
     if ((prot & k_write) != 0) flags = flags | page_flags::WRITABLE;
     if ((prot & k_exec) == 0) flags = flags | page_flags::NO_EXECUTE;
     return flags;
@@ -27,7 +28,7 @@ public:
 
     // Fill a not-present anonymous user page from the current address space.
     // File-backed pages are populated eagerly and never replaced with zeros.
-    static bool handle_fault(uintptr_t fault_addr) noexcept;
+    static bool handle_fault(uintptr_t fault_addr, bool write = false, bool execute = false) noexcept;
 };
 
 } // namespace kernel::memory

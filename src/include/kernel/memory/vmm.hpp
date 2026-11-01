@@ -6,6 +6,7 @@
 namespace kernel::memory {
 
 class vma_manager;
+struct address_space;
 
 enum class page_flags : uint64_t {
     NONE = 0,
@@ -34,7 +35,15 @@ public:
     // Replace permission bits of one present 4 KiB leaf and invalidate it.
     // The frame and non-permission bits stay. A miss or a large page returns false.
     static bool protect(uintptr_t virt, page_flags flags) noexcept;
-    static void switch_to(uintptr_t pml4_phys) noexcept;
+    static void switch_to(uintptr_t pml4_phys, address_space* mm = nullptr) noexcept;
+    static bool is_active(uintptr_t root) noexcept;
+    // Lock-free NMI consumer on amd64; never acquires a mapping/allocator lock.
+#ifdef __x86_64__
+    static bool service_tlb_nmi() noexcept;
+#ifdef RUCUX_TLB_SELF_TEST
+    static bool verify_tlb_nmi() noexcept;
+#endif
+#endif
     static uintptr_t get_active_page_table() noexcept;
     static uintptr_t get_phys(uintptr_t virt) noexcept;
     // Caller holds user_mapping_lock. Returns zero unless every paging level

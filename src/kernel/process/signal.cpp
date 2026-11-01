@@ -125,9 +125,7 @@ bool signal_manager::consume_fatal_signal(scheduler::thread* t) noexcept {
     ipc::detach_thread(t);
     vfs::vfs_manager::close_all(t);
     t->sig_pending.fetch_and(~(1U << fatal_sig), acq_rel);
-    t->exit_code = fatal_sig & 0x7f; // waitpid signal-status encoding
-    t->exited = true;
-    t->state.store(scheduler::thread_state::TERMINATED, kernel::release);
+    scheduler::scheduler::publish_termination(t, fatal_sig & 0x7f);
     return true;
 }
 

@@ -132,6 +132,10 @@ bool reclaimable(const thread* owner) noexcept {
     return owner->state.load(acquire) == thread_state::TERMINATED && owner->dispatch_cpu == NO_CPU &&
            !owner->run_queued && owner->pins.load(acquire) == 0;
 }
+uint32_t cpu_of(const thread* owner) noexcept {
+    irq_lock_guard guard(dispatch_lock);
+    return owner->last_cpu;
+}
 bool queues_valid() noexcept {
     irq_lock_guard guard(dispatch_lock);
     const uint32_t count = cpu::g_cpu_count.load(acquire);

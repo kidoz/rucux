@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/process/credentials.hpp>
@@ -134,6 +135,9 @@ long spawn_path(const char* path, uint32_t requested_tid) noexcept {
     }
 
     open_stdio(t);
+#ifdef RUCUX_VM_SELF_TEST
+    if (lib::strcmp(path, "/bin/mm_smp_smoke") == 0) t->mm->smp_probe = true;
+#endif
     // Raw port access is granted to the driver binaries themselves. It is not
     // inherited from the parent, so a driver cannot pass it to a child it spawns.
     t->creds.capabilities &= ~static_cast<uint32_t>(RUCUX_CAP_RAW_IO);

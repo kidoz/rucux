@@ -25,7 +25,11 @@ void child_init() noexcept {
 }
 bool collect(uint32_t tid, int expected) noexcept {
     int status = -1;
-    if (scheduler::sys_waitpid(static_cast<int>(tid), &status, 0) != tid || status != expected) return false;
+    const auto observed = scheduler::sys_waitpid(static_cast<int>(tid), &status, 0);
+    if (observed != tid || status != expected) {
+        kernel::print("SMP retirement: wait tid {} got {} status {} expected {}\n", tid, observed, status, expected);
+        return false;
+    }
     // waitpid may consume status while the child still owns its outgoing stack.
     for (unsigned attempt = 0; attempt < 100000; ++attempt) {
         scheduler::cleanup_terminated();
@@ -136,38 +140,47 @@ bool wait_ready() noexcept {
 } // namespace
 
 bool verify_smp_retirement() noexcept {
+    const auto fail = [](unsigned line) {
+        kernel::print("SMP retirement: check {} mode {} result {} cancelled {} word {}\n", line, mode, result,
+                      cancelled_result, words.d0);
+        return false;
+    };
     const uint32_t cpus = cpu::g_cpu_count.load(acquire);
     if (cpus < 2) {
         kernel::print("SMP retirement: SKIP (requires multiple CPUs)\n");
         return true;
     }
-    if (cpus > 4) return false;
+    if (cpus > 4) return fail(__LINE__);
     parent_tid = scheduler::current_thread()->process_id;
     for (unsigned i = 0; i < 8; ++i)
         scheduler::spawn(coverage_worker, BASE + i);
     const uint32_t expected = (1U << cpus) - 1;
-    for (unsigned i = 0; i < 100000 && (coverage.load(acquire) != expected || ready.load(acquire) != 8); ++i)
+    for (unsigned i = 0; i < 100000 && (coverage.load(acquire) != expected || ready.load(acquire) != 8); ++i) {
+        // The controller also executes the probe. Local affinity can keep it
+        // and the preemption probe on a CPU while workers circulate elsewhere.
+        coverage.fetch_or(1U << cpu::this_cpu()->cpu_id, relaxed);
         scheduler::yield();
-    if (coverage.load(acquire) != expected || ready.load(acquire) != 8) return false;
+    }
+    if (coverage.load(acquire) != expected || ready.load(acquire) != 8) return fail(__LINE__);
     release_workers.store(1, release);
     for (unsigned i = 0; i < 8; ++i)
-        if (!collect(BASE + i, 0)) return false;
+        if (!collect(BASE + i, 0)) return fail(__LINE__);
 
     ready.store(0, release);
     scheduler::spawn(held_exit_worker, BASE + 8);
-    if (!wait_ready()) return false;
+    if (!wait_ready()) return fail(__LINE__);
     int status = 0;
     const auto waited = scheduler::sys_waitpid(BASE + 8, &status, 0);
     scheduler::cleanup_terminated();
     const bool retained = scheduler::get_thread_by_tid(BASE + 8) != nullptr;
     const bool consumed_once = scheduler::sys_waitpid(BASE + 8, nullptr, 1) == -10;
     proceed.store(1, release); // Release even on failure so the remote CPU can stop.
-    if (waited != BASE + 8 || status != (42 << 8) || !retained || !consumed_once) return false;
+    if (waited != BASE + 8 || status != (42 << 8) || !retained || !consumed_once) return fail(__LINE__);
     while (scheduler::get_thread_by_tid(BASE + 8)) {
         scheduler::cleanup_terminated();
         scheduler::yield();
     }
-    if (ready.load(acquire) != 1) return false;
+    if (ready.load(acquire) != 1) return fail(__LINE__);
     kernel::print("SMP retirement: held outgoing stack and single wait status verified\n");
 
     for (unsigned round = 0; round < 48; ++round) {
@@ -180,28 +193,28 @@ bool verify_smp_retirement() noexcept {
         proceed.store(0, release);
         scheduler::spawn(server_worker, first);
         if (mode == 0) {
-            if (!wait_ready() || !blocked(first)) return false;
+            if (!wait_ready() || !blocked(first)) return fail(__LINE__);
             scheduler::spawn(caller_worker, first + 1);
             if (!blocked(first + 1) || scheduler::signal_thread(first, 9) != 0 || !collect(first, 9) ||
                 !collect(first + 1, 0) || result != -32 || words.d0 != 11)
-                return false;
+                return fail(__LINE__);
         } else if (mode == 1) {
             scheduler::spawn(caller_worker, first + 1);
-            if (!wait_ready()) return false;
+            if (!wait_ready()) return fail(__LINE__);
             proceed.store(1, release);
-            if (!collect(first, 0) || !collect(first + 1, 0) || result != -32 || words.d0 != 11) return false;
+            if (!collect(first, 0) || !collect(first + 1, 0) || result != -32 || words.d0 != 11) return fail(__LINE__);
         } else {
             scheduler::spawn(cancelled_worker, first + 1);
             if (!wait_ready() || scheduler::signal_thread(first + 1, 9) != 0 || !collect(first + 1, 9) ||
                 cancelled_result != -999)
-                return false;
+                return fail(__LINE__);
             words.d0 = 77;
             scheduler::spawn(caller_worker, first + 2);
-            if (!blocked(first + 2)) return false;
+            if (!blocked(first + 2)) return fail(__LINE__);
             proceed.store(1, release);
-            if (!collect(first + 2, 0) || !collect(first, 0) || result != 0 || words.d0 != 88) return false;
+            if (!collect(first + 2, 0) || !collect(first, 0) || result != 0 || words.d0 != 88) return fail(__LINE__);
         }
-        if (!dispatch::queues_valid()) return false;
+        if (!dispatch::queues_valid()) return fail(__LINE__);
     }
     kernel::print("SMP retirement: PASS ({} CPUs, mask {}, 48 IPC/exit/cancel/wait rounds)\n", cpus,
                   coverage.load(acquire));

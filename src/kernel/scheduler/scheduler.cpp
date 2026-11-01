@@ -63,6 +63,14 @@ static thread* find_thread_locked(uint32_t tid, thread** prev_out = nullptr) noe
     return nullptr;
 }
 
+static bool can_reap_locked(const thread* owner) noexcept {
+    if (!dispatch::reclaimable(owner)) return false;
+    if (!owner->pml4_phys) return true;
+    for (auto* other = g_all_threads; other; other = other->all_next)
+        if (other != owner && other->pml4_phys == owner->pml4_phys) return true;
+    return !kernel::memory::vmm::is_active(owner->pml4_phys);
+}
+
 static void destroy_thread(thread* t) noexcept {
     if (!t) return;
     kernel::ipc::detach_thread(t);
@@ -89,7 +97,18 @@ static void destroy_thread(thread* t) noexcept {
     // Clone siblings share one mm. Tear down translations while VMA ownership
     // and borrowed-frame references remain available, then release those pins.
     if (t->pml4_phys && !shared) {
+#ifdef RUCUX_VM_SELF_TEST
+        const bool probe = t->mm && t->mm->smp_probe;
+        const uint64_t seen = t->mm ? t->mm->cpus_seen : 0;
+#endif
         kernel::memory::vmm::discard_address_space(t->pml4_phys, t->mm ? &t->mm->vmas : nullptr);
+#ifdef RUCUX_VM_SELF_TEST
+        if (probe) {
+            const uint32_t count = cpu::g_cpu_count.load(kernel::acquire);
+            const uint64_t expected = count == 64 ? UINT64_MAX : (uint64_t{1} << count) - 1;
+            kernel::print("shared mm: root teardown {} (CPU mask {})\n", seen == expected ? "PASS" : "FAIL", seen);
+        }
+#endif
         kernel::memory::destroy_mm(t->mm);
         t->mm = nullptr;
     }
@@ -101,7 +120,7 @@ static void destroy_thread(thread* t) noexcept {
 
 static void reap_thread_locked(thread* victim, thread* prev) noexcept {
     if (!victim) return;
-    if (!dispatch::reclaimable(victim)) {
+    if (!can_reap_locked(victim)) {
         victim->parent_tid = 0; // Status consumed; defer until off CPU, off queue and unpinned.
         return;
     }
@@ -112,10 +131,15 @@ static void reap_thread_locked(thread* victim, thread* prev) noexcept {
     destroy_thread(victim);
 }
 
-static void notify_parent_of_exit(thread* child) noexcept {
-    if (!child || child->parent_tid == 0) return;
-
+void scheduler::publish_termination(thread* child, int status) noexcept {
+    if (!child) return;
     kernel::irq_lock_guard guard(g_threads_lock);
+    child->exit_code = status;
+    child->exited = true;
+    child->state.store(thread_state::TERMINATED, kernel::release);
+    // Local preemption cannot abandon the exiting stack between publication
+    // and notification. A remote waitpid enrolls under this same lock.
+    if (child->parent_tid == 0) return;
     for (auto* waiter = g_all_threads; waiter; waiter = waiter->all_next) {
         if (waiter->process_id == child->parent_tid && waiter->waiting_for_child &&
             (waiter->wait_target_tid == -1 || waiter->wait_target_tid == static_cast<int32_t>(child->tid))) {
@@ -530,8 +554,8 @@ void scheduler::cleanup_terminated() noexcept {
         if (cur->state.load(kernel::acquire) == thread_state::TERMINATED && cur != this_thread) {
             // Defer reaping if the parent is still alive; sys_waitpid()
             // will collect the corpse and consume the exit status.
-            if (!dispatch::reclaimable(cur) || (cur->process_id == cur->tid && cur->parent_tid != 0 &&
-                                                find_thread_locked(cur->parent_tid) != nullptr)) {
+            if (!can_reap_locked(cur) || (cur->process_id == cur->tid && cur->parent_tid != 0 &&
+                                          find_thread_locked(cur->parent_tid) != nullptr)) {
                 prev = cur;
                 cur = cur->all_next;
                 continue;
@@ -568,7 +592,6 @@ void scheduler::schedule() noexcept {
             break;
         // Selection reserves the candidate through signal/descriptor cleanup
         // and parent notification. Do not expose an unclaimed raw pointer.
-        notify_parent_of_exit(new_thread);
         if (new_thread != old_thread) dispatch::release_candidate(new_thread);
         cleanup_terminated();
     }
@@ -595,7 +618,7 @@ void scheduler::schedule() noexcept {
 #endif
         const uintptr_t root =
             new_thread->pml4_phys ? new_thread->pml4_phys : g_kernel_page_table.load(kernel::relaxed);
-        kernel::memory::vmm::switch_to(root);
+        kernel::memory::vmm::switch_to(root, new_thread->mm);
         uintptr_t* old_sp = old_thread ? &old_thread->stack_pointer : nullptr;
 #if defined(__x86_64__)
         arch::amd64::switch_fpu(old_thread ? &old_thread->fpu : nullptr, new_thread->fpu);
@@ -685,16 +708,13 @@ void scheduler::exit(int status) noexcept {
     // reapable and without the global thread-list lock.
     kernel::ipc::detach_thread(cur);
     kernel::vfs::vfs_manager::close_all(cur);
-    cur->exited = true;
-    cur->exit_code = (status & 0xff) << 8;
-    cur->state.store(thread_state::TERMINATED, kernel::release);
+    publish_termination(cur, (status & 0xff) << 8);
     finish_termination();
 }
 
 void scheduler::finish_termination() noexcept {
     auto* cur = current_thread();
     if (!cur) return;
-    notify_parent_of_exit(cur);
     schedule();
     while (true) {
 #if defined(__x86_64__)
@@ -761,7 +781,7 @@ int scheduler::sys_top(void* buffer, size_t size) noexcept {
         processes[*num_processes].tid = cur->tid;
         processes[*num_processes].state = static_cast<uint32_t>(cur->state.load(kernel::acquire));
         processes[*num_processes].priority = static_cast<uint8_t>(cur->priority);
-        processes[*num_processes].cpu = cur->last_cpu;
+        processes[*num_processes].cpu = dispatch::cpu_of(cur);
         (*num_processes)++;
         cur = cur->all_next;
     }

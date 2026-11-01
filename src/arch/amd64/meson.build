@@ -1,6 +1,9 @@
 userspace_enabled = true
 entry_point = 'kernel_main'
 kernel_linker_script = meson.current_source_dir() + '/linker.ld'
+if product_name == 'smoke-qemu-amd64' or product_name == 'smoke-storage-qemu-amd64'
+    kernel_args += ['-DRUCUX_TLB_SELF_TEST=1']
+endif
 
 kernel_args += [
     '-mno-red-zone',

@@ -284,7 +284,18 @@ isr_stub_\vec:
     mov 80(%rsp), %rsi // error code (dummy 0)
     mov 88(%rsp), %rdx // rip
     mov 96(%rsp), %rcx // cs
+    .if \vec == 2
+    // NMI can interrupt a kernel frame at either stack alignment. Keep an
+    // exact frame pointer in a preserved register across its C ABI callback.
+    push %rbx
+    mov %rsp, %rbx
+    and $-16, %rsp
     call isr_handler
+    mov %rbx, %rsp
+    pop %rbx
+    .else
+    call isr_handler
+    .endif
     pop %r11
     pop %r10
     pop %r9

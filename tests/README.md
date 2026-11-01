@@ -456,7 +456,7 @@ cleanup and parent notification. The obsolete shared kernel-stack scratch value
 is removed; amd64 syscall stack offsets have compile-time assertions.
 
 `scripts/test_smoke_aarch64.sh` now requires the smoke-product-only retirement
-probe in its four-CPU run. Eight workers must demonstrate execution on all four
+probe in its four-CPU run. Eight workers and their controller demonstrate execution on all four
 CPUs (mask 15). A deliberately held terminated worker keeps executing with IRQs
 masked while a remote controller consumes its wait status once and tries
 cleanup. It must remain discoverable until released and switched away. Then 48
@@ -473,7 +473,85 @@ amd64 storage/compatibility and ARMv7 boot gates exercise their switch tails on
 one CPU. This does not establish amd64/ARMv7 SMP readiness, CPU hot-unplug,
 concurrent userspace remap/TLB correctness or every wait-queue lifetime. Shared
 dispatch serialization favors a reviewable ownership boundary; no scaling or
-performance claim is made.
+performance claim is made. Shared userspace mappings now have the separate
+gate described below.
+
+## Shared address spaces and TLB completion
+
+Clone siblings share one VMA lock. `munmap` and `mprotect` retain it across the
+complete range, including leaf changes and VMA removal/protection updates.
+Eager population still releases it for allocation/I/O under VMA_POPULATING.
+Physical page-table walks, user copies, descriptor updates and hardware root
+switches share `user_mapping_lock`; the lock order is thread-list or mm ->
+mapping -> allocator. No scheduling or I/O occurs under the mapping lock.
+Per-CPU active roots change only after the hardware switch/local flush completes.
+Last-owner reclamation checks both scheduler ownership and root inactivity;
+discard rechecks root inactivity while holding the mapping lock.
+
+AArch64 uses inner-shareable broadcast TLBI followed by DSB completion. ARMv7
+uses aligned atomic LPAE descriptor updates, break-before-make and TLBIALLIS with
+completion barriers. amd64 invalidates locally, posts generation-numbered
+mailboxes to other CPUs using the root, sends xAPIC NMIs and waits for every
+acknowledgement before returning. The NMI handler takes no locks and acknowledges
+only after invalidation, so a target spinning with ordinary IRQs masked cannot
+deadlock the sender. There is no timeout that permits freeing an unflushed frame.
+amd64 boot driver identity mappings remain supported and invalidate all tracked
+roots when shared kernel translations change. PCIDs/ASIDs are not retained
+across root switches; CPU hot-unplug is unsupported.
+
+Permitted faults during a transient break-before-make interval wait for the VMA
+operation and retry only after revalidating VMA and leaf permissions. Disallowed
+access and non-translation/protection faults retain their failure path.
+PROT_NONE no longer grants user access. AArch64 now dispatches the existing
+SYS_MPROTECT number through the common implementation; syscall IDs/layouts are
+unchanged. SYS_TOP reads CPU placement under dispatch rather than racing it.
+
+`test_tlb` covers active-root join/leave/high CPU IDs, delayed acknowledgement,
+lock-free service and 10,000 ordered mailbox reuses. The mmap suite checks a
+whole-range unmap racing replacement, exact frame cleanup, permitted fault
+retry, denied write/execute and PROT_NONE. Hosted tests model invalidation; they
+do not execute native TLBI, INVLPG or NMI delivery.
+
+```sh
+make -C tests test_tlb test_mmap
+build/host-tests/test_tlb
+build/host-tests/test_mmap
+make -C tests OBJDIR=../build/host-tests/shared-mm-sanitized \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=address,undefined' \
+  LDLIBS='-lpthread -fsanitize=address,undefined' \
+  test_tlb test_mmap test_user_access test_dispatch
+make -C tests OBJDIR=../build/host-tests/shared-mm-tsan \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=thread' \
+  LDLIBS='-lpthread -fsanitize=thread' test_tlb test_mmap test_dispatch
+```
+
+Run every selected executable in its object directory; use
+`UBSAN_OPTIONS=halt_on_error=1` for ASan/UBSan runs. The AArch64 smoke product adds
+`mm_smp_smoke`: four waves of four real EL0 clones perform 64 mapping/reuse
+rounds, concurrent sibling scratch mappings and 1,024 protection transitions.
+Readers continuously use the target while read permission stays valid; they
+pause before unmap. The parent holds and poisons recycled frames at another VA
+before remapping the target, then checks new/zero-filled contents. Read-only
+kernel copyout must fail and writable copyout succeed. Every clone disappears
+from SYS_TOP before its stack is unmapped. Final root teardown must report CPU
+mask 1/15 for the one/four-CPU runs. Both cases require
+`shared mm: userspace map/protect/reuse/clone PASS`.
+
+amd64 smoke products additionally require
+`TLB: NMI self-check PASS (IRQs masked)`, exercising a real self-directed NMI
+request with ordinary IRQs disabled. The three storage boots retain all earlier
+lifetime/persistence checks. Remote amd64 NMIs and ARMv7 broadcast completion
+remain cross-built, without a multiple-CPU runtime gate; their wider AP bring-up
+remains separate. No physical-board, instruction-cache/code-generation, dynamic
+CPU hotplug or performance claim is made.
+
+Repeated target boots also exposed a termination publication race: a timer could
+switch out a TERMINATED child before its parent was notified. Production normal
+and fatal exit now publish status/termination and parent wake under the same
+thread-list lock used by waitpid enrollment. Hosted signal harnesses replace
+that scheduler edge; the real target IPC/exit/wait campaign exercises it. CPU
+coverage includes the controller, avoiding a false assumption that local-affinity
+workers will necessarily migrate to its CPU.
 
 ## File-backed mmap population and rollback
 

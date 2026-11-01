@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
+#include <arch/amd64/apic.hpp>
+#include <kernel/cpu/percpu.hpp>
 #include <kernel/memory/mmap.hpp>
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/tlb.hpp>
 #include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
@@ -10,6 +13,48 @@
 namespace kernel::memory {
 
 static uintptr_t* g_pml4;
+static tlb::mailbox shootdowns[tlb::CPU_LIMIT];
+
+bool vmm::service_tlb_nmi() noexcept {
+    return shootdowns[tlb::current_cpu()].service([](uintptr_t address) {
+        asm volatile("invlpg (%0)" ::"r"(address) : "memory");
+    });
+}
+#ifdef RUCUX_TLB_SELF_TEST
+bool vmm::verify_tlb_nmi() noexcept {
+    // No frame is being retired by this smoke-only self-directed request.
+    const auto flags = irq_save();
+    const uint32_t self = tlb::current_cpu();
+    const auto sequence = shootdowns[self].post(USER_BEGIN);
+    arch::amd64::lapic::send_ipi(arch::amd64::lapic::id(), 4U << 8U);
+    unsigned spins = 0;
+    while (!shootdowns[self].complete(sequence) && spins++ < 10000000)
+        cpu_relax();
+    const bool ok = shootdowns[self].complete(sequence);
+    irq_restore(flags);
+    return ok;
+}
+#endif
+
+// Mapping lock excludes root switches and request producers. NMI delivery is
+// required: a target may be spinning for this same lock with IRQs masked.
+static void invalidate(uintptr_t address) noexcept {
+    asm volatile("invlpg (%0)" ::"r"(address) : "memory");
+    const uint32_t self = tlb::current_cpu();
+    const uint64_t users = user_range(address, 1) ? tlb::active.mask(vmm::get_active_page_table()) : tlb::active.all();
+    const uint64_t targets = users & ~(uint64_t{1} << self);
+    uint32_t sequences[tlb::CPU_LIMIT]{};
+    for (uint32_t id = 0; id < tlb::CPU_LIMIT; ++id) {
+        if (!(targets & (uint64_t{1} << id))) continue;
+        sequences[id] = shootdowns[id].post(address);
+        arch::amd64::lapic::send_ipi(static_cast<uint8_t>(cpu::get_cpu(id)->apic_id), 4U << 8U);
+    }
+    for (uint32_t id = 0; id < tlb::CPU_LIMIT; ++id)
+        if (targets & (uint64_t{1} << id))
+            while (!shootdowns[id].complete(sequences[id]))
+                cpu_relax();
+    // No timeout may authorize frame reuse while a target remains unflushed.
+}
 
 // Page size bit (bit 7) — marks a 2MB page in a Page Directory entry
 static constexpr uint64_t PAGE_SIZE_BIT = (1ULL << 7);
@@ -74,8 +119,9 @@ static void discard_private_table(uintptr_t address, unsigned depth, uintptr_t b
 }
 
 void vmm::discard_address_space(uintptr_t root, const vma_manager* areas) noexcept {
-    if (!root || root == get_active_page_table()) return;
+    if (!root) return;
     irq_lock_guard guard(user_mapping_lock);
+    if (root == get_active_page_table() || tlb::active.mask(root)) return;
     auto* table = reinterpret_cast<uint64_t*>(root);
     for (size_t i = 1; i < 256; ++i) {
         if (table[i] & 1)
@@ -86,6 +132,10 @@ void vmm::discard_address_space(uintptr_t root, const vma_manager* areas) noexce
 }
 
 void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
+    // Boot drivers also establish supervisor-only identity mappings for MMIO.
+    if ((!user_range(virt, pmm::PAGE_SIZE) && (virt != phys || (static_cast<uint64_t>(flags) & 4))) || (virt & 4095) ||
+        (phys & 4095))
+        return;
     irq_lock_guard guard(user_mapping_lock);
     uintptr_t current_cr3;
     asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
@@ -104,10 +154,13 @@ void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
     if (!pt) return;
 
     pt[pt_idx] = (phys & ~0xFFFULL) | static_cast<uint64_t>(flags);
-    asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+    invalidate(virt);
 }
 
 void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
+    if ((!user_range(virt, 0x200000) && (virt != phys || (static_cast<uint64_t>(flags) & 4))) || (virt & 0x1FFFFF) ||
+        (phys & 0x1FFFFF))
+        return;
     irq_lock_guard guard(user_mapping_lock);
     // 2MB pages use the Page Directory entry directly (no PT level).
     // virt and phys must be 2MB-aligned.
@@ -125,11 +178,13 @@ void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
     if (!pd) return;
 
     // Set the PS (Page Size) bit to indicate this is a 2MB page
+    if ((pd[pd_idx] & 1) && !(pd[pd_idx] & PAGE_SIZE_BIT)) return;
     pd[pd_idx] = (phys & ~0x1FFFFFULL) | static_cast<uint64_t>(flags) | PAGE_SIZE_BIT;
-    asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+    invalidate(virt);
 }
 
 void vmm::unmap(uintptr_t virt) noexcept {
+    if (!user_range(virt, pmm::PAGE_SIZE) || (virt & 4095)) return;
     irq_lock_guard guard(user_mapping_lock);
     size_t pml4_idx = (virt >> 39) & 0x1FF;
     size_t pdpt_idx = (virt >> 30) & 0x1FF;
@@ -144,7 +199,7 @@ void vmm::unmap(uintptr_t virt) noexcept {
     // Check if this is a 2MB page
     if (pd[pd_idx] & PAGE_SIZE_BIT) {
         pd[pd_idx] = 0;
-        asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+        invalidate(virt);
         return;
     }
 
@@ -152,10 +207,11 @@ void vmm::unmap(uintptr_t virt) noexcept {
     if (!pt) return;
 
     pt[pt_idx] = 0;
-    asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+    invalidate(virt);
 }
 
 bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
+    if (!user_range(virt, pmm::PAGE_SIZE) || (virt & 4095)) return false;
     irq_lock_guard guard(user_mapping_lock);
     const size_t pml4_idx = (virt >> 39) & 0x1FF;
     const size_t pdpt_idx = (virt >> 30) & 0x1FF;
@@ -177,12 +233,16 @@ bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
         static_cast<uint64_t>(page_flags::PRESENT) | static_cast<uint64_t>(page_flags::WRITABLE) |
         static_cast<uint64_t>(page_flags::USER) | static_cast<uint64_t>(page_flags::NO_EXECUTE);
     pt[pt_idx] = (entry & ~permission_mask) | (static_cast<uint64_t>(flags) & permission_mask);
-    asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+    invalidate(virt);
     return true;
 }
 
-void vmm::switch_to(uintptr_t pml4_phys) noexcept {
+void vmm::switch_to(uintptr_t pml4_phys, address_space* mm) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
     asm volatile("mov %0, %%cr3" : : "r"(pml4_phys) : "memory");
+    const uint32_t id = tlb::current_cpu();
+    tlb::active.enter(id, pml4_phys);
+    if (mm) mm->cpus_seen |= uint64_t{1} << id;
 }
 
 uintptr_t vmm::get_active_page_table() noexcept {
@@ -192,6 +252,7 @@ uintptr_t vmm::get_active_page_table() noexcept {
 }
 
 uintptr_t vmm::get_phys(uintptr_t virt) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
     size_t pml4_idx = (virt >> 39) & 0x1FF;
     size_t pdpt_idx = (virt >> 30) & 0x1FF;
     size_t pd_idx = (virt >> 21) & 0x1FF;
@@ -249,9 +310,8 @@ void vmm::enable_write_protect() noexcept {
 }
 
 bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t error_code) noexcept {
-    // error_code bit 0: 0 = not present, 1 = protection violation
-    if (error_code & 1) return false;
-    return mmap_manager::handle_fault(fault_addr);
+    if (error_code & (8U | 32U | 64U)) return false; // Reserved bits / unsupported protection keys or shadow stack.
+    return mmap_manager::handle_fault(fault_addr, (error_code & 2) != 0, (error_code & 16) != 0);
 }
 
 } // namespace kernel::memory

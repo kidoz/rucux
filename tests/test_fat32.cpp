@@ -149,6 +149,11 @@ uint64_t time_manager::get_ticks() noexcept {
     return 0;
 }
 namespace scheduler {
+void scheduler::publish_termination(thread* owner, int status) noexcept {
+    owner->exit_code = status;
+    owner->exited = true;
+    owner->state.store(thread_state::TERMINATED, kernel::release);
+}
 thread* scheduler::current_thread() noexcept {
     return &current;
 }

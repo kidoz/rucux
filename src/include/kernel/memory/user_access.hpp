@@ -23,8 +23,10 @@ inline bool user_range(uintptr_t address, size_t size) noexcept {
     return address >= USER_BEGIN && address < USER_END && size <= USER_END - address;
 }
 
-// Serializes page-table mutation with copies through the physical identity map.
-// Never held while a syscall blocks, performs I/O, or switches address spaces.
+// Serializes page-table mutation/walks, physical copies and hardware root
+// switches. Lock order: thread-list or mm -> this lock -> allocator. Never held
+// across I/O, scheduling or a blocking wait; TLB completion uses hardware/NMI
+// acknowledgements that do not acquire this lock.
 extern irq_spinlock user_mapping_lock;
 bool user_accessible(const void* address, size_t size, bool write) noexcept;
 bool copy_from_user(void* dest, const void* source, size_t size) noexcept;

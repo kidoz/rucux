@@ -43,6 +43,7 @@ extern "C" void aarch64_ap_main(uint64_t cpu_id) {
     uint64_t mpidr = 0;
     asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
     kernel::cpu::ap_init(static_cast<uint32_t>(cpu_id), static_cast<uint32_t>(mpidr & 0xFF));
+    kernel::memory::vmm::switch_to(kernel::memory::vmm::get_active_page_table());
 
     // Per-CPU banked GIC interface and timer.
     if (g_gic_cpu_base != 0) gic_cpu_interface::init(g_gic_cpu_base);

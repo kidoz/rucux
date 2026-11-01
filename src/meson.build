@@ -7,6 +7,7 @@ kernel_common_sources = files(
     'kernel/memory/vma.cpp',
     'kernel/memory/mmap.cpp',
     'kernel/memory/user_access.cpp',
+    'kernel/memory/tlb.cpp',
     'kernel/ds/rbtree.cpp',
     'kernel/scheduler/scheduler.cpp',
     'kernel/scheduler/dispatch.cpp',

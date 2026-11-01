@@ -86,6 +86,9 @@ long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a5, long
             static_cast<int>(a5), static_cast<long>(a6)));
     case SYS_MUNMAP:
         return kernel::memory::mmap_manager::sys_munmap(reinterpret_cast<void*>(a1), static_cast<size_t>(a2));
+    case SYS_MPROTECT:
+        return kernel::memory::mmap_manager::sys_mprotect(reinterpret_cast<void*>(a1), static_cast<size_t>(a2),
+                                                          static_cast<int>(a3));
     case SYS_CLONE:
         return kernel::scheduler::scheduler::sys_clone(reinterpret_cast<void*>(a1), reinterpret_cast<void*>(a2),
                                                        reinterpret_cast<void*>(a3));

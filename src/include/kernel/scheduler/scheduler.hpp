@@ -213,6 +213,9 @@ public:
     static void cleanup_terminated() noexcept;
     // Stops a current thread already marked TERMINATED; never returns on target.
     static void finish_termination() noexcept;
+    // Publish status, TERMINATED and parent wake under the thread-list lock.
+    // Caller retains its CPU claim until the incoming switch tail.
+    static void publish_termination(thread* owner, int status) noexcept;
     // Holds the thread-list lock through lookup and signal posting.
     static int signal_thread(int pid, int sig) noexcept;
 

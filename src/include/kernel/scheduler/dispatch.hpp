@@ -26,5 +26,6 @@ void finish_switch(cpu::per_cpu* pcpu) noexcept;
 bool reclaimable(const thread* owner) noexcept;
 // Bounded queue traversal under dispatch; useful for target and hosted stress.
 bool queues_valid() noexcept;
+uint32_t cpu_of(const thread* owner) noexcept;
 } // namespace dispatch
 } // namespace kernel::scheduler

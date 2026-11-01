@@ -16,6 +16,8 @@ mkdir -p "$(dirname "${LOG_PATH}")" "$(dirname "${SMP_LOG_PATH}")"
 # secondary, and an intact marker line proves console output is serialized —
 # without the console lock these interleave and the line is unmatchable.
 smp_markers=(
+    "shared mm: userspace map/protect/reuse/clone PASS"
+    "shared mm: root teardown PASS (CPU mask 15)"
     "SMP retirement: held outgoing stack and single wait status verified"
     "SMP retirement: PASS (4 CPUs, mask 15, 48 IPC/exit/cancel/wait rounds)"
     "MMU: replacement and permissions verified"
@@ -31,6 +33,8 @@ smp_markers=(
 # "boot complete" is only reached after the timer IRQ has been serviced five
 # times, so it proves the GIC and generic timer are live — not merely programmed.
 required_markers=(
+    "shared mm: userspace map/protect/reuse/clone PASS"
+    "shared mm: root teardown PASS (CPU mask 1)"
     "rucux (aarch64) Initialized!"
     "Running at EL1"
     "Per-CPU: BSP (cpu_id=0) initialized, TPIDR_EL1 set"
@@ -50,6 +54,8 @@ required_markers=(
 # A translation mismatch still boots, so assert its absence explicitly rather
 # than relying on the positive markers alone.
 forbidden_markers=(
+    "shared mm: FAIL"
+    "shared mm: root teardown FAIL"
     "SMP retirement: FAIL"
     "MMU: REPLACEMENT FAILED"
     "syscall safety: FAIL"

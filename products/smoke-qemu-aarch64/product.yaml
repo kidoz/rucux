@@ -4,4 +4,5 @@ services: []
 programs:
   - hello
   - syscall_smoke
+  - mm_smp_smoke
 images: []

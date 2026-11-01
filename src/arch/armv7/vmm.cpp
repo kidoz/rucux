@@ -13,6 +13,7 @@
 
 #include <kernel/memory/mmap.hpp>
 #include <kernel/memory/pmm.hpp>
+#include <kernel/memory/tlb.hpp>
 #include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
@@ -26,7 +27,6 @@ static constexpr size_t PAGE_SIZE = 4096;
 // LPAE descriptor bits
 static constexpr uint64_t LPAE_VALID = (1ULL << 0);
 static constexpr uint64_t LPAE_TABLE = (1ULL << 1); // L1/L2: next-level table
-static constexpr uint64_t LPAE_BLOCK = (0ULL << 1); // L1/L2: block mapping (with VALID)
 static constexpr uint64_t LPAE_PAGE = (1ULL << 1);  // L3: page mapping (with VALID)
 
 // Access permissions (AP[2:1] at bits [7:6])
@@ -39,7 +39,6 @@ static constexpr uint64_t LPAE_AP_RO_ALL = (3ULL << 6); // PL1 R/O, PL0 R/O
 // We configure MAIR to have:
 //   Index 0 = Device-nGnRnE (strongly ordered)
 //   Index 1 = Normal, Write-Back, Cacheable
-static constexpr uint64_t LPAE_ATTR_DEVICE = (0ULL << 2);
 static constexpr uint64_t LPAE_ATTR_NORMAL = (1ULL << 2);
 
 // Shareability (SH[1:0] at bits [9:8])
@@ -73,6 +72,24 @@ static uint64_t flags_to_lpae(page_flags flags) noexcept {
     return bits;
 }
 
+// Aligned atomic descriptor stores plus break-before-make. Broadcast completion
+// is hardware-acknowledged even when another CPU has interrupts masked.
+static void invalidate_all() noexcept {
+    asm volatile("dsb ishst" ::: "memory");
+    asm volatile("mcr p15, 0, %0, c8, c3, 0" ::"r"(0) : "memory");
+    asm volatile("dsb ish; isb" ::: "memory");
+}
+static void replace_descriptor(uint64_t& entry, uint64_t replacement) noexcept {
+    if (entry == replacement) return;
+    if (entry & LPAE_VALID) {
+        __atomic_store_n(&entry, 0, __ATOMIC_RELAXED);
+        invalidate_all();
+    }
+    asm volatile("dsb ishst" ::: "memory");
+    __atomic_store_n(&entry, replacement, __ATOMIC_RELAXED);
+    invalidate_all();
+}
+
 // Allocate a zeroed page for a page table
 static uint64_t* alloc_table() noexcept {
     void* p = pmm::alloc_page();
@@ -93,7 +110,7 @@ static uint64_t* get_next_table(uint64_t* table, size_t index, bool create) noex
     auto* next = alloc_table();
     if (!next) return nullptr;
 
-    table[index] = reinterpret_cast<uintptr_t>(next) | LPAE_VALID | LPAE_TABLE;
+    replace_descriptor(table[index], reinterpret_cast<uintptr_t>(next) | LPAE_VALID | LPAE_TABLE);
     return next;
 }
 
@@ -184,8 +201,9 @@ static void discard_private_table(uintptr_t address, unsigned depth, uintptr_t b
 }
 
 void vmm::discard_address_space(uintptr_t root, const vma_manager* areas) noexcept {
-    if (!root || root == get_active_page_table()) return;
+    if (!root) return;
     irq_lock_guard guard(user_mapping_lock);
+    if (root == get_active_page_table() || tlb::active.mask(root)) return;
     auto* table = reinterpret_cast<uint64_t*>(root);
     for (size_t i = 2; i < 3; ++i) {
         if (table[i] & 1)
@@ -196,6 +214,7 @@ void vmm::discard_address_space(uintptr_t root, const vma_manager* areas) noexce
 }
 
 void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
+    if (!user_range(virt, PAGE_SIZE) || (virt & 4095) || (phys & 4095)) return;
     irq_lock_guard guard(user_mapping_lock);
     // 4KB page mapping through L1 → L2 → L3
     size_t l1_idx = (virt >> 30) & 0x3;   // 2 bits (4 entries)
@@ -219,20 +238,19 @@ void vmm::map(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
         uint64_t old_attrs = l2[l2_idx] & 0xFFF0000000000FFFULL;
         for (size_t i = 0; i < 512; ++i)
             l3[i] = (block_phys + i * PAGE_SIZE) | (old_attrs & ~LPAE_TABLE) | LPAE_VALID | LPAE_PAGE;
-        l2[l2_idx] = reinterpret_cast<uintptr_t>(l3) | LPAE_VALID | LPAE_TABLE;
+        replace_descriptor(l2[l2_idx], reinterpret_cast<uintptr_t>(l3) | LPAE_VALID | LPAE_TABLE);
     }
 
     auto* l3 = get_next_table(l2, l2_idx, true);
     if (!l3) return;
 
-    l3[l3_idx] = (phys & ~0xFFFULL) | LPAE_VALID | LPAE_PAGE | flags_to_lpae(flags);
+    replace_descriptor(l3[l3_idx], (phys & ~0xFFFULL) | LPAE_VALID | LPAE_PAGE | flags_to_lpae(flags));
 
     // Invalidate TLB for this address
-    asm volatile("mcr p15, 0, %0, c8, c7, 1" ::"r"(virt)); // TLBIMVA
-    asm volatile("dsb sy; isb" ::: "memory");
 }
 
 void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
+    if (!user_range(virt, 0x200000) || (virt & 0x1FFFFF) || (phys & 0x1FFFFF)) return;
     irq_lock_guard guard(user_mapping_lock);
     size_t l1_idx = (virt >> 30) & 0x3;
     size_t l2_idx = (virt >> 21) & 0x1FF;
@@ -245,13 +263,12 @@ void vmm::map_2mb(uintptr_t virt, uintptr_t phys, page_flags flags) noexcept {
     if (!l2) return;
 
     // 2MB block descriptor (VALID + not TABLE = block)
-    l2[l2_idx] = (phys & ~0x1FFFFFULL) | LPAE_VALID | flags_to_lpae(flags);
-
-    asm volatile("mcr p15, 0, %0, c8, c7, 1" ::"r"(virt));
-    asm volatile("dsb sy; isb" ::: "memory");
+    if ((l2[l2_idx] & LPAE_VALID) && (l2[l2_idx] & LPAE_TABLE)) return;
+    replace_descriptor(l2[l2_idx], (phys & ~0x1FFFFFULL) | LPAE_VALID | flags_to_lpae(flags));
 }
 
 void vmm::unmap(uintptr_t virt) noexcept {
+    if (!user_range(virt, PAGE_SIZE) || (virt & 4095)) return;
     irq_lock_guard guard(user_mapping_lock);
     size_t l1_idx = (virt >> 30) & 0x3;
     size_t l2_idx = (virt >> 21) & 0x1FF;
@@ -266,18 +283,16 @@ void vmm::unmap(uintptr_t virt) noexcept {
 
     // Check if L2 entry is a 2MB block
     if ((l2[l2_idx] & LPAE_VALID) && !(l2[l2_idx] & LPAE_TABLE)) {
-        l2[l2_idx] = 0;
+        replace_descriptor(l2[l2_idx], 0);
     } else {
         auto* l3 = get_next_table(l2, l2_idx, false);
         if (!l3) return;
-        l3[l3_idx] = 0;
+        replace_descriptor(l3[l3_idx], 0);
     }
-
-    asm volatile("mcr p15, 0, %0, c8, c7, 1" ::"r"(virt));
-    asm volatile("dsb sy; isb" ::: "memory");
 }
 
 bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
+    if (!user_range(virt, PAGE_SIZE) || (virt & 4095)) return false;
     irq_lock_guard guard(user_mapping_lock);
     const size_t l1_idx = (virt >> 30) & 0x3;
     const size_t l2_idx = (virt >> 21) & 0x1FF;
@@ -293,18 +308,22 @@ bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
     if (!l3 || !(l3[l3_idx] & LPAE_VALID)) return false;
 
     constexpr uint64_t permission_mask = (3ULL << 6) | LPAE_XN | LPAE_PXN;
-    l3[l3_idx] = (l3[l3_idx] & ~permission_mask) | (flags_to_lpae(flags) & permission_mask);
-    asm volatile("mcr p15, 0, %0, c8, c7, 1" ::"r"(virt));
-    asm volatile("dsb sy; isb" ::: "memory");
+    replace_descriptor(l3[l3_idx], (l3[l3_idx] & ~permission_mask) | (flags_to_lpae(flags) & permission_mask));
+
     return true;
 }
 
-void vmm::switch_to(uintptr_t l1_phys) noexcept {
+void vmm::switch_to(uintptr_t l1_phys, address_space* mm) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
+    asm volatile("dsb ishst" ::: "memory");
     uint32_t lo = static_cast<uint32_t>(l1_phys);
     uint32_t hi = 0;
     asm volatile("mcrr p15, 0, %0, %1, c2" ::"r"(lo), "r"(hi)); // TTBR0
     asm volatile("mcr p15, 0, %0, c8, c7, 0" ::"r"(0));         // TLBIALL
     asm volatile("dsb sy; isb" ::: "memory");
+    const uint32_t id = tlb::current_cpu();
+    tlb::active.enter(id, l1_phys);
+    if (mm) mm->cpus_seen |= uint64_t{1} << id;
 }
 
 uintptr_t vmm::get_active_page_table() noexcept {
@@ -314,6 +333,7 @@ uintptr_t vmm::get_active_page_table() noexcept {
 }
 
 uintptr_t vmm::get_phys(uintptr_t virt) noexcept {
+    irq_lock_guard guard(user_mapping_lock);
     size_t l1_idx = (virt >> 30) & 0x3;
     size_t l2_idx = (virt >> 21) & 0x1FF;
     size_t l3_idx = (virt >> 12) & 0x1FF;
@@ -366,8 +386,8 @@ void vmm::enable_write_protect() noexcept {
     // No-op on ARMv7 — see above.
 }
 
-bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t) noexcept {
-    return mmap_manager::handle_fault(fault_addr);
+bool vmm::handle_page_fault(uintptr_t fault_addr, uint64_t error) noexcept {
+    return mmap_manager::handle_fault(fault_addr, (error & 2) != 0, (error & 16) != 0);
 }
 
 } // namespace kernel::memory
