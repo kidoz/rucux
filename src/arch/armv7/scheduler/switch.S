@@ -13,6 +13,22 @@
 // The CPSR is saved/restored by the exception entry/exit stubs.
 
 .global switch_context
+.global switch_thread_context
+switch_thread_context:
+    cmp r0, #0
+    beq .Lthread_load_new
+    push {r4-r11, lr}
+    str sp, [r0]
+.Lthread_load_new:
+    mov sp, r1
+    // Nine-word saved frames need 8-byte alignment for the C callback. R4's
+    // incoming value remains in the frame; the callback preserves our R4.
+    mov r4, sp
+    bic sp, sp, #7
+    bl scheduler_finish_switch
+    mov sp, r4
+    pop {r4-r11, pc}
+
 switch_context:
     cmp r0, #0
     beq .Lload_new

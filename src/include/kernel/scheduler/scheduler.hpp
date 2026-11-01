@@ -28,6 +28,12 @@ public:
     void store(thread_state value, memory_order order = release) noexcept {
         value_.store(static_cast<uint32_t>(value), order);
     }
+    bool compare_exchange_strong(thread_state& expected, thread_state desired) noexcept {
+        auto integer = static_cast<uint32_t>(expected);
+        const bool changed = value_.compare_exchange_strong(integer, static_cast<uint32_t>(desired), acq_rel, acquire);
+        expected = static_cast<thread_state>(integer);
+        return changed;
+    }
 
 private:
     atomic<uint32_t> value_{static_cast<uint32_t>(thread_state::READY)};
@@ -142,6 +148,10 @@ struct thread {
     size_t ipc_queue_count = 0;
     int ipc_result = 0;
     bool ipc_reply_cancelled = false; // Reply must acknowledge a cancelled call.
+    // Protected by dispatch lock. A CPU claim includes selection and the
+    // outgoing stack until the incoming stack completes the switch.
+    uint32_t dispatch_cpu = UINT32_MAX;
+    bool run_queued = false;
     void pin() noexcept { pins.fetch_add(1, relaxed); }
     void unpin() noexcept { pins.fetch_sub(1, acq_rel); }
 

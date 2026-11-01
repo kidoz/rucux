@@ -9,6 +9,7 @@ kernel_common_sources = files(
     'kernel/memory/user_access.cpp',
     'kernel/ds/rbtree.cpp',
     'kernel/scheduler/scheduler.cpp',
+    'kernel/scheduler/dispatch.cpp',
     'kernel/scheduler/wait_queue.cpp',
     'kernel/sync/futex.cpp',
     'kernel/sync/rcu.cpp',

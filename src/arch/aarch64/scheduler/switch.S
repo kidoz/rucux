@@ -18,6 +18,33 @@
 
 .global switch_context
 .type switch_context, %function
+.global switch_thread_context
+.type switch_thread_context, %function
+switch_thread_context:
+    cbz     x0, .Lthread_load_new
+    sub     sp, sp, #96
+    stp     x19, x20, [sp, #16 * 0]
+    stp     x21, x22, [sp, #16 * 1]
+    stp     x23, x24, [sp, #16 * 2]
+    stp     x25, x26, [sp, #16 * 3]
+    stp     x27, x28, [sp, #16 * 4]
+    stp     x29, x30, [sp, #16 * 5]
+    mov     x2, sp
+    str     x2, [x0]
+.Lthread_load_new:
+    mov     sp, x1
+    // Incoming callee-saved registers/LR are still in the aligned frame, so
+    // the callback can clobber its normal caller-saved set before restoration.
+    bl      scheduler_finish_switch
+    ldp     x19, x20, [sp, #16 * 0]
+    ldp     x21, x22, [sp, #16 * 1]
+    ldp     x23, x24, [sp, #16 * 2]
+    ldp     x25, x26, [sp, #16 * 3]
+    ldp     x27, x28, [sp, #16 * 4]
+    ldp     x29, x30, [sp, #16 * 5]
+    add     sp, sp, #96
+    ret
+
 switch_context:
     cbz     x0, .Lload_new
 

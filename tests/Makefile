@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++23 -Wall -Wextra -g
 CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
 LDLIBS = -lpthread
 OBJDIR ?= ../build/host-tests
-TEST_NAMES = test_ipc test_cancellation test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write test_mmap test_vma test_file_mmap
+TEST_NAMES = test_dispatch test_ipc test_cancellation test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write test_mmap test_vma test_file_mmap
 TESTS = $(addprefix $(OBJDIR)/,$(TEST_NAMES))
 LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
 LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
@@ -150,3 +150,8 @@ $(OBJDIR)/test_ipc: $(OBJDIR)/test_ipc.o $(OBJDIR)/ipc.o $(OBJDIR)/signal.o $(OB
 
 $(OBJDIR)/credentials.o: ../src/kernel/process/credentials.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+$(OBJDIR)/dispatch.o: ../src/kernel/scheduler/dispatch.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_dispatch: $(OBJDIR)/test_dispatch.o $(OBJDIR)/dispatch.o
+	$(CXX) -o $@ $^ $(LDLIBS)

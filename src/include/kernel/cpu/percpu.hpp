@@ -19,7 +19,7 @@ inline constexpr uint32_t MAX_CPUS = 64;
 // On ARMv7: accessed via TPIDRPRW (CP15 c13,0,c0,4).
 // On AArch64: accessed via TPIDR_EL1.
 // Per-CPU run queue: one FIFO queue per priority level.
-// Methods defined out-of-line (scheduler.cpp) because they access thread::next.
+// Methods defined in scheduler/dispatch.cpp because they access thread::next.
 struct run_queue {
     scheduler::thread* head;
     scheduler::thread* tail;
@@ -44,13 +44,17 @@ struct per_cpu {
     bool online;    // CPU is initialized and running
     uint64_t ticks; // Per-CPU tick count
 
-    // Per-CPU run queues — one per priority level
+    // Per-CPU run queues — one per priority level, under the shared dispatch lock.
     run_queue queues[scheduler::NUM_PRIOS];
     uint32_t total_runnable; // Sum of all queue counts
 
-    // Protects this CPU's run queues
-    irq_spinlock sched_lock;
+    // Consumed on the incoming stack; never cleared on the outgoing stack.
+    scheduler::thread* switching_from = nullptr;
 };
+#if defined(__x86_64__)
+static_assert(__builtin_offsetof(per_cpu, kernel_stack) == 32);
+static_assert(__builtin_offsetof(per_cpu, temp_user_rsp) == 40);
+#endif
 
 // Global per-CPU array (indexed by cpu_id)
 extern per_cpu g_percpu[MAX_CPUS];

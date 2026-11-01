@@ -409,9 +409,71 @@ exit, accepted server exit, accepted/queued caller cancellation, a late reply
 with a second caller already queued, successful subsequent exchange, explicit
 clone-stack unmapping and return to the baseline thread count. All three boots
 require `storage_smoke: IPC cancellation and peer teardown PASS`. These target
-checks run on one CPU; hosted concurrency and AArch64 SMP boot do not establish
-general target SMP scheduling/reclamation correctness. No IPC deadline API or
+checks run on one CPU; the dedicated SMP retirement gate is described below.
+No IPC deadline API or
 complete POSIX signal handlers/restart policy is added.
+
+## SMP dispatch ownership and thread retirement
+
+`test_dispatch` links the production shared dispatch/queue implementation.
+Nine tests cover retained outgoing stacks, selected fatal candidates, peer pins,
+wakes before/during/after a switch, duplicate wake suppression, priority/FIFO
+behavior and work stealing. A concurrent campaign models four CPUs, 32 threads,
+a waker and a reaper over 8,000 scheduling steps. It checks that a stack has at
+most one executing CPU and that no executing thread passes the reclamation gate.
+Another case frees a heap thread after the incoming tail, then repeats the tail
+under ASan to detect a retained outgoing pointer. Hosted tests do not perform
+real context switches or privileged IRQ masking.
+
+```sh
+make -C tests test_dispatch
+build/host-tests/test_dispatch
+make -C tests OBJDIR=../build/host-tests/retirement-sanitized \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=address,undefined' \
+  LDLIBS='-lpthread -fsanitize=address,undefined' test_dispatch test_ipc test_cancellation
+UBSAN_OPTIONS=halt_on_error=1 build/host-tests/retirement-sanitized/test_dispatch
+make -C tests OBJDIR=../build/host-tests/retirement-tsan \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=thread' \
+  LDLIBS='-lpthread -fsanitize=thread' test_dispatch
+build/host-tests/retirement-tsan/test_dispatch
+```
+
+All run queues and CPU ownership claims use a shared IRQ-safe dispatch lock;
+there is no lock held across a context switch. Selection claims an off-CPU
+thread before inspecting fatal signals or preparing its address space. The
+outgoing thread remains claimed until `scheduler_finish_switch`, called by the
+amd64/ARMv7/AArch64 assembly on the incoming stack before register restoration
+and IRQ enablement. Only that tail publishes it off CPU and queues a runnable
+thread. Early wakes set READY without enqueueing an executing stack; repeated
+wakes are idempotent, and an atomic BLOCKED-to-READY transition preserves exit
+publication. Work stealing can take a single off-CPU queued thread.
+
+Both cleanup and waitpid require TERMINATED, off CPU, off queue and zero pins
+before destroying a thread's stack or address space. waitpid may consume status
+before the handoff; the corpse remains in the global list for later cleanup and
+shared-mm accounting. A selected fatal candidate retains its claim through
+cleanup and parent notification. The obsolete shared kernel-stack scratch value
+is removed; amd64 syscall stack offsets have compile-time assertions.
+
+`scripts/test_smoke_aarch64.sh` now requires the smoke-product-only retirement
+probe in its four-CPU run. Eight workers must demonstrate execution on all four
+CPUs (mask 15). A deliberately held terminated worker keeps executing with IRQs
+masked while a remote controller consumes its wait status once and tries
+cleanup. It must remain discoverable until released and switched away. Then 48
+rounds exercise queued peer death, accepted server exit, accepted caller
+cancellation, a late reply with another caller queued, subsequent success and
+waitpid. Every child must disappear from the thread list, and queue links/counts
+are checked after each round. The final marker is
+`SMP retirement: PASS (4 CPUs, mask 15, 48 IPC/exit/cancel/wait rounds)`.
+One-CPU runs explicitly skip this probe and retain the prior boot/syscall gates.
+QEMU uses `-nic none`; no host network socket or physical board is used.
+
+This gate exercises kernel-worker stacks and IPC teardown on AArch64. The
+amd64 storage/compatibility and ARMv7 boot gates exercise their switch tails on
+one CPU. This does not establish amd64/ARMv7 SMP readiness, CPU hot-unplug,
+concurrent userspace remap/TLB correctness or every wait-queue lifetime. Shared
+dispatch serialization favors a reviewable ownership boundary; no scaling or
+performance claim is made.
 
 ## File-backed mmap population and rollback
 

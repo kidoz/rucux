@@ -12,6 +12,7 @@
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/process/elf.hpp>
+#include <kernel/scheduler/retirement_probe.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/vfs/ramfs.hpp>
 #include <kernel/vfs/tty.hpp>
@@ -101,6 +102,12 @@ void init_rootfs() noexcept {
 }
 
 void user_hello() noexcept {
+#ifdef RUCUX_VM_SELF_TEST
+    if (!kernel::scheduler::verify_smp_retirement()) {
+        kernel::print("SMP retirement: FAIL\n");
+        kernel::scheduler::scheduler::exit(1);
+    }
+#endif
     kernel::boot::start_initial_processes();
     kernel::scheduler::scheduler::exit();
 }

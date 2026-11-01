@@ -6,6 +6,7 @@ common_cpp_args += ['-mstrict-align']
 kernel_args += ['-mgeneral-regs-only']
 if product_name == 'smoke-qemu-aarch64'
     kernel_args += ['-DRUCUX_VM_SELF_TEST=1']
+    kernel_common_sources += files('../../kernel/scheduler/retirement_probe.cpp')
 endif
 user_c_args += ['-DRUCUX_ARCH="aarch64"']
 user_cpp_args += ['-DRUCUX_ARCH="aarch64"']

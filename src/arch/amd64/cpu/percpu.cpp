@@ -32,32 +32,6 @@ atomic<uint32_t> g_cpu_count{0};
 
 // ─── Run queue methods (need full thread definition) ───────────────────────
 
-void run_queue::init() noexcept {
-    head = tail = nullptr;
-    count = 0;
-}
-
-void run_queue::enqueue(scheduler::thread* t) noexcept {
-    t->next = nullptr;
-    if (!head) {
-        head = tail = t;
-    } else {
-        tail->next = t;
-        tail = t;
-    }
-    count++;
-}
-
-scheduler::thread* run_queue::dequeue() noexcept {
-    if (!head) return nullptr;
-    auto* t = head;
-    head = t->next;
-    if (!head) tail = nullptr;
-    t->next = nullptr;
-    count--;
-    return t;
-}
-
 // ─── BSP/AP init ───────────────────────────────────────────────────────────
 
 void bsp_init() noexcept {

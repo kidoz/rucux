@@ -17,32 +17,6 @@ void arch_set_percpu_base(per_cpu* p) noexcept {
     asm volatile("isb" ::: "memory");
 }
 
-void run_queue::init() noexcept {
-    head = tail = nullptr;
-    count = 0;
-}
-
-void run_queue::enqueue(scheduler::thread* t) noexcept {
-    t->next = nullptr;
-    if (!head) {
-        head = tail = t;
-    } else {
-        tail->next = t;
-        tail = t;
-    }
-    count++;
-}
-
-scheduler::thread* run_queue::dequeue() noexcept {
-    if (!head) return nullptr;
-    auto* t = head;
-    head = t->next;
-    if (!head) tail = nullptr;
-    t->next = nullptr;
-    count--;
-    return t;
-}
-
 namespace {
 
 void init_slot(per_cpu* p, uint32_t cpu_id, uint32_t mpidr_aff) noexcept {

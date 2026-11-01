@@ -1,6 +1,35 @@
 // SPDX-License-Identifier: MIT
 .section .text
 .global switch_context
+.global switch_thread_context
+
+// Scheduler switches finish on the incoming stack, while IRQs remain masked.
+// Keep the raw primitive for independent boot/context probes.
+switch_thread_context:
+    test %rdi, %rdi
+    jz .Lthread_load_new
+    push %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    mov %rsp, (%rdi)
+.Lthread_load_new:
+    mov %rsi, %rsp
+    // Initial and resumed frames have different alignment. RBX is restored
+    // below; the C ABI preserves our temporary original frame pointer.
+    mov %rsp, %rbx
+    and $-16, %rsp
+    call scheduler_finish_switch
+    mov %rbx, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
 
 switch_context:
     // rdi = uintptr_t* old_stack

@@ -16,6 +16,8 @@ mkdir -p "$(dirname "${LOG_PATH}")" "$(dirname "${SMP_LOG_PATH}")"
 # secondary, and an intact marker line proves console output is serialized —
 # without the console lock these interleave and the line is unmatchable.
 smp_markers=(
+    "SMP retirement: held outgoing stack and single wait status verified"
+    "SMP retirement: PASS (4 CPUs, mask 15, 48 IPC/exit/cancel/wait rounds)"
     "MMU: replacement and permissions verified"
     "SMP: 3 of 3 secondary cores online"
     "rucux (aarch64) boot complete, 4 CPUs online"
@@ -48,6 +50,7 @@ required_markers=(
 # A translation mismatch still boots, so assert its absence explicitly rather
 # than relying on the positive markers alone.
 forbidden_markers=(
+    "SMP retirement: FAIL"
     "MMU: REPLACEMENT FAILED"
     "syscall safety: FAIL"
     "*** EL0"

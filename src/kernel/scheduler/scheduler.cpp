@@ -9,6 +9,7 @@
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/process/signal.hpp>
+#include <kernel/scheduler/dispatch.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/sync/futex.hpp>
 #include <kernel/sync/rcu.hpp>
@@ -39,9 +40,8 @@ static kernel::irq_spinlock g_irq_waiters_lock;
 static thread* g_sleep_queue_head = nullptr;
 static kernel::irq_spinlock g_sleep_queue_lock;
 
-extern "C" void switch_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
+extern "C" void switch_thread_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
 extern "C" {
-uintptr_t g_current_kernel_stack = 0;
 void jump_to_user_space(void* entry, void* stack, void* arg);
 #if defined(__aarch64__)
 // Unmasks IRQs before calling the thread entry point held in x19.
@@ -101,8 +101,8 @@ static void destroy_thread(thread* t) noexcept {
 
 static void reap_thread_locked(thread* victim, thread* prev) noexcept {
     if (!victim) return;
-    if (victim->pins.load(kernel::acquire)) {
-        victim->parent_tid = 0; // Status consumed; reclaim after the last peer pin.
+    if (!dispatch::reclaimable(victim)) {
+        victim->parent_tid = 0; // Status consumed; defer until off CPU, off queue and unpinned.
         return;
     }
     if (prev)
@@ -152,66 +152,6 @@ bool thread::ensure_fd_capacity(size_t n) noexcept {
     fd_table = new_table;
     fd_count = new_count;
     return true;
-}
-
-// ─── Per-CPU run queue helpers ─────────────────────────────────────────────
-
-// Enqueue a thread on a specific CPU's run queue (caller must hold cpu's sched_lock)
-static void enqueue_on_cpu(cpu::per_cpu* pcpu, thread* t) noexcept {
-    auto prio_idx = static_cast<uint8_t>(t->priority);
-    pcpu->queues[prio_idx].enqueue(t);
-    pcpu->total_runnable++;
-}
-
-// Dequeue highest-priority thread from a CPU (caller must hold sched_lock)
-static thread* dequeue_from_cpu(cpu::per_cpu* pcpu) noexcept {
-    for (int p = 0; p < static_cast<int>(thread_prio::NUM_PRIOS); ++p) {
-        thread* t = pcpu->queues[p].dequeue();
-        if (t) {
-            pcpu->total_runnable--;
-            return t;
-        }
-    }
-    return nullptr;
-}
-
-// Find the busiest online CPU (for work stealing)
-static cpu::per_cpu* find_busiest_cpu(uint32_t exclude_id) noexcept {
-    cpu::per_cpu* busiest = nullptr;
-    uint32_t max_load = 0;
-    uint32_t ncpus = cpu::g_cpu_count.load(kernel::relaxed);
-
-    for (uint32_t i = 0; i < ncpus; ++i) {
-        if (i == exclude_id) continue;
-        auto* c = cpu::get_cpu(i);
-        if (!c->online) continue;
-        if (c->total_runnable > max_load) {
-            max_load = c->total_runnable;
-            busiest = c;
-        }
-    }
-    return (max_load > 1) ? busiest : nullptr; // Only steal if > 1 thread
-}
-
-// Try to steal a thread from another CPU's run queue
-static thread* try_steal(cpu::per_cpu* thief) noexcept {
-    auto* victim = find_busiest_cpu(thief->cpu_id);
-    if (!victim) return nullptr;
-
-    uintptr_t flags = victim->sched_lock.lock();
-    thread* stolen = nullptr;
-
-    // Steal from lowest priority first (least impactful)
-    for (int p = static_cast<int>(thread_prio::NUM_PRIOS) - 1; p >= 0; --p) {
-        if (!victim->queues[p].empty()) {
-            stolen = victim->queues[p].dequeue();
-            victim->total_runnable--;
-            break;
-        }
-    }
-
-    victim->sched_lock.unlock(flags);
-    return stolen;
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -570,18 +510,12 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
 // ─── Enqueue ───────────────────────────────────────────────────────────────
 
 void scheduler::add_thread(thread* t) noexcept {
-    t->state.store(thread_state::READY, kernel::release);
-    TRACE_INSTANT(TRACE_EVENT_THREAD_ENQUEUE, t->tid, static_cast<uint64_t>(t->last_cpu));
+    dispatch::enqueue(t);
+}
 
-    // Prefer the CPU this thread last ran on (cache affinity)
-    uint32_t target_cpu = t->last_cpu;
-    uint32_t ncpus = cpu::g_cpu_count.load(kernel::relaxed);
-    if (target_cpu >= ncpus) target_cpu = 0;
-
-    auto* pcpu = cpu::get_cpu(target_cpu);
-    uintptr_t flags = pcpu->sched_lock.lock();
-    enqueue_on_cpu(pcpu, t);
-    pcpu->sched_lock.unlock(flags);
+// Runs before the new context returns/enables IRQs, including fresh threads.
+extern "C" void scheduler_finish_switch() noexcept {
+    dispatch::finish_switch(cpu::this_cpu());
 }
 
 // ─── Schedule (per-CPU) ────────────────────────────────────────────────────
@@ -596,8 +530,8 @@ void scheduler::cleanup_terminated() noexcept {
         if (cur->state.load(kernel::acquire) == thread_state::TERMINATED && cur != this_thread) {
             // Defer reaping if the parent is still alive; sys_waitpid()
             // will collect the corpse and consume the exit status.
-            if (cur->pins.load(kernel::acquire) || (cur->process_id == cur->tid && cur->parent_tid != 0 &&
-                                                    find_thread_locked(cur->parent_tid) != nullptr)) {
+            if (!dispatch::reclaimable(cur) || (cur->process_id == cur->tid && cur->parent_tid != 0 &&
+                                                find_thread_locked(cur->parent_tid) != nullptr)) {
                 prev = cur;
                 cur = cur->all_next;
                 continue;
@@ -627,57 +561,21 @@ void scheduler::schedule() noexcept {
 
     thread* old_thread = pcpu->current_thread;
     thread* new_thread = nullptr;
-    bool old_thread_requeued = false;
 
-choose_next:
-    {
-        uintptr_t rq_flags = pcpu->sched_lock.lock();
-
-        // Re-enqueue the old thread if it was running
-        if (old_thread && old_thread->state.load(kernel::acquire) == thread_state::RUNNING &&
-            old_thread != pcpu->idle_thread && !old_thread_requeued) {
-            old_thread->state.store(thread_state::READY, kernel::release);
-            old_thread->last_cpu = pcpu->cpu_id;
-            enqueue_on_cpu(pcpu, old_thread);
-            old_thread_requeued = true;
-        }
-
-        // Pick highest-priority runnable thread
-        new_thread = dequeue_from_cpu(pcpu);
-
-        pcpu->sched_lock.unlock(rq_flags);
-    }
-
-    // If nothing on local queue, try work stealing
-    if (!new_thread) {
-        new_thread = try_steal(pcpu);
-    }
-
-    // If still nothing, check if current thread can continue
-    if (!new_thread) {
-        if (old_thread && (old_thread->state.load(kernel::acquire) == thread_state::RUNNING ||
-                           old_thread->state.load(kernel::acquire) == thread_state::READY)) {
-            kernel::rcu::process_callbacks();
-            kernel::irq_restore(flags);
-            return;
-        }
-        new_thread = pcpu->idle_thread;
-    }
-
-    if (new_thread != pcpu->idle_thread && kernel::process::signal_manager::consume_fatal_signal(new_thread)) {
+    for (;;) {
+        new_thread = dispatch::choose(pcpu);
+        if (new_thread == pcpu->idle_thread || !kernel::process::signal_manager::consume_fatal_signal(new_thread))
+            break;
+        // Selection reserves the candidate through signal/descriptor cleanup
+        // and parent notification. Do not expose an unclaimed raw pointer.
         notify_parent_of_exit(new_thread);
+        if (new_thread != old_thread) dispatch::release_candidate(new_thread);
         cleanup_terminated();
-        new_thread = nullptr;
-        goto choose_next;
     }
-
-    new_thread->state.store(thread_state::RUNNING, kernel::release);
-    new_thread->last_cpu = pcpu->cpu_id;
-    pcpu->current_thread = new_thread;
+    dispatch::prepare_switch(pcpu, new_thread);
 
     uintptr_t new_kstack = new_thread->stack_base + new_thread->stack_size;
     pcpu->kernel_stack = new_kstack;
-    g_current_kernel_stack = new_kstack;
 
     if (old_thread != new_thread) {
         uint64_t old_tid = old_thread ? old_thread->tid : 0;
@@ -702,7 +600,7 @@ choose_next:
 #if defined(__x86_64__)
         arch::amd64::switch_fpu(old_thread ? &old_thread->fpu : nullptr, new_thread->fpu);
 #endif
-        switch_context(old_sp, new_thread->stack_pointer);
+        switch_thread_context(old_sp, new_thread->stack_pointer);
     }
 
     // Process any pending RCU callbacks
@@ -732,7 +630,6 @@ void scheduler::unblock(thread* t) noexcept {
     // must be queued once, even if the event arrives before schedule().
     if (t->state.load(kernel::acquire) == thread_state::TERMINATED) return;
     if (t->interruptible_wait && t->state.load(kernel::acquire) != thread_state::BLOCKED) return;
-    t->state.store(thread_state::READY, kernel::release);
     add_thread(t);
 }
 

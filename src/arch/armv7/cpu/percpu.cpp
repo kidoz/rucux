@@ -15,32 +15,6 @@ void arch_set_percpu_base(per_cpu* p) noexcept {
     asm volatile("mcr p15, 0, %0, c13, c0, 4" ::"r"(p) : "memory");
 }
 
-void run_queue::init() noexcept {
-    head = tail = nullptr;
-    count = 0;
-}
-
-void run_queue::enqueue(scheduler::thread* t) noexcept {
-    t->next = nullptr;
-    if (!head) {
-        head = tail = t;
-    } else {
-        tail->next = t;
-        tail = t;
-    }
-    count++;
-}
-
-scheduler::thread* run_queue::dequeue() noexcept {
-    if (!head) return nullptr;
-    auto* t = head;
-    head = t->next;
-    if (!head) tail = nullptr;
-    t->next = nullptr;
-    count--;
-    return t;
-}
-
 void bsp_init() noexcept {
     auto* bsp = &g_percpu[0];
     bsp->self = bsp;
