@@ -372,10 +372,10 @@ TEST(socket_fd_lookup_never_falls_back_to_global_index) {
     ASSERT_EQ(socket_manager::sys_connect(sender, &address, sizeof(address)), 0);
     ASSERT_EQ(socket_manager::sys_send(0, "bad", 3, 0), -9);
     auto* node = fds[sender];
-    ASSERT_EQ(node->ops->write(node, 0, 4, "good"), 4UL);
+    ASSERT_EQ(node->ops->write(node, 0, 4, "good"), 4L);
     char data[8]{};
     node = fds[receiver];
-    ASSERT_EQ(node->ops->read(node, 0, 8, data), 4UL);
+    ASSERT_EQ(node->ops->read(node, 0, 8, data), 4L);
     ASSERT(std::memcmp(data, "good", 4) == 0);
     close_fd(sender);
     close_fd(receiver);

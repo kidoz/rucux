@@ -16,6 +16,10 @@ long checked_result(long result) {
 }
 } // namespace
 
+extern "C" ssize_t read(int fd, void* buffer, size_t size) {
+    return checked_result(syscall(SYS_READ, fd, reinterpret_cast<long>(buffer), static_cast<long>(size)));
+}
+
 extern "C" ssize_t write(int fd, const void* buffer, size_t size) {
     return checked_result(syscall(SYS_WRITE, fd, reinterpret_cast<long>(buffer), static_cast<long>(size)));
 }

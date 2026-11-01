@@ -112,7 +112,7 @@ static size_t buf_count() noexcept {
     return (g_tty.rx_head - g_tty.rx_tail + g_tty.BUF_SIZE) % g_tty.BUF_SIZE;
 }
 
-static size_t tty_read(vfs_node*, size_t, size_t size, void* buffer) noexcept {
+static long tty_read(vfs_node*, size_t, size_t size, void* buffer) noexcept {
     if (!size) return 0;
     auto* out = static_cast<char*>(buffer);
     while (true) {
@@ -139,7 +139,7 @@ static size_t tty_read(vfs_node*, size_t, size_t size, void* buffer) noexcept {
             }
             g_tty_lock.unlock(locked);
             kernel::irq_restore(flags);
-            return count;
+            return static_cast<long>(count);
         }
         auto* reader = scheduler::scheduler::current_thread();
         g_tty.waiting_thread = reader;
@@ -151,7 +151,7 @@ static size_t tty_read(vfs_node*, size_t, size_t size, void* buffer) noexcept {
     }
 }
 
-static size_t tty_write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
+static long tty_write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
     (void)node;
     (void)offset;
     const char* buf = static_cast<const char*>(buffer);
@@ -159,7 +159,7 @@ static size_t tty_write(vfs_node* node, size_t offset, size_t size, const void* 
     for (size_t i = 0; i < size; i++)
         kernel::console::putc_unlocked(buf[i]);
     kernel::console::unlock_output(flags);
-    return size;
+    return static_cast<long>(size);
 }
 
 static int tty_ioctl(vfs_node* node, unsigned long request, void* argp) noexcept {

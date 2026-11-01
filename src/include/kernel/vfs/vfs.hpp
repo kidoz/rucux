@@ -10,8 +10,10 @@ enum class file_type { REGULAR, DIRECTORY, CHAR_DEVICE, BLOCK_DEVICE, SOCKET, EP
 struct vfs_node;
 
 struct vfs_ops {
-    size_t (*read)(vfs_node* node, size_t offset, size_t size, void* buffer);
-    size_t (*write)(vfs_node* node, size_t offset, size_t size, const void* buffer);
+    // Return an acknowledged byte count or negative errno. Zero is EOF/no-op,
+    // never a storage error. A successful prefix takes precedence over errors.
+    long (*read)(vfs_node* node, size_t offset, size_t size, void* buffer);
+    long (*write)(vfs_node* node, size_t offset, size_t size, const void* buffer);
     // Return 0 or a negative errno. Truncate changes size, never the FD offset.
     int (*truncate)(vfs_node* node, size_t length);
     void (*open)(vfs_node* node);
@@ -66,7 +68,7 @@ public:
 
     // POSIX Syscalls
     static int sys_open(const char* path, int flags) noexcept;
-    static int sys_read(int fd, void* buffer, size_t size) noexcept;
+    static long sys_read(int fd, void* buffer, size_t size) noexcept;
     static long sys_write(int fd, const void* buffer, size_t size) noexcept;
     static int sys_close(int fd) noexcept;
     static int sys_ioctl(int fd, unsigned long request, void* argp) noexcept;

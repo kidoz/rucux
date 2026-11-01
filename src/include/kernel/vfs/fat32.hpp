@@ -12,8 +12,11 @@ namespace kernel::vfs::fat32 {
 // after the directory size write succeeds. I/O failure may persist additional
 // unacknowledged bytes. Durability assumes ordered atomic sectors and a device
 // that honors successful ATA cache flushes; torn sectors are not covered.
-// Operations reserve the device without waiting; contention returns 0/null via
-// the existing read/write callbacks; append/truncate/fsync return negative errno.
+// Operations reserve the device without waiting; I/O and metadata callbacks
+// return -EBUSY on contention. Lookup retains its null-result interface.
+// Read/write return signed byte counts: zero is EOF/no-op, never a media error.
+// Failed I/O returns -EIO unless a positive visible prefix can be acknowledged;
+// full allocated capacity returns -ENOSPC and unsupported gaps -EOPNOTSUPP.
 // Append selects disk EOF and publishes its acknowledged prefix under that same
 // reservation. Capacity exhaustion returns -ENOSPC; partial appends are allowed.
 // A failed append leaves the descriptor offset unchanged even if data persisted.

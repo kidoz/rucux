@@ -62,6 +62,9 @@ bool verify_ramfs() {
 bool check_errors() {
     errno = 0;
     if (fsync(-1) != -1 || errno != EBADF) return false;
+    char byte = 'x';
+    errno = 0;
+    if (read(-1, &byte, 1) != -1 || errno != EBADF) return false;
     struct stat info{};
     errno = 0;
     if (fstat(-1, &info) != -1 || errno != EBADF) return false;
@@ -76,6 +79,14 @@ bool check_errors() {
     ok = ok && fcntl(fd, F_SETFL, READ_WRITE_APPEND) == 0 && fcntl(fd, F_GETFL) == O_APPEND;
     errno = 0;
     ok = ok && write(fd, "x", 1) == -1 && errno == EBADF;
+    ok = ok && lseek(fd, 0, SEEK_END) == 37;
+    errno = 123;
+    ok = ok && read(fd, &byte, 1) == 0 && errno == 123;
+    close(fd);
+    fd = open(SHRINK, O_WRONLY);
+    if (fd < 0) return false;
+    errno = 0;
+    ok = ok && read(fd, &byte, 1) == -1 && errno == EBADF && lseek(fd, 0, SEEK_CUR) == 0;
     close(fd);
     fd = open(SHRINK, O_RDWR);
     if (fd < 0) return false;
@@ -83,6 +94,17 @@ bool check_errors() {
     ok = ok && ftruncate(fd, -1) == -1 && errno == EINVAL;
     errno = 0;
     ok = ok && ftruncate(fd, 2048) == -1 && errno == EOPNOTSUPP;
+    close(fd);
+    // This fixture is still fully allocated and sized before its append tests.
+    fd = open(APPEND, O_RDWR);
+    if (fd < 0) return false;
+    ok = ok && lseek(fd, 0, SEEK_END) == 2048;
+    errno = 0;
+    ok = ok && write(fd, "x", 1) == -1 && errno == ENOSPC && lseek(fd, 0, SEEK_CUR) == 2048;
+    ok = ok && read(fd, &byte, 1) == 0 && errno == ENOSPC;
+    ok = ok && lseek(fd, 2049, SEEK_SET) == 2049;
+    errno = 0;
+    ok = ok && write(fd, "x", 1) == -1 && errno == EOPNOTSUPP && lseek(fd, 0, SEEK_CUR) == 2049;
     close(fd);
     return ok;
 }

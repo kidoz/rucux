@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-// Actual custom-libc write/fcntl wrappers with raw syscall and errno stubs.
+// Actual custom-libc read/write/fcntl wrappers with raw syscall and errno stubs.
 #include "test_harness.hpp"
 #include <uapi/kernel/syscalls.h>
 
 extern "C" long rucux_write(int, const void*, size_t);
+extern "C" long rucux_read(int, void*, size_t);
 extern "C" int rucux_fcntl(int, int, ...);
 namespace {
 long result, number, arguments[6];
@@ -22,6 +23,29 @@ extern "C" long rucux_test_syscall(long num, long a1, long a2, long a3, long a4,
     for (unsigned i = 0; i < 6; ++i)
         arguments[i] = values[i];
     return result;
+}
+TEST(libc_read_forwards_output_buffers_short_results_and_eof_without_changing_errno) {
+    reset();
+    char bytes[8];
+    result = 3;
+    ASSERT_EQ(rucux_read(7, bytes, sizeof(bytes)), 3L);
+    ASSERT_EQ(number, SYS_READ);
+    ASSERT_EQ(arguments[0], 7);
+    ASSERT_EQ(arguments[1], reinterpret_cast<long>(bytes));
+    ASSERT_EQ(arguments[2], 8);
+    ASSERT_EQ(error_number, 123);
+    result = 0;
+    ASSERT_EQ(rucux_read(7, bytes, sizeof(bytes)), 0L);
+    ASSERT_EQ(error_number, 123);
+}
+TEST(libc_read_translates_storage_contention_and_access_errors) {
+    reset();
+    char byte;
+    for (long error : {5, 9, 14, 16, 21, 22, 75}) {
+        result = -error;
+        ASSERT_EQ(rucux_read(7, &byte, 1), -1L);
+        ASSERT_EQ(error_number, error);
+    }
 }
 TEST(libc_write_forwards_bytes_and_short_results_without_changing_errno) {
     reset();
@@ -64,5 +88,5 @@ TEST(libc_fcntl_setfl_forwards_an_int_and_translates_errors) {
     }
 }
 int main() {
-    return RUN_ALL_TESTS("Custom libc write and status flags");
+    return RUN_ALL_TESTS("Custom libc read/write and status flags");
 }

@@ -118,16 +118,27 @@ int vfs_manager::sys_open(const char* path, int flags) noexcept {
     return fd;
 }
 
-int vfs_manager::sys_read(int fd, void* buffer, size_t size) noexcept {
+long vfs_manager::sys_read(int fd, void* buffer, size_t size) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);
-    if (!fdesc || !fdesc->node) return -1;
+    if (!fdesc || !fdesc->node) return -9;
+    const int access = fdesc->flags & ACCESS_MODE;
+    if (access != 0 && access != 2) return -9;
 
     vfs_node* node = static_cast<vfs_node*>(fdesc->node);
-    if (!node->ops || !node->ops->read) return -1;
+    if (node->type == file_type::DIRECTORY) return -21;
+    if (!size) return 0;
+    if (!buffer) return -14;
+    if (size > static_cast<size_t>(__LONG_MAX__)) return -75;
+    if (!node->ops || !node->ops->read) return -22;
 
-    int bytes_read = node->ops->read(node, fdesc->offset, size, buffer);
-    if (bytes_read > 0) fdesc->offset += bytes_read;
+    const long bytes_read = node->ops->read(node, fdesc->offset, size, buffer);
+    if (bytes_read > 0) {
+        const auto count = static_cast<size_t>(bytes_read);
+        if (count > size) return -5;
+        if (count > SIZE_MAX - fdesc->offset) return -75;
+        fdesc->offset += count;
+    }
     return bytes_read;
 }
 
@@ -153,9 +164,12 @@ long vfs_manager::sys_write(int fd, const void* buffer, size_t size) noexcept {
     if (!node->ops || !node->ops->write) return -22;
     if (size > SIZE_MAX - fdesc->offset) return -75;
 
-    // Legacy stream callbacks encode negative results in their size_t return.
-    const long bytes_written = static_cast<long>(node->ops->write(node, fdesc->offset, size, buffer));
-    if (bytes_written > 0) fdesc->offset += static_cast<size_t>(bytes_written);
+    const long bytes_written = node->ops->write(node, fdesc->offset, size, buffer);
+    if (bytes_written > 0) {
+        const auto count = static_cast<size_t>(bytes_written);
+        if (count > size) return -5;
+        fdesc->offset += count;
+    }
     return bytes_written;
 }
 

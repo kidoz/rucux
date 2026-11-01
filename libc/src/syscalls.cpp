@@ -17,10 +17,6 @@ int open(const char* path, int flags, ...) {
     return (int)__syscall(SYS_OPEN, (long)path, (long)flags);
 }
 
-ssize_t read(int fd, void* buf, size_t count) {
-    return (ssize_t)__syscall(SYS_READ, (long)fd, (long)buf, (long)count);
-}
-
 int close(int fd) {
     return (int)__syscall(SYS_CLOSE, (long)fd);
 }

@@ -224,7 +224,7 @@ static size_t copy_records_locked(uint64_t start_sequence, char* buffer, size_t 
     return copied;
 }
 
-static size_t kmsg_read(kernel::vfs::vfs_node*, size_t offset, size_t size, void* buffer) noexcept {
+static long kmsg_read(kernel::vfs::vfs_node*, size_t offset, size_t size, void* buffer) noexcept {
     if (!buffer || size == 0) {
         return 0;
     }
@@ -257,16 +257,16 @@ static size_t kmsg_read(kernel::vfs::vfs_node*, size_t offset, size_t size, void
         stream_offset += line_length;
     }
 
-    return copied;
+    return static_cast<long>(copied);
 }
 
-static size_t kmsg_write(kernel::vfs::vfs_node*, size_t, size_t size, const void* buffer) noexcept {
+static long kmsg_write(kernel::vfs::vfs_node*, size_t, size_t size, const void* buffer) noexcept {
     if (!buffer || size == 0) {
         return 0;
     }
 
     append_record(RUCUX_LOG_SOURCE_USER, RUCUX_LOG_INFO, "kmsg", 4, static_cast<const char*>(buffer), size);
-    return size;
+    return static_cast<long>(size);
 }
 
 static int kmsg_poll(kernel::vfs::vfs_node*) noexcept {

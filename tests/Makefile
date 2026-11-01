@@ -62,7 +62,7 @@ $(OBJDIR)/metadata_%.o: ../libc/src/%.cpp | $(OBJDIR)
 $(OBJDIR)/test_file_metadata: $(OBJDIR)/test_file_metadata.o $(OBJDIR)/metadata_file_metadata.o $(OBJDIR)/metadata_lseek.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/libc_file_write.o: ../libc/src/file_write.cpp | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) -I../libc/include -I.. -Dwrite=rucux_write -Dfcntl=rucux_fcntl -Dsyscall=rucux_test_syscall -D__errno_location=rucux_test_errno_location -MMD -MP -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -I../libc/include -I.. -Dread=rucux_read -Dwrite=rucux_write -Dfcntl=rucux_fcntl -Dsyscall=rucux_test_syscall -D__errno_location=rucux_test_errno_location -MMD -MP -c -o $@ $<
 $(OBJDIR)/test_file_write: $(OBJDIR)/test_file_write.o $(OBJDIR)/libc_file_write.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/test_buddy: $(OBJDIR)/test_buddy.o $(OBJDIR)/buddy.o

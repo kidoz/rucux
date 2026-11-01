@@ -53,7 +53,7 @@ TEST(canonical_carriage_return) {
     reset();
     input("hello\r");
     char out[16]{};
-    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 6UL);
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 6L);
     ASSERT(strcmp(out, "hello\n") == 0);
 }
 TEST(erase_and_kill_line) {
@@ -61,7 +61,7 @@ TEST(erase_and_kill_line) {
     reset();
     input("wrong\025abcx\177d\n");
     char out[16]{};
-    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 5UL);
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 5L);
     ASSERT(strcmp(out, "abcd\n") == 0);
 }
 TEST(erase_preserves_completed_line) {
@@ -69,30 +69,30 @@ TEST(erase_preserves_completed_line) {
     reset();
     input("first\nsecond\025\bnext\n");
     char out[32]{};
-    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 6UL);
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 6L);
     ASSERT(strcmp(out, "first\n") == 0);
-    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 5UL);
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 5L);
 }
 TEST(eof_without_newline) {
     auto* n = node();
     reset();
     input("hi\004\004");
     char out[16]{};
-    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 2UL);
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 2L);
     ASSERT(strcmp(out, "hi") == 0);
-    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 0UL);
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 0L);
 }
 TEST(zero_length_read_never_blocks) {
     auto* n = node();
     reset();
-    ASSERT_EQ(n->ops->read(n, 0, 0, nullptr), 0UL);
+    ASSERT_EQ(n->ops->read(n, 0, 0, nullptr), 0L);
     ASSERT(!enrolled);
 }
 TEST(reader_enrolled_before_wakeup) {
     auto* n = node();
     reset();
     char out[16]{};
-    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 5UL);
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 5L);
     ASSERT(enrolled);
     ASSERT(woke);
     ASSERT(strcmp(out, "wake\n") == 0);
@@ -105,7 +105,7 @@ TEST(full_line_keeps_delimiter_space) {
     input("\n");
     char out[1024]{};
     auto count = n->ops->read(n, 0, sizeof(out), out);
-    ASSERT_EQ(count, 1023UL);
+    ASSERT_EQ(count, 1023L);
     ASSERT_EQ(out[count - 1], '\n');
 }
 int main() {

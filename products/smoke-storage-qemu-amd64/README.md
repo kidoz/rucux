@@ -35,6 +35,9 @@ boot to check their exact length and contents independently.
    O_APPEND handles, including after an explicit seek to zero. Verify writable
    modes survive F_SETFL, read-only modes cannot be upgraded, and RAMFS can
    toggle append behavior without losing its descriptor offset.
+   Check read failure through a write-only descriptor, EOF preserving errno,
+   and an ordinary write at full allocated capacity returning ENOSPC without
+   moving the offset. A write past EOF returns EOPNOTSUPP for the unsupported gap.
 2. Remount and verify both files, then truncate the rewritten file to zero and
    fsync without a later write. Verify the append records and add a boot-2 record
    through a newly opened O_APPEND handle.
@@ -46,7 +49,10 @@ Successful FAT32 shrinking persists directory EOF and keeps all allocated
 clusters. Growth via `ftruncate` returns `EOPNOTSUPP`; writes can reuse the
 retained capacity. Fsync reports device flush failures. RAMFS remains volatile.
 Stat/fstat and SEEK_END refresh FAT32 EOF; failed refreshes propagate through
-libc as -1/errno. Append positioning and writing share one filesystem reservation;
+libc as -1/errno. Ordinary reads/writes also report signed errors, with successful
+prefix counts advancing only by acknowledged bytes. Disk failure injection is
+covered by the hosted tests; QEMU checks access modes, EOF and capacity errors.
+Append positioning and writing share one filesystem reservation;
 partial writes remain possible within fixed allocated capacity. This QEMU test
 uses sequential operations across separate opens. Hosted tests exercise reentrant
 FAT32 contention and concurrent RAMFS appends; target multi-CPU storage and

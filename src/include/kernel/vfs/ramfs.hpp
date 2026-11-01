@@ -12,8 +12,8 @@ public:
     static vfs_node* create_directory(vfs_node* parent, const char* name) noexcept;
     static void attach_node(vfs_node* parent, vfs_node* child) noexcept;
 
-    static size_t read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept;
-    static size_t write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept;
+    static long read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept;
+    static long write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept;
     static long append(vfs_node* node, size_t size, const void* buffer, size_t& end_offset) noexcept;
     static int truncate(vfs_node* node, size_t length) noexcept;
     static int fsync(vfs_node* node) noexcept;

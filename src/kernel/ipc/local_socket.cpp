@@ -120,7 +120,7 @@ static void local_close(kernel::vfs::vfs_node* node) noexcept {
     }
 }
 
-static size_t local_read(kernel::vfs::vfs_node* node, size_t, size_t size, void* buffer) noexcept {
+static long local_read(kernel::vfs::vfs_node* node, size_t, size_t size, void* buffer) noexcept {
     auto* socket = socket_from_node(node);
     if (!socket || !buffer || socket->type != RUCUX_UNIX_IPC_SOCK_STREAM || socket->read_shutdown) {
         return 0;
@@ -128,10 +128,10 @@ static size_t local_read(kernel::vfs::vfs_node* node, size_t, size_t size, void*
     if (socket->rx_size == 0) {
         return socket->peer_closed ? 0 : 0;
     }
-    return ring_read(*socket, static_cast<char*>(buffer), size);
+    return static_cast<long>(ring_read(*socket, static_cast<char*>(buffer), size));
 }
 
-static size_t local_write(kernel::vfs::vfs_node* node, size_t, size_t size, const void* buffer) noexcept {
+static long local_write(kernel::vfs::vfs_node* node, size_t, size_t size, const void* buffer) noexcept {
     auto* socket = socket_from_node(node);
     if (!socket || !buffer || socket->type != RUCUX_UNIX_IPC_SOCK_STREAM || socket->write_shutdown) {
         return 0;
@@ -144,7 +144,7 @@ static size_t local_write(kernel::vfs::vfs_node* node, size_t, size_t size, cons
     if (!peer.in_use || peer.read_shutdown) {
         return 0;
     }
-    return ring_write(peer, static_cast<const char*>(buffer), size);
+    return static_cast<long>(ring_write(peer, static_cast<const char*>(buffer), size));
 }
 
 static int local_poll(kernel::vfs::vfs_node* node) noexcept {

@@ -299,7 +299,7 @@ TEST(vfs_writes_require_writable_descriptors_and_nonempty_buffers) {
     writes = 0;
     ops.write = [](vfs_node*, size_t, size_t size, const void*) {
         ++writes;
-        return size;
+        return static_cast<long>(size);
     };
     for (int mode : {0, 3}) {
         descriptors[1].flags = mode;
@@ -358,14 +358,14 @@ TEST(vfs_setfl_changes_status_flags_without_upgrading_access) {
 TEST(vfs_kernel_created_stream_descriptors_remain_writable) {
     reset();
     node.type = file_type::SOCKET;
-    ops.write = [](vfs_node*, size_t, size_t size, const void*) { return size; };
+    ops.write = [](vfs_node*, size_t, size_t size, const void*) { return static_cast<long>(size); };
     const int fd = vfs_manager::alloc_fd(&node);
     ASSERT_EQ(fd, 0);
     ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), 1L);
     ASSERT_EQ(vfs_manager::sys_fcntl(fd, 3, 0), 2);
     ASSERT_EQ(vfs_manager::sys_fcntl(fd, 4, 0x0400), 0);
     ASSERT_EQ(vfs_manager::sys_write(fd, "y", 1), 1L);
-    ops.write = [](vfs_node*, size_t, size_t, const void*) { return static_cast<size_t>(-5); };
+    ops.write = [](vfs_node*, size_t, size_t, const void*) { return -5L; };
     ASSERT_EQ(vfs_manager::sys_write(fd, "z", 1), -5L);
     ASSERT_EQ(descriptors[fd].offset, 2UL);
     node.type = file_type::REGULAR;
@@ -384,14 +384,14 @@ TEST(ramfs_append_uses_eof_after_seeks_shrinks_and_flag_changes) {
     ASSERT_EQ(vfs_manager::sys_lseek(1, 0, 0), 0L);
     ASSERT_EQ(vfs_manager::sys_write(1, "C", 1), 1L);
     char bytes[16]{};
-    ASSERT_EQ(file->ops->read(file, 0, sizeof(bytes), bytes), 11UL);
+    ASSERT_EQ(file->ops->read(file, 0, sizeof(bytes), bytes), 11L);
     ASSERT(std::memcmp(bytes, "old-dataABC", 11) == 0);
     ASSERT_EQ(vfs_manager::sys_ftruncate(1, 0), 0);
     ASSERT_EQ(vfs_manager::sys_write(2, "Z", 1), 1L);
     ASSERT_EQ(descriptors[2].offset, 1UL);
     ASSERT_EQ(vfs_manager::sys_fcntl(1, 4, 0), 0);
     ASSERT_EQ(vfs_manager::sys_write(1, "X", 1), 1L); // Disabling append restores the retained offset, 11.
-    ASSERT_EQ(file->ops->read(file, 0, sizeof(bytes), bytes), 12UL);
+    ASSERT_EQ(file->ops->read(file, 0, sizeof(bytes), bytes), 12L);
     ASSERT_EQ(bytes[0], 'Z');
     ASSERT_EQ(bytes[11], 'X');
     size_t end = 123;
@@ -420,6 +420,14 @@ TEST(ramfs_concurrent_accepted_appends_keep_whole_records_without_overlap) {
                     failed.store(true);
                     return;
                 }
+                uint8_t first;
+                const auto read_result = file->ops->read(file, 0, 1, &first);
+                const auto write_result = file->ops->write(file, 0, 1, "o");
+                if ((read_result != 1 && read_result != -16) || (read_result == 1 && first != 'o') ||
+                    (write_result != 1 && write_result != -16)) {
+                    failed.store(true);
+                    return;
+                }
             }
         });
     }
@@ -427,7 +435,7 @@ TEST(ramfs_concurrent_accepted_appends_keep_whole_records_without_overlap) {
         worker.join();
     ASSERT(!failed.load());
     std::array<uint8_t, WORKERS * RECORDS * RECORD_SIZE> contents{};
-    ASSERT_EQ(file->ops->read(file, 8, contents.size(), contents.data()), contents.size());
+    ASSERT_EQ(file->ops->read(file, 8, contents.size(), contents.data()), static_cast<long>(contents.size()));
     bool seen[WORKERS][RECORDS]{};
     for (size_t offset = 0; offset < contents.size(); offset += RECORD_SIZE) {
         const unsigned worker = contents[offset], record = contents[offset + 1];
@@ -437,6 +445,86 @@ TEST(ramfs_concurrent_accepted_appends_keep_whole_records_without_overlap) {
         ASSERT(!seen[worker][record]);
         seen[worker][record] = true;
     }
+}
+
+TEST(vfs_reads_require_readable_descriptors_and_validate_before_dispatch) {
+    reset();
+    static unsigned reads;
+    reads = 0;
+    ops.read = [](vfs_node*, size_t, size_t size, void*) -> long {
+        ++reads;
+        return static_cast<long>(size);
+    };
+    char byte;
+    for (int mode : {1, 3}) {
+        descriptors[1].flags = mode;
+        ASSERT_EQ(vfs_manager::sys_read(1, &byte, 1), -9L);
+        ASSERT_EQ(vfs_manager::sys_read(1, nullptr, 0), -9L);
+    }
+    for (int mode : {0, 2}) {
+        descriptors[1].flags = mode;
+        ASSERT_EQ(vfs_manager::sys_read(1, &byte, 1), 1L);
+    }
+    ASSERT_EQ(reads, 2U);
+    ASSERT_EQ(vfs_manager::sys_read(-1, &byte, 1), -9L);
+    ASSERT_EQ(vfs_manager::sys_read(1, nullptr, 1), -14L);
+    ASSERT_EQ(vfs_manager::sys_read(1, nullptr, 0), 0L);
+    node.type = file_type::DIRECTORY;
+    ASSERT_EQ(vfs_manager::sys_read(1, &byte, 1), -21L);
+    node.type = file_type::REGULAR;
+    ops.read = nullptr;
+    ASSERT_EQ(vfs_manager::sys_read(1, &byte, 1), -22L);
+    ASSERT_EQ(descriptors[1].offset, 101UL);
+    ASSERT_EQ(reads, 2U);
+}
+
+TEST(vfs_reads_preserve_error_and_eof_offsets_and_advance_by_partial_results) {
+    reset();
+    ops.read = [](vfs_node*, size_t, size_t, void* buffer) -> long {
+        if (callback_result > 0) std::memcpy(buffer, "abc", 3);
+        return callback_result;
+    };
+    char bytes[8];
+    std::memset(bytes, 0x5A, sizeof(bytes));
+    for (int result : {0, -5, -16}) {
+        callback_result = result;
+        ASSERT_EQ(vfs_manager::sys_read(1, bytes, sizeof(bytes)), static_cast<long>(result));
+        ASSERT_EQ(descriptors[1].offset, 99UL);
+    }
+    callback_result = 3;
+    ASSERT_EQ(vfs_manager::sys_read(1, bytes, sizeof(bytes)), 3L);
+    ASSERT_EQ(descriptors[1].offset, 102UL);
+    ASSERT(std::memcmp(bytes, "abc", 3) == 0);
+    for (size_t i = 3; i < sizeof(bytes); ++i)
+        ASSERT_EQ(bytes[i], 0x5A);
+}
+
+TEST(vfs_read_counts_preserve_width_and_reject_impossible_results) {
+    reset();
+    descriptors[1].offset = 0;
+    ops.read = [](vfs_node*, size_t, size_t size, void*) -> long { return static_cast<long>(size); };
+    char byte;
+    ASSERT_EQ(vfs_manager::sys_read(1, &byte, LONG_MAX), LONG_MAX);
+    descriptors[1].offset = SIZE_MAX;
+    ASSERT_EQ(vfs_manager::sys_read(1, &byte, 1), -75L);
+    ASSERT_EQ(descriptors[1].offset, SIZE_MAX);
+    ASSERT_EQ(vfs_manager::sys_read(1, &byte, SIZE_MAX), -75L);
+    descriptors[1].offset = 99;
+    ops.read = [](vfs_node*, size_t, size_t, void*) -> long { return 2; };
+    ASSERT_EQ(vfs_manager::sys_read(1, &byte, 1), -5L);
+    ASSERT_EQ(descriptors[1].offset, 99UL);
+}
+
+TEST(ramfs_invalid_io_is_distinct_from_eof) {
+    reset();
+    auto* file = ram_file("io-errors");
+    char byte;
+    ASSERT_EQ(file->ops->read(file, 0, 1, nullptr), -14L);
+    ASSERT_EQ(file->ops->write(file, 0, 1, nullptr), -14L);
+    ASSERT_EQ(file->ops->write(file, SIZE_MAX, 1, "x"), -75L);
+    ASSERT_EQ(file->ops->write(file, 0, 0, nullptr), 0L);
+    ASSERT_EQ(file->ops->read(file, 8, 1, &byte), 0L);
+    ASSERT_EQ(file->length, 8UL);
 }
 
 int main() {

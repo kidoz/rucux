@@ -37,11 +37,11 @@ static long write_socket(ksocket* ks, const void* buffer, size_t size) noexcept 
     auto* pcb = static_cast<udp_pcb*>(ks->pcb);
     return udp_sendto(pcb, buffer, size, pcb->remote_ip, pcb->remote_port);
 }
-static size_t socket_read(vfs::vfs_node* node, size_t, size_t size, void* buffer) {
-    return static_cast<size_t>(read_socket(get_socket(node->inode), buffer, size));
+static long socket_read(vfs::vfs_node* node, size_t, size_t size, void* buffer) {
+    return read_socket(get_socket(node->inode), buffer, size);
 }
-static size_t socket_write(vfs::vfs_node* node, size_t, size_t size, const void* buffer) {
-    return static_cast<size_t>(write_socket(get_socket(node->inode), buffer, size));
+static long socket_write(vfs::vfs_node* node, size_t, size_t size, const void* buffer) {
+    return write_socket(get_socket(node->inode), buffer, size);
 }
 
 static void socket_close(vfs::vfs_node* node) {

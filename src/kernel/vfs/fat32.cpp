@@ -92,8 +92,8 @@ T* allocate() noexcept {
     return storage ? new (storage) T{} : nullptr;
 }
 
-size_t fat32_read(vfs_node*, size_t, size_t, void*) noexcept;
-size_t fat32_write(vfs_node*, size_t, size_t, const void*) noexcept;
+long fat32_read(vfs_node*, size_t, size_t, void*) noexcept;
+long fat32_write(vfs_node*, size_t, size_t, const void*) noexcept;
 long fat32_append(vfs_node*, size_t, const void*, size_t&) noexcept;
 int fat32_truncate(vfs_node*, size_t) noexcept;
 int fat32_fsync(vfs_node*) noexcept;
@@ -173,18 +173,24 @@ size_t transfer(fat32_node_internal& internal, size_t offset, size_t size, void*
     return done;
 }
 
-size_t fat32_read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept {
+long fat32_read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept {
+    if (!node || node->type != file_type::REGULAR || !node->ptr) return -22;
+    if (!size) return 0;
+    if (!buffer) return -14;
     operation_guard guard;
-    if (!guard.acquired || !node || node->type != file_type::REGULAR || (!buffer && size) || !node->ptr) return 0;
+    if (!guard.acquired) return -16;
     auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
     // Another open may have shrunk this file since the vnode was created.
     uint8_t directory[SECTOR_SIZE];
     uint32_t length;
-    if (read_file_entry(node, directory, length) < 0) return 0;
+    const int result = read_file_entry(node, directory, length);
+    if (result < 0) return result;
     node->length = length;
-    if (offset >= node->length || node->length > internal->allocated_bytes) return 0;
+    if (offset >= node->length) return 0;
     if (size > node->length - offset) size = node->length - offset;
-    return transfer(*internal, offset, size, buffer, false);
+    if (size > static_cast<size_t>(__LONG_MAX__)) size = static_cast<size_t>(__LONG_MAX__);
+    const auto done = transfer(*internal, offset, size, buffer, false);
+    return done ? static_cast<long>(done) : -5;
 }
 
 // Caller holds the filesystem reservation. Disk EOF is authoritative across opens.
@@ -204,30 +210,37 @@ int read_file_entry(vfs_node* node, uint8_t (&directory)[SECTOR_SIZE], uint32_t&
     return 0;
 }
 
-size_t fat32_write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
+long fat32_write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
+    if (!node || node->type != file_type::REGULAR || !node->ptr) return -22;
+    if (!size) return 0;
+    if (!buffer) return -14;
+    if (offset > UINT32_MAX || size > UINT32_MAX - offset || size > static_cast<size_t>(__LONG_MAX__)) return -75;
     operation_guard guard;
-    if (!guard.acquired || !node || node->type != file_type::REGULAR || !node->ptr || !buffer || !size ||
-        offset > UINT32_MAX || size > UINT32_MAX - offset)
-        return 0;
+    if (!guard.acquired) return -16;
     auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
-    if (offset >= internal->allocated_bytes) return 0;
     uint8_t directory[SECTOR_SIZE];
     uint32_t disk_length;
-    if (read_file_entry(node, directory, disk_length) < 0) return 0;
+    const int result = read_file_entry(node, directory, disk_length);
+    if (result < 0) return result;
     node->length = disk_length;
-    if (offset > node->length) return 0; // No sparse writes.
+    if (offset > node->length) return -95; // No sparse writes.
+    if (offset >= internal->allocated_bytes) return -28;
     const auto available = internal->allocated_bytes - offset;
     if (size > available) size = static_cast<size_t>(available);
     const size_t old_length = node->length;
     const auto done = transfer(*internal, offset, size, const_cast<void*>(buffer), true);
-    if (!done || offset + done <= old_length) return done;
+    if (!done) return -5;
+    if (offset + done <= old_length) return static_cast<long>(done);
 
     // Data sectors have completed their flush before publishing the new EOF.
     // A failed size write may itself have persisted: never acknowledge its tail.
     write32(directory + internal->directory_offset + 28, static_cast<uint32_t>(offset + done));
-    if (!ata::write_sectors(internal->directory_lba, 1, directory)) return old_length - offset;
+    if (!ata::write_sectors(internal->directory_lba, 1, directory)) {
+        const auto acknowledged = old_length - offset;
+        return acknowledged ? static_cast<long>(acknowledged) : -5;
+    }
     node->length = offset + done;
-    return done;
+    return static_cast<long>(done);
 }
 
 long fat32_append(vfs_node* node, size_t size, const void* buffer, size_t& end_offset) noexcept {

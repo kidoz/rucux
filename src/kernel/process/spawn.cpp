@@ -69,8 +69,8 @@ long spawn_path(const char* path, uint32_t requested_tid) noexcept {
         return -1;
     }
 
-    size_t bytes_read = node->ops->read(node, 0, node->length, image);
-    if (bytes_read != node->length) {
+    const long bytes_read = node->ops->read(node, 0, node->length, image);
+    if (bytes_read < 0 || static_cast<size_t>(bytes_read) != node->length) {
         kernel::print("SPAWN: short read on {}\n", path);
         delete[] image;
         return -1;

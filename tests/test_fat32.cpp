@@ -34,7 +34,7 @@ uint32_t fail_read = UINT32_MAX;
 uint32_t fail_write = UINT32_MAX;
 void (*on_read)();
 vfs_node* reentrant_file;
-size_t nested_result;
+long nested_result;
 kernel::scheduler::thread current{};
 kernel::scheduler::thread::file_descriptor descriptors[4]{};
 
@@ -210,8 +210,99 @@ TEST(fat32_stops_at_first_data_read_failure) {
     auto* file = Fixture::open();
     std::array<uint8_t, 1200> data{};
     fail_read = ROOT + 3;
-    ASSERT_EQ(file->ops->write(file, 0, data.size(), data.data()), 512UL);
+    ASSERT_EQ(file->ops->write(file, 0, data.size(), data.data()), 512L);
     ASSERT_EQ(write_attempts, 1UL);
+}
+
+TEST(fat32_vfs_first_read_failure_is_not_eof_and_does_not_move_the_offset) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 0);
+    ASSERT(fd >= 0);
+    std::array<uint8_t, 16> bytes;
+    bytes.fill(0xA5);
+    fail_read = ROOT + 2;
+    ASSERT_EQ(vfs_manager::sys_read(fd, bytes.data(), bytes.size()), -5L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 0L);
+    for (const auto byte : bytes)
+        ASSERT_EQ(byte, 0xA5);
+    ASSERT_EQ(vfs_manager::sys_read(fd, bytes.data(), bytes.size()), 16L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 16L);
+}
+
+TEST(fat32_vfs_partial_read_acknowledges_only_copied_bytes) {
+    Fixture fixture;
+    put32(disk.data() + ROOT * SECTOR + 28, CAPACITY);
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 0);
+    ASSERT(fd >= 0);
+    std::array<uint8_t, 1200> bytes;
+    bytes.fill(0xA5);
+    fail_read = ROOT + 3;
+    ASSERT_EQ(vfs_manager::sys_read(fd, bytes.data(), bytes.size()), 512L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 512L);
+    for (size_t i = 0; i < 512; ++i)
+        ASSERT_EQ(bytes[i], disk[Fixture::physical(i)]);
+    for (size_t i = 512; i < bytes.size(); ++i)
+        ASSERT_EQ(bytes[i], 0xA5);
+    ASSERT_EQ(vfs_manager::sys_read(fd, bytes.data(), 16), 16L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 528L);
+}
+
+TEST(fat32_vfs_ordinary_write_errors_and_acknowledged_prefixes_preserve_offsets) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2);
+    ASSERT(fd >= 0);
+    fail_write = ROOT + 2;
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), -5L);
+    fail_read = ROOT;
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), -5L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 0L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 128, 0), 128L);
+    fail_write = ROOT;
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), -5L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 128L);
+    std::array<uint8_t, 64> bytes{};
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 96, 0), 96L);
+    fail_write = ROOT;
+    ASSERT_EQ(vfs_manager::sys_write(fd, bytes.data(), bytes.size()), 32L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 128L);
+    ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 128U);
+}
+
+TEST(fat32_vfs_busy_reads_and_writes_are_errors_without_offset_changes) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2);
+    ASSERT_EQ(fd, 0);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 17, 0), 17L);
+    static long read_result, write_result;
+    static uint8_t byte;
+    byte = 0xA5;
+    on_read = [] {
+        read_result = vfs_manager::sys_read(0, &byte, 1);
+        write_result = vfs_manager::sys_write(0, "x", 1);
+    };
+    ASSERT_EQ(vfs_manager::sys_fsync(fd), 0);
+    ASSERT_EQ(read_result, -16L);
+    ASSERT_EQ(write_result, -16L);
+    ASSERT_EQ(byte, 0xA5);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), 17L);
+    ASSERT_EQ(write_attempts, 0UL);
+}
+
+TEST(fat32_vfs_eof_and_full_capacity_have_distinct_results) {
+    Fixture fixture;
+    put32(disk.data() + ROOT * SECTOR + 28, CAPACITY);
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const int fd = vfs_manager::sys_open("/journal.log", 2);
+    ASSERT(fd >= 0);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 2), static_cast<long>(CAPACITY));
+    uint8_t byte;
+    ASSERT_EQ(vfs_manager::sys_read(fd, &byte, 1), 0L);
+    ASSERT_EQ(vfs_manager::sys_write(fd, "x", 1), -28L);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 0, 1), static_cast<long>(CAPACITY));
 }
 
 TEST(fat32_stops_at_first_data_write_failure) {
@@ -220,7 +311,7 @@ TEST(fat32_stops_at_first_data_write_failure) {
     auto* file = Fixture::open();
     std::array<uint8_t, 1200> data{};
     fail_write = ROOT + 3;
-    ASSERT_EQ(file->ops->write(file, 0, data.size(), data.data()), 512UL);
+    ASSERT_EQ(file->ops->write(file, 0, data.size(), data.data()), 512L);
     ASSERT_EQ(write_attempts, 1UL);
 }
 
@@ -229,7 +320,7 @@ TEST(fat32_does_not_acknowledge_growth_after_metadata_read_failure) {
     auto* file = Fixture::open();
     std::array<uint8_t, 700> data{};
     fail_read = ROOT;
-    ASSERT_EQ(file->ops->write(file, 128, data.size(), data.data()), 0UL);
+    ASSERT_EQ(file->ops->write(file, 128, data.size(), data.data()), -5L);
     ASSERT_EQ(file->length, 128UL);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 128U);
 }
@@ -239,7 +330,7 @@ TEST(fat32_does_not_acknowledge_growth_after_metadata_write_failure) {
     auto* file = Fixture::open();
     std::array<uint8_t, 700> data{};
     fail_write = ROOT;
-    ASSERT_EQ(file->ops->write(file, 96, data.size(), data.data()), 32UL);
+    ASSERT_EQ(file->ops->write(file, 96, data.size(), data.data()), 32L);
     ASSERT_EQ(file->length, 128UL);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 128U);
 }
@@ -248,24 +339,24 @@ TEST(fat32_read_clamps_overflowing_lengths) {
     Fixture fixture;
     auto* file = Fixture::open();
     std::array<uint8_t, CAPACITY> buffer{};
-    ASSERT_EQ(file->ops->read(file, 64, SIZE_MAX, buffer.data()), 64UL);
+    ASSERT_EQ(file->ops->read(file, 64, SIZE_MAX, buffer.data()), 64L);
     for (size_t i = 0; i < 64; ++i)
         ASSERT_EQ(buffer[i], disk[Fixture::physical(i + 64)]);
-    ASSERT_EQ(file->ops->read(file, SIZE_MAX, 1, buffer.data()), 0UL);
+    ASSERT_EQ(file->ops->read(file, SIZE_MAX, 1, buffer.data()), 0L);
 }
 
 TEST(fat32_rejects_holes_and_short_writes_at_allocated_capacity) {
     Fixture fixture;
     auto* file = Fixture::open();
     std::array<uint8_t, CAPACITY * 2> buffer{};
-    ASSERT_EQ(file->ops->write(file, 129, 1, buffer.data()), 0UL);
+    ASSERT_EQ(file->ops->write(file, 129, 1, buffer.data()), -95L);
     ASSERT_EQ(write_attempts, 0UL);
-    ASSERT_EQ(file->ops->write(file, SIZE_MAX, 1, buffer.data()), 0UL);
-    ASSERT_EQ(file->ops->write(file, 0, 0, nullptr), 0UL);
-    ASSERT_EQ(file->ops->write(file, 128, buffer.size(), buffer.data()), CAPACITY - 128);
+    ASSERT_EQ(file->ops->write(file, SIZE_MAX, 1, buffer.data()), -75L);
+    ASSERT_EQ(file->ops->write(file, 0, 0, nullptr), 0L);
+    ASSERT_EQ(file->ops->write(file, 128, buffer.size(), buffer.data()), static_cast<long>(CAPACITY - 128));
     ASSERT_EQ(file->length, CAPACITY);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), CAPACITY);
-    ASSERT_EQ(file->ops->write(file, CAPACITY, 1, buffer.data()), 0UL);
+    ASSERT_EQ(file->ops->write(file, CAPACITY, 1, buffer.data()), -28L);
     ASSERT(!invalid_io);
 }
 
@@ -356,13 +447,13 @@ TEST(fat32_refreshes_stale_handles_and_persists_reset_before_rewriting) {
     auto* first = Fixture::open();
     auto* second = Fixture::open();
     std::array<uint8_t, 700> buffer{};
-    ASSERT_EQ(first->ops->write(first, 128, buffer.size(), buffer.data()), buffer.size());
-    ASSERT_EQ(second->ops->write(second, 0, 16, buffer.data()), 16UL);
+    ASSERT_EQ(first->ops->write(first, 128, buffer.size(), buffer.data()), static_cast<long>(buffer.size()));
+    ASSERT_EQ(second->ops->write(second, 0, 16, buffer.data()), 16L);
     ASSERT_EQ(second->length, 828UL);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 828U);
     ASSERT_EQ(second->ops->truncate(second, 0), 0);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 0U);
-    ASSERT_EQ(second->ops->write(second, 0, 5, buffer.data()), 5UL);
+    ASSERT_EQ(second->ops->write(second, 0, 5, buffer.data()), 5L);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 5U);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 60), 512U);
 }
@@ -370,10 +461,10 @@ TEST(fat32_refreshes_stale_handles_and_persists_reset_before_rewriting) {
 TEST(fat32_reentrant_io_fails_without_interleaving_disk_commands) {
     Fixture fixture;
     reentrant_file = Fixture::open();
-    nested_result = SIZE_MAX;
+    nested_result = -1;
     on_read = [] { nested_result = reentrant_file->ops->write(reentrant_file, 0, 1, "x"); };
-    ASSERT_EQ(reentrant_file->ops->write(reentrant_file, 0, 1, "y"), 1UL);
-    ASSERT_EQ(nested_result, 0UL);
+    ASSERT_EQ(reentrant_file->ops->write(reentrant_file, 0, 1, "y"), 1L);
+    ASSERT_EQ(nested_result, -16L);
     ASSERT_EQ(write_attempts, 1UL);
     ASSERT_EQ(disk[Fixture::physical(0)], 'y');
 }
@@ -414,7 +505,7 @@ TEST(fat32_shrink_is_durable_without_a_later_write_and_retains_allocated_capacit
     file = Fixture::open();
     ASSERT_EQ(file->length, 0UL);
     std::array<uint8_t, CAPACITY> bytes{};
-    ASSERT_EQ(file->ops->write(file, 0, bytes.size(), bytes.data()), bytes.size());
+    ASSERT_EQ(file->ops->write(file, 0, bytes.size(), bytes.data()), static_cast<long>(bytes.size()));
     ASSERT_EQ(file->length, CAPACITY);
 }
 
@@ -452,10 +543,10 @@ TEST(fat32_stale_readers_and_writers_observe_a_durable_shrink) {
     auto* stale = Fixture::open();
     ASSERT_EQ(first->ops->truncate(first, 37), 0);
     char bytes[256]{};
-    ASSERT_EQ(stale->ops->read(stale, 0, sizeof(bytes), bytes), 37UL);
+    ASSERT_EQ(stale->ops->read(stale, 0, sizeof(bytes), bytes), 37L);
     ASSERT_EQ(stale->ops->truncate(stale, 100), -95);
-    ASSERT_EQ(stale->ops->write(stale, 38, 1, "x"), 0UL); // A stale EOF cannot permit a gap.
-    ASSERT_EQ(stale->ops->write(stale, 37, 1, "x"), 1UL);
+    ASSERT_EQ(stale->ops->write(stale, 38, 1, "x"), -95L); // A stale EOF cannot permit a gap.
+    ASSERT_EQ(stale->ops->write(stale, 37, 1, "x"), 1L);
     ASSERT_EQ(first->ops->fsync(first), 0);
     ASSERT_EQ(first->length, 38UL);
 }
@@ -648,7 +739,7 @@ TEST(fat32_sync_and_truncate_report_contention_without_waiting) {
         sync_result = reentrant_file->ops->fsync(reentrant_file);
         truncate_result = reentrant_file->ops->truncate(reentrant_file, 0);
     };
-    ASSERT_EQ(reentrant_file->ops->write(reentrant_file, 0, 1, "x"), 1UL);
+    ASSERT_EQ(reentrant_file->ops->write(reentrant_file, 0, 1, "x"), 1L);
     ASSERT_EQ(sync_result, -16);
     ASSERT_EQ(truncate_result, -16);
     ASSERT_EQ(get32(disk.data() + ROOT * SECTOR + 28), 128U);
@@ -702,7 +793,9 @@ size_t crash_case(unsigned code, unsigned depth, size_t cut, bool after) {
         std::array<uint8_t, 900> data;
         for (size_t i = 0; i < data.size(); ++i)
             data[i] = static_cast<uint8_t>(i * 29 + operation * 47 + 101);
-        const auto written = file->ops->write(file, offset, wanted, data.data());
+        const auto result = file->ops->write(file, offset, wanted, data.data());
+        if (result < 0) ASSERT_EQ(result, offline ? -5L : -28L);
+        const auto written = result > 0 ? static_cast<size_t>(result) : 0;
         check_interrupted(before, old_length, offset, data.data(), wanted, written);
         if (offline) break;
         ASSERT_EQ(written, wanted < CAPACITY - offset ? wanted : CAPACITY - offset);
@@ -713,7 +806,7 @@ size_t crash_case(unsigned code, unsigned depth, size_t cut, bool after) {
     file = Fixture::open();
     ASSERT_EQ(file->length, static_cast<size_t>(length));
     std::array<uint8_t, CAPACITY> contents{};
-    ASSERT_EQ(file->ops->read(file, 0, contents.size(), contents.data()), static_cast<size_t>(length));
+    ASSERT_EQ(file->ops->read(file, 0, contents.size(), contents.data()), static_cast<long>(length));
     for (size_t i = 0; i < length; ++i)
         ASSERT_EQ(contents[i], disk[Fixture::physical(i)]);
     return attempts;
@@ -765,7 +858,9 @@ size_t sync_crash_case(unsigned code, unsigned depth, size_t cut, bool after, bo
                 if (result < 0) ASSERT_EQ(result, offline ? -5L : -28L);
                 ASSERT_EQ(descriptors[kind].offset, written ? previous_length + written : old_offset);
             } else {
-                written = file->ops->write(file, offset, wanted, data.data());
+                const auto result = file->ops->write(file, offset, wanted, data.data());
+                if (result < 0) ASSERT_EQ(result, offline ? -5L : -28L);
+                written = result > 0 ? static_cast<size_t>(result) : 0;
             }
             check_interrupted(before, previous_length, offset, data.data(), wanted, written);
             if (!offline) ASSERT_EQ(written, wanted < CAPACITY - offset ? wanted : CAPACITY - offset);
@@ -796,7 +891,7 @@ size_t sync_crash_case(unsigned code, unsigned depth, size_t cut, bool after, bo
     file = Fixture::open();
     ASSERT_EQ(file->length, static_cast<size_t>(length));
     std::array<uint8_t, CAPACITY> bytes{};
-    ASSERT_EQ(file->ops->read(file, 0, bytes.size(), bytes.data()), static_cast<size_t>(length));
+    ASSERT_EQ(file->ops->read(file, 0, bytes.size(), bytes.data()), static_cast<long>(length));
     for (size_t i = 0; i < length; ++i)
         ASSERT_EQ(bytes[i], disk[Fixture::physical(i)]);
     return attempts;

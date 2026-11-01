@@ -134,15 +134,19 @@ void ramfs::attach_node(vfs_node* parent, vfs_node* child) noexcept {
     }
 }
 
-size_t ramfs::read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept {
-    if (!node || !node->ptr || (!buffer && size)) return 0;
+long ramfs::read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept {
+    if (!node || !node->ptr || node->type != file_type::REGULAR) return -22;
+    if (!size) return 0;
+    if (!buffer) return -14;
     ramfs_operation_guard guard(node);
-    if (!guard.acquired) return 0;
+    if (!guard.acquired) return -16;
     ramfs_node_internal* internal = reinterpret_cast<ramfs_node_internal*>(node->ptr);
-    if (!internal->data || offset >= node->length) return 0;
+    if (offset >= node->length) return 0;
+    if (!internal->data || node->length > internal->size) return -5;
     if (size > node->length - offset) size = node->length - offset;
+    if (size > static_cast<size_t>(__LONG_MAX__)) size = static_cast<size_t>(__LONG_MAX__);
     lib::memcpy(buffer, internal->data + offset, size);
-    return size;
+    return static_cast<long>(size);
 }
 
 // Caller owns the node reservation, including allocation and EOF publication.
@@ -172,11 +176,15 @@ static size_t write_data(vfs_node* node, size_t offset, size_t size, const void*
     return size;
 }
 
-size_t ramfs::write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
-    if (!node || !node->ptr) return 0;
+long ramfs::write(vfs_node* node, size_t offset, size_t size, const void* buffer) noexcept {
+    if (!node || !node->ptr || node->type != file_type::REGULAR) return -22;
+    if (!size) return 0;
+    if (!buffer) return -14;
+    if (offset > static_cast<size_t>(__LONG_MAX__) || size > static_cast<size_t>(__LONG_MAX__) - offset) return -75;
     ramfs_operation_guard guard(node);
-    if (!guard.acquired) return 0;
-    return write_data(node, offset, size, buffer);
+    if (!guard.acquired) return -16;
+    const auto done = write_data(node, offset, size, buffer);
+    return done ? static_cast<long>(done) : -12;
 }
 
 long ramfs::append(vfs_node* node, size_t size, const void* buffer, size_t& end_offset) noexcept {
