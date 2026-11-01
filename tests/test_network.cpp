@@ -69,15 +69,15 @@ thread* scheduler::current_thread() noexcept {
     return &current;
 }
 void scheduler::unblock(thread* t) noexcept {
-    t->state = thread_state::READY;
+    t->state.store(thread_state::READY, kernel::release);
 }
 void scheduler::schedule() noexcept {
-    if (!on_schedule || current.state != thread_state::BLOCKED) std::abort();
+    if (!on_schedule || current.state.load(kernel::acquire) != thread_state::BLOCKED) std::abort();
     auto fn = on_schedule;
     on_schedule = nullptr;
     fn();
-    if (current.state != thread_state::READY) std::abort();
-    current.state = thread_state::RUNNING;
+    if (current.state.load(kernel::acquire) != thread_state::READY) std::abort();
+    current.state.store(thread_state::RUNNING, kernel::release);
 }
 } // namespace scheduler
 namespace vfs {
@@ -613,7 +613,7 @@ TEST(tcp_retry_exhaustion_wakes_reader_and_reclaims_packets) {
     auto* pcb = established_fixture();
     ASSERT_EQ(tcp_send(pcb, "lost", 4), 4);
     pcb->wait_recv = &current;
-    current.state = kernel::scheduler::thread_state::BLOCKED;
+    current.state.store(kernel::scheduler::thread_state::BLOCKED, kernel::release);
     for (unsigned attempt = 0; attempt < 4; ++attempt) {
         ticks = pcb->retransmit_at;
         tcp_tick(ticks);
@@ -629,7 +629,7 @@ TEST(tcp_retry_exhaustion_wakes_reader_and_reclaims_packets) {
     ASSERT_EQ(pcb->state, tcp_state::CLOSED);
     ASSERT_EQ(pcb->error, -110);
     ASSERT_EQ(pcb->unacked_count, 0U);
-    ASSERT_EQ(current.state, kernel::scheduler::thread_state::READY);
+    ASSERT_EQ(current.state.load(kernel::acquire), kernel::scheduler::thread_state::READY);
     tcp_close(pcb);
     ASSERT_EQ(live_allocations, before);
 }
@@ -886,10 +886,10 @@ TEST(tcp_zero_window_silent_peer_times_out_and_wakes_waiter) {
     auto* pcb = established_fixture();
     receive_ack(pcb, pcb->snd_nxt, TCP_ACK, 0);
     pcb->wait_send = &current;
-    current.state = kernel::scheduler::thread_state::BLOCKED;
+    current.state.store(kernel::scheduler::thread_state::BLOCKED, kernel::release);
     ticks = pcb->persist_expires;
     tcp_tick(ticks);
-    ASSERT_EQ(current.state, kernel::scheduler::thread_state::READY);
+    ASSERT_EQ(current.state.load(kernel::acquire), kernel::scheduler::thread_state::READY);
     ASSERT_EQ(pcb->state, tcp_state::CLOSED);
     ASSERT_EQ(pcb->error, -110);
     tcp_close(pcb);
@@ -1098,6 +1098,74 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* input, size_t size) {
     return 0;
 }
 #else
+namespace {
+void cancel_network_wait() {
+    current.sig_pending.store(1U << 15);
+    kernel::scheduler::scheduler::unblock(&current);
+}
+void reset_network_signal() {
+    current.sig_pending.store(0);
+    current.sig_mask.store(0);
+    current.state.store(kernel::scheduler::thread_state::RUNNING, kernel::release);
+}
+} // namespace
+TEST(udp_cancelled_receive_unlinks_waiter_and_allows_later_input) {
+    reset_network_signal();
+    const auto before = live_allocations;
+    auto* receiver = udp_new();
+    ASSERT_EQ(udp_bind(receiver, LO, htons(19091)), 0);
+    on_schedule = cancel_network_wait;
+    char bytes[8]{};
+    ASSERT_EQ(udp_recvfrom(receiver, bytes, sizeof(bytes), nullptr, nullptr), -4L);
+    ASSERT(receiver->wait_recv == nullptr);
+    ASSERT(!current.interruptible_wait);
+    reset_network_signal();
+    udp_input(netif_loopback(), udp_packet());
+    ASSERT_EQ(udp_recvfrom(receiver, bytes, sizeof(bytes), nullptr, nullptr), 3L);
+    udp_free(receiver);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_cancelled_receive_clears_waiter_without_freeing_protocol_state) {
+    reset_network_signal();
+    const auto before = live_allocations;
+    auto* pcb = established_fixture();
+    on_schedule = cancel_network_wait;
+    char bytes[8]{};
+    ASSERT_EQ(tcp_recv(pcb, bytes, sizeof(bytes)), -4L);
+    ASSERT(pcb->wait_recv == nullptr);
+    ASSERT(!current.interruptible_wait);
+    reset_network_signal();
+    tcp_free(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_cancelled_accept_clears_waiter) {
+    reset_network_signal();
+    const auto before = live_allocations;
+    auto* listener = tcp_new();
+    ASSERT_EQ(tcp_bind(listener, LO, htons(19092)), 0);
+    ASSERT_EQ(tcp_listen(listener, 1), 0);
+    on_schedule = cancel_network_wait;
+    ASSERT(tcp_accept(listener) == nullptr);
+    ASSERT(listener->wait_accept == nullptr);
+    ASSERT(!current.interruptible_wait);
+    reset_network_signal();
+    tcp_free(listener);
+    ASSERT_EQ(live_allocations, before);
+}
+TEST(tcp_cancelled_connect_clears_waiter_and_releases_on_close) {
+    reset_network_signal();
+    const auto before = live_allocations;
+    auto* pcb = established_fixture();
+    pcb->state = tcp_state::CLOSED;
+    on_schedule = cancel_network_wait;
+    ASSERT_EQ(tcp_connect(pcb, 0x0200000A, htons(19092)), -4);
+    ASSERT(pcb->wait_connect == nullptr);
+    ASSERT(!current.interruptible_wait);
+    reset_network_signal();
+    tcp_free(pcb);
+    ASSERT_EQ(live_allocations, before);
+}
+
 int main(int argc, char** argv) {
     net_init();
     socket_manager::init();

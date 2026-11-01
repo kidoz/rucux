@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include <kernel/process/credentials.hpp>
+#include <kernel/sync/spinlock.hpp>
 #include <lib/stddef.hpp>
 #include <stdint.h>
 #if defined(__x86_64__)
@@ -17,6 +18,21 @@ void idle_task() noexcept;
 
 enum class thread_state { READY, RUNNING, BLOCKED, TERMINATED };
 
+// Use an integer atomic so both GCC and Clang support the enum-valued state.
+class atomic_thread_state {
+public:
+    thread_state load(memory_order order = acquire) const noexcept {
+        return static_cast<thread_state>(value_.load(order));
+    }
+    void store(thread_state value, memory_order order = release) noexcept {
+        value_.store(static_cast<uint32_t>(value), order);
+    }
+
+private:
+    atomic<uint32_t> value_{static_cast<uint32_t>(thread_state::READY)};
+};
+static_assert(sizeof(atomic_thread_state) == sizeof(thread_state));
+
 // Priority classes — lower number = higher priority
 enum class thread_prio : uint8_t {
     RT = 0,     // Real-time (interrupt handlers, critical drivers)
@@ -27,7 +43,7 @@ enum class thread_prio : uint8_t {
 
 struct thread {
     uint32_t tid;
-    thread_state state;
+    atomic_thread_state state;
     thread_prio priority;
     uint32_t last_cpu; // CPU this thread last ran on (cache affinity)
     uintptr_t stack_pointer;
@@ -78,8 +94,8 @@ struct thread {
     using sighandler_t = void (*)(int);
     sighandler_t sig_handlers[MAX_SIGNALS];   // SIG_DFL=0, SIG_IGN=1, or handler addr
     void (*sig_restorers[MAX_SIGNALS])(void); // Trampoline addresses
-    uint32_t sig_mask;                        // Blocked signals bitmask
-    uint32_t sig_pending;                     // Pending signals bitmask
+    atomic<uint32_t> sig_mask{0};             // Blocked signals bitmask
+    atomic<uint32_t> sig_pending{0};          // Pending signals bitmask
     int exit_code;                            // Exit status (for pthread_join)
     bool exited;                              // True after thread has exited
 #if defined(__x86_64__)
@@ -110,8 +126,50 @@ struct thread {
     file_descriptor* fd_table; // Allocated on first use or inherited from parent
     size_t fd_count;           // Number of allocated slots in fd_table
 
+    // Appended so existing assembly-visible thread offsets do not move.
+    atomic<uint32_t> kernel_depth{0};
+    irq_spinlock wait_lock;
+    bool interruptible_wait = false; // Protected by wait_lock.
+
+    bool fatal_signal_pending() const noexcept {
+        constexpr uint32_t KILL = 1U << 9U, TERM = 1U << 15U;
+        const uint32_t mask = sig_mask.load(relaxed) & ~KILL;
+        return (sig_pending.load(acquire) & (KILL | TERM) & ~mask) != 0;
+    }
+    // Caller holds its wait-queue lock. Publish BLOCKED under the same lock
+    // used by signal posting, then release all locks before schedule().
+    bool begin_interruptible_wait() noexcept {
+        irq_lock_guard guard(wait_lock);
+        if (fatal_signal_pending()) return false;
+        interruptible_wait = true;
+        state.store(thread_state::BLOCKED, release);
+        return true;
+    }
+    void end_interruptible_wait() noexcept {
+        irq_lock_guard guard(wait_lock);
+        interruptible_wait = false;
+    }
+
     // Ensure fd_table has at least `n` slots. Returns false on OOM.
     bool ensure_fd_capacity(size_t n) noexcept;
+};
+
+// Protects stack-owned buffers, reservations and references while the thread
+// runs or sleeps inside a kernel operation. This does not disable preemption.
+class kernel_scope {
+public:
+    explicit kernel_scope(thread* owner) noexcept
+        : owner_(owner) {
+        if (owner_) owner_->kernel_depth.fetch_add(1, acq_rel);
+    }
+    ~kernel_scope() noexcept {
+        if (owner_) owner_->kernel_depth.fetch_sub(1, acq_rel);
+    }
+    kernel_scope(const kernel_scope&) = delete;
+    kernel_scope& operator=(const kernel_scope&) = delete;
+
+private:
+    thread* owner_;
 };
 
 class scheduler {
@@ -129,6 +187,10 @@ public:
     static void check_sleepers(uint64_t current_tick) noexcept;
     static void exit(int status = 0) noexcept;
     static void cleanup_terminated() noexcept;
+    // Stops a current thread already marked TERMINATED; never returns on target.
+    static void finish_termination() noexcept;
+    // Holds the thread-list lock through lookup and signal posting.
+    static int signal_thread(int pid, int sig) noexcept;
 
     // Syscalls
     static int sys_top(void* buffer, size_t size) noexcept;

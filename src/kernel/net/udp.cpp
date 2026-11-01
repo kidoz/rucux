@@ -169,8 +169,14 @@ long udp_sendto(udp_pcb* pcb, const void* data, size_t len, uint32_t dst_ip, uin
 }
 
 long udp_recvfrom(udp_pcb* pcb, void* data, size_t len, uint32_t* src_ip, uint16_t* src_port) noexcept {
+    auto* current = scheduler::scheduler::current_thread();
     while (true) {
         uintptr_t flags = g_udp_lock.lock();
+        if (pcb->wait_recv == current) pcb->wait_recv = nullptr;
+        if (current && current->fatal_signal_pending()) {
+            g_udp_lock.unlock(flags);
+            return -4;
+        }
         if (pcb->recv_head) {
             auto* nb = pcb->recv_head;
             pcb->recv_head = nb->next;
@@ -184,15 +190,21 @@ long udp_recvfrom(udp_pcb* pcb, void* data, size_t len, uint32_t* src_ip, uint16
             netbuf::free(nb);
             return static_cast<long>(to_copy);
         }
-        auto* current = scheduler::scheduler::current_thread();
         if (pcb->wait_recv && pcb->wait_recv != current) {
             g_udp_lock.unlock(flags);
             return -16;
         }
+        if (!current || !current->begin_interruptible_wait()) {
+            g_udp_lock.unlock(flags);
+            return current ? -4 : -3;
+        }
         pcb->wait_recv = current;
-        current->state = scheduler::thread_state::BLOCKED;
         g_udp_lock.unlock(flags);
         scheduler::scheduler::schedule();
+        flags = g_udp_lock.lock();
+        if (pcb->wait_recv == current) pcb->wait_recv = nullptr;
+        current->end_interruptible_wait();
+        g_udp_lock.unlock(flags);
     }
 }
 

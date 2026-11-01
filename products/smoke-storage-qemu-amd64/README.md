@@ -50,6 +50,19 @@ The required marker is `storage_smoke: vnode references and thread cleanup PASS`
 Hosted allocation counters establish exact reclamation; these target checks
 exercise real clone/exit/mapping paths and do not measure kernel heap usage.
 
+Each boot also starts seven clone workers blocked in nanosleep, futex, tty read,
+UDP receive, TCP accept, poll and epoll. SYS_TOP must show each worker BLOCKED
+before the parent sends SIGTERM/SIGKILL. The interrupted syscall must not return
+to userspace. A later futex wake must find no stale stack waiter, and a fresh
+FAT32 metadata/byte read must work after every cancellation. Clone stacks are
+explicitly unmapped after termination. The required serial marker is
+`storage_smoke: safe fatal syscall cancellation PASS`.
+These guest socket tests use loopback only; QEMU still runs with `-nic none` and
+opens no host network socket. Legacy IPC waits stay uninterruptible pending
+normal protocol completion. Hosted tests inject signals within FAT32 reads and
+partial mmap population; this target campaign does not inject mid-transfer disk
+signals or establish general SMP cancellation/reclamation safety.
+
 Every boot checks an eager private file mapping, snapshot-EOF zero filling,
 independent FD offsets, private-copy writes and errno for invalid descriptors
 and write-only access. It then repeats first/later-page EIO mappings 16 times,

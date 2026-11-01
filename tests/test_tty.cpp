@@ -9,10 +9,14 @@
 namespace {
 kernel::scheduler::thread reader{};
 bool woke, enrolled;
+void (*on_wait)();
 void reset() {
     kernel::vfs::tty::create();
     woke = enrolled = false;
-    reader.state = kernel::scheduler::thread_state::RUNNING;
+    on_wait = nullptr;
+    reader.sig_pending.store(0);
+    reader.sig_mask.store(0);
+    reader.state.store(kernel::scheduler::thread_state::RUNNING, kernel::release);
 }
 void input(const char* s) {
     while (*s)
@@ -40,12 +44,15 @@ thread* scheduler::current_thread() noexcept {
 }
 void scheduler::unblock(thread* t) noexcept {
     woke = true;
-    t->state = thread_state::READY;
+    t->state.store(thread_state::READY, kernel::release);
 }
 void scheduler::schedule() noexcept {
-    enrolled = reader.state == thread_state::BLOCKED;
-    input("wake\n");
-    reader.state = thread_state::RUNNING;
+    enrolled = reader.state.load(kernel::acquire) == thread_state::BLOCKED;
+    if (on_wait)
+        on_wait();
+    else
+        input("wake\n");
+    reader.state.store(thread_state::RUNNING, kernel::release);
 }
 } // namespace kernel::scheduler
 TEST(canonical_carriage_return) {
@@ -108,6 +115,25 @@ TEST(full_line_keeps_delimiter_space) {
     ASSERT_EQ(count, 1023L);
     ASSERT_EQ(out[count - 1], '\n');
 }
+TEST(tty_cancellation_unlinks_reader_before_return) {
+    auto* n = node();
+    reset();
+    on_wait = [] {
+        reader.sig_pending.store(1U << 15);
+        kernel::scheduler::scheduler::unblock(&reader);
+    };
+    char out[16]{};
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), -4L);
+    ASSERT(enrolled);
+    ASSERT(!reader.interruptible_wait);
+    reader.sig_pending.store(0);
+    woke = false;
+    input("later\n");
+    ASSERT(!woke);
+    ASSERT_EQ(n->ops->read(n, 0, sizeof(out), out), 6L);
+    ASSERT(std::strcmp(out, "later\n") == 0);
+}
+
 int main() {
     return rucux_test::run_all_tests("TTY discipline");
 }

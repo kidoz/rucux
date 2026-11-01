@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <kernel/process/signal.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/time.hpp>
 #include <kernel/vfs/ata.hpp>
@@ -151,6 +152,12 @@ namespace scheduler {
 thread* scheduler::current_thread() noexcept {
     return &current;
 }
+void scheduler::add_thread(thread* target) noexcept {
+    target->state.store(thread_state::READY, kernel::release);
+}
+int scheduler::signal_thread(int, int) noexcept {
+    return -3;
+}
 bool thread::ensure_fd_capacity(size_t count) noexcept {
     return fd_table && fd_count >= count;
 }
@@ -214,6 +221,38 @@ TEST(fat32_stops_at_first_data_read_failure) {
     fail_read = ROOT + 3;
     ASSERT_EQ(file->ops->write(file, 0, data.size(), data.data()), 512L);
     ASSERT_EQ(write_attempts, 1UL);
+}
+
+TEST(fat32_fatal_signal_defers_until_io_guard_and_temporary_references_unwind) {
+    Fixture fixture;
+    current.user_entry = reinterpret_cast<void*>(1);
+    current.state.store(kernel::scheduler::thread_state::RUNNING, kernel::release);
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const auto baseline = allocation_count;
+    const int fd = vfs_manager::sys_open("/journal.log", 0);
+    ASSERT_EQ(fd, 0);
+    {
+        kernel::scheduler::kernel_scope scope(&current);
+        on_read = [] {
+            ASSERT_EQ(kernel::process::signal_manager::post_signal(&current, 15), 0);
+            ASSERT(!kernel::process::signal_manager::consume_fatal_signal(&current));
+            ASSERT(vfs_manager::get_fd_node(0));
+        };
+        uint8_t byte{};
+        ASSERT_EQ(vfs_manager::sys_read(fd, &byte, 1), 1L);
+        ASSERT_EQ(byte, 17);
+        ASSERT_EQ(allocation_count, baseline + 4);
+    }
+    ASSERT(kernel::process::signal_manager::consume_fatal_signal(&current));
+    ASSERT(vfs_manager::get_fd_node(fd) == nullptr);
+    ASSERT_EQ(allocation_count, baseline);
+    // A new operation succeeds after cancellation; the device reservation was
+    // released by normal stack unwinding before descriptor cleanup.
+    current.state.store(kernel::scheduler::thread_state::RUNNING, kernel::release);
+    struct stat info{};
+    ASSERT_EQ(vfs_manager::sys_stat("/journal.log", &info), 0);
+    ASSERT_EQ(info.st_size, 128);
+    ASSERT_EQ(allocation_count, baseline);
 }
 
 TEST(fat32_repeated_stat_and_open_close_return_allocations_to_mount_baseline) {

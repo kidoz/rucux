@@ -2,6 +2,8 @@
 #include <kernel/ipc/ipc.hpp>
 #include <kernel/memory/user_access.hpp>
 #include <kernel/process/credentials.hpp>
+#include <kernel/process/signal.hpp>
+#include <kernel/scheduler/scheduler.hpp>
 #include <kernel/syscall.hpp>
 #include <kernel/time.hpp>
 #include <knew.hpp>
@@ -86,8 +88,8 @@ struct arguments {
 };
 } // namespace
 
-long checked_syscall(syscall_handler handler, long number, long a1, long a2, long a3, long a4, long a5,
-                     long a6) noexcept {
+static long marshal_syscall(syscall_handler handler, long number, long a1, long a2, long a3, long a4, long a5,
+                            long a6) noexcept {
     arguments a{{a1, a2, a3, a4, a5, a6}, {}, 0};
     bool ok = true;
     char path[PATH_LIMIT];
@@ -330,7 +332,10 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
         return -38;
     }
     if (!ok) return a.error;
+    auto* owner = scheduler::scheduler::current_thread();
+    if (owner && owner->fatal_signal_pending()) return -4;
     long result = handler(number, a.value[0], a.value[1], a.value[2], a.value[3], a.value[4], a.value[5]);
+    if (owner && owner->fatal_signal_pending()) return -4;
     if (result < 0) return result;
     if (number == SYS_READ || number == SYS_RECV || number == SYS_RECVFROM || number == SYS_GETDENTS ||
         number == SYS_EPOLL_WAIT) {
@@ -355,6 +360,17 @@ long checked_syscall(syscall_handler handler, long number, long a1, long a2, lon
     for (auto& b : a.buffers) {
         if (b.output_size && !memory::copy_to_user(b.user, b.data, b.output_size)) return EFAULT_RESULT;
     }
+    return result;
+}
+long checked_syscall(syscall_handler handler, long number, long a1, long a2, long a3, long a4, long a5,
+                     long a6) noexcept {
+    auto* owner = scheduler::scheduler::current_thread();
+    long result;
+    {
+        scheduler::kernel_scope scope(owner);
+        result = owner && owner->fatal_signal_pending() ? -4 : marshal_syscall(handler, number, a1, a2, a3, a4, a5, a6);
+    } // All marshal buffers and backend guards must be gone before termination.
+    if (owner && process::signal_manager::consume_fatal_signal(owner)) scheduler::scheduler::finish_termination();
     return result;
 }
 } // namespace kernel

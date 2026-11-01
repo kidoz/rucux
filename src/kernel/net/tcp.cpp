@@ -51,7 +51,8 @@ struct OutputGuard {
 static void wake(scheduler::thread*& waiter) noexcept {
     auto* thread = waiter;
     waiter = nullptr;
-    if (thread && thread->state == scheduler::thread_state::BLOCKED) scheduler::scheduler::unblock(thread);
+    if (thread && thread->state.load(kernel::acquire) == scheduler::thread_state::BLOCKED)
+        scheduler::scheduler::unblock(thread);
 }
 
 static void enqueue_output(netbuf* buf) noexcept {
@@ -578,8 +579,14 @@ int tcp_listen(tcp_pcb* pcb, int backlog) noexcept {
 }
 
 tcp_pcb* tcp_accept(tcp_pcb* pcb) noexcept {
+    auto* current = scheduler::scheduler::current_thread();
     while (true) {
         auto saved = g_tcp_lock.lock();
+        if (pcb->wait_accept == current) pcb->wait_accept = nullptr;
+        if (current && current->fatal_signal_pending()) {
+            g_tcp_lock.unlock(saved);
+            return nullptr;
+        }
         if (pcb->state != tcp_state::LISTEN) {
             g_tcp_lock.unlock(saved);
             return nullptr;
@@ -594,15 +601,21 @@ tcp_pcb* tcp_accept(tcp_pcb* pcb) noexcept {
             g_tcp_lock.unlock(saved);
             return child;
         }
-        auto* current = scheduler::scheduler::current_thread();
         if (pcb->wait_accept && pcb->wait_accept != current) {
             g_tcp_lock.unlock(saved);
             return nullptr;
         }
+        if (!current || !current->begin_interruptible_wait()) {
+            g_tcp_lock.unlock(saved);
+            return nullptr;
+        }
         pcb->wait_accept = current;
-        current->state = scheduler::thread_state::BLOCKED;
         g_tcp_lock.unlock(saved);
         scheduler::scheduler::schedule();
+        saved = g_tcp_lock.lock();
+        if (pcb->wait_accept == current) pcb->wait_accept = nullptr;
+        current->end_interruptible_wait();
+        g_tcp_lock.unlock(saved);
     }
 }
 
@@ -630,17 +643,30 @@ int tcp_connect(tcp_pcb* pcb, uint32_t addr, uint16_t port) noexcept {
             return -12;
         }
     }
+    auto* current = scheduler::scheduler::current_thread();
     while (true) {
         auto saved = g_tcp_lock.lock();
+        if (pcb->wait_connect == current) pcb->wait_connect = nullptr;
+        if (current && current->fatal_signal_pending()) {
+            g_tcp_lock.unlock(saved);
+            return -4;
+        }
         if (pcb->state != tcp_state::SYN_SENT) {
             int result = pcb->state == tcp_state::ESTABLISHED ? 0 : (pcb->error ? pcb->error : -111);
             g_tcp_lock.unlock(saved);
             return result;
         }
-        pcb->wait_connect = scheduler::scheduler::current_thread();
-        pcb->wait_connect->state = scheduler::thread_state::BLOCKED;
+        if (!current || !current->begin_interruptible_wait()) {
+            g_tcp_lock.unlock(saved);
+            return current ? -4 : -3;
+        }
+        pcb->wait_connect = current;
         g_tcp_lock.unlock(saved);
         scheduler::scheduler::schedule();
+        saved = g_tcp_lock.lock();
+        if (pcb->wait_connect == current) pcb->wait_connect = nullptr;
+        current->end_interruptible_wait();
+        g_tcp_lock.unlock(saved);
     }
 }
 
@@ -669,8 +695,14 @@ long tcp_send(tcp_pcb* pcb, const void* data, size_t len) noexcept {
 
 long tcp_recv(tcp_pcb* pcb, void* data, size_t len) noexcept {
     if (!len) return 0;
+    auto* current = scheduler::scheduler::current_thread();
     while (true) {
         auto saved = g_tcp_lock.lock();
+        if (pcb->wait_recv == current) pcb->wait_recv = nullptr;
+        if (current && current->fatal_signal_pending()) {
+            g_tcp_lock.unlock(saved);
+            return -4;
+        }
         size_t available = (pcb->rcv_buf_head + pcb->rcv_buf_size - pcb->rcv_buf_tail) % pcb->rcv_buf_size;
         if (available) {
             size_t count = len < available ? len : available;
@@ -689,15 +721,21 @@ long tcp_recv(tcp_pcb* pcb, void* data, size_t len) noexcept {
             g_tcp_lock.unlock(saved);
             return result;
         }
-        auto* current = scheduler::scheduler::current_thread();
         if (pcb->wait_recv && pcb->wait_recv != current) {
             g_tcp_lock.unlock(saved);
             return -16;
         }
+        if (!current || !current->begin_interruptible_wait()) {
+            g_tcp_lock.unlock(saved);
+            return current ? -4 : -3;
+        }
         pcb->wait_recv = current;
-        current->state = scheduler::thread_state::BLOCKED;
         g_tcp_lock.unlock(saved);
         scheduler::scheduler::schedule();
+        saved = g_tcp_lock.lock();
+        if (pcb->wait_recv == current) pcb->wait_recv = nullptr;
+        current->end_interruptible_wait();
+        g_tcp_lock.unlock(saved);
     }
 }
 

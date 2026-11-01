@@ -492,6 +492,7 @@ int vfs_manager::sys_select(int nfds, void* readfds, void* writefds, void* excep
     }
 
     while (true) {
+        if (t->fatal_signal_pending()) return -4;
         int ready = 0;
         if (rfds) fd_zero(rfds);
         if (wfds) fd_zero(wfds);
@@ -545,6 +546,7 @@ int vfs_manager::sys_poll(void* fds_ptr, unsigned int nfds, int timeout) noexcep
     }
 
     while (true) {
+        if (t->fatal_signal_pending()) return -4;
         int ready = 0;
         for (unsigned int i = 0; i < nfds; ++i) {
             pfds[i].revents = 0;
@@ -693,6 +695,7 @@ int vfs_manager::sys_epoll_wait(int epfd, void* events_ptr, int maxevents, int t
     auto* t = scheduler::scheduler::current_thread();
 
     while (true) {
+        if (t && t->fatal_signal_pending()) return -4;
         int ready = 0;
         auto* curr = d->head;
         while (curr && ready < maxevents) {

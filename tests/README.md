@@ -284,8 +284,73 @@ The required serial marker is
 
 This does not add unmount/unlink, namespace mutation locking, shared open-file
 descriptions/offsets, or POSIX dup. Clone still copies descriptor offsets and
-flags into separate tables. Fatal interruption/unwinding of an in-flight kernel
-operation is outside this coverage; fatal cleanup is tested at yield boundaries.
+flags into separate tables. Fatal delivery now follows the cooperative kernel
+cleanup contract below.
+
+## Safe fatal syscall cancellation
+
+`checked_syscall` protects marshalling and backend work with a nested per-thread
+kernel scope. The scheduler cannot consume a fatal signal while that scope is
+active. Once buffers, filesystem reservations and temporary references unwind,
+the outer boundary consumes the signal, closes descriptors, notifies the parent
+and schedules away permanently. The amd64/ARMv7 signal-return checks use the same
+stop path, preventing a terminated thread from returning to userspace.
+
+Signal bits, masks and thread state use 32-bit atomics. Signal lookup/posting
+holds the thread-list lock so the target cannot be reaped mid-post. Interruptible
+wait enrollment and posting share a per-thread lock: publish BLOCKED before
+releasing the subsystem queue lock, enqueue once when an event races a signal,
+then unlink the wait record before clearing enrollment and unwinding.
+
+Supported cancellation points include futex, terminal read, UDP receive, TCP
+accept/connect/receive, sleep, waitpid, IRQ wait and poll/select/epoll. Futex
+removes its stack waiter even when cancellation won the wake race. Sleep and IRQ
+queues retain the target under their queue lock until wakeup completes. mmap
+checks fatal requests between pages and rolls back partial population. Bounded
+FAT32 operations finish and release their reservation before fatal delivery.
+Completed writes and completed mappings retain their normal effects.
+
+`test_cancellation` links production signal policy, syscall marshalling, user
+copies and futex code. Scheduler edges record enqueue/termination instead of
+switching contexts. An allocation counter checks that marshal buffers are gone
+before descriptor cleanup. Tests cover nested scopes, posting during copies,
+validation errors, masked TERM/unmaskable KILL, one-time delivery, futex cleanup,
+signal/event races, uninterruptible deferral and concurrent signal posts.
+The FAT32 and mmap suites inject real signals inside production I/O/population;
+subsequent operations must work and allocations/frames return to baseline.
+Terminal/network/poll/sleep suites check cancellation cleanup separately.
+
+```sh
+make -C tests test_cancellation test_fat32 test_mmap test_network test_tty test_vfs test_time
+build/host-tests/test_cancellation
+
+make -C tests OBJDIR=../build/host-tests/cancellation-sanitized \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=address,undefined' \
+  LDLIBS='-lpthread -fsanitize=address,undefined' \
+  test_cancellation test_fat32 test_mmap test_vfs test_network test_tty test_time test_user_access
+
+make -C tests OBJDIR=../build/host-tests/cancellation-tsan \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=thread' \
+  LDLIBS='-lpthread -fsanitize=thread' test_cancellation test_mmap test_vfs
+```
+
+Run the resulting executables in the chosen object directory. Hosted IRQ masking
+is a no-op; host tests do not prove target scheduling or general SMP reclamation.
+The storage QEMU smoke confirms each of seven workers is BLOCKED using SYS_TOP,
+then sends TERM/KILL during sleep, futex, tty read, UDP receive, TCP accept, poll
+or epoll. The worker must terminate without returning from the interrupted
+syscall; later futex wake finds no stale waiter, and subsequent storage reads
+succeed. Each clone stack is unmapped after termination. The harness requires
+`storage_smoke: safe fatal syscall cancellation PASS` on all three boots.
+
+Legacy synchronous/fast IPC waits remain uninterruptible until normal protocol
+completion: fatal signals stay pending so peer links and kernel buffers cannot
+be abandoned. Ordinary nonfatal signals do not cancel registered waits; full
+POSIX EINTR/restart/handler semantics are not added. This is cooperative fatal
+cancellation, not arbitrary stack unwinding, rollback of completed side effects,
+or a guarantee that an unresponsive device/IPC peer can be killed immediately.
+IRQ/waitpid cancellation is cross-built; the seven-operation target campaign
+does not exercise those two cancellation paths or TCP connect/receive.
 
 ## File-backed mmap population and rollback
 

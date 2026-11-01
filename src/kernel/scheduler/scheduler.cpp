@@ -32,6 +32,7 @@ static kernel::irq_spinlock g_threads_lock;
 static kernel::atomic<uintptr_t> g_kernel_page_table{0};
 
 static thread* g_irq_waiters[256] = {nullptr};
+static kernel::irq_spinlock g_irq_waiters_lock;
 
 // Global sleep queue — protected by g_sleep_queue_lock
 static thread* g_sleep_queue_head = nullptr;
@@ -64,8 +65,11 @@ static thread* find_thread_locked(uint32_t tid, thread** prev_out = nullptr) noe
 static void destroy_thread(thread* t) noexcept {
     if (!t) return;
     kernel::vfs::tty::detach_reader(t);
-    for (auto& waiter : g_irq_waiters)
-        if (waiter == t) waiter = nullptr;
+    {
+        kernel::irq_lock_guard guard(g_irq_waiters_lock);
+        for (auto& waiter : g_irq_waiters)
+            if (waiter == t) waiter = nullptr;
+    }
     {
         kernel::irq_lock_guard guard(g_sleep_queue_lock);
         auto** link = &g_sleep_queue_head;
@@ -280,7 +284,7 @@ void scheduler::init() noexcept {
     stack[11] = reinterpret_cast<uint64_t>(idle_task);
     idle->stack_pointer = reinterpret_cast<uintptr_t>(stack);
 #endif
-    idle->state = thread_state::READY;
+    idle->state.store(thread_state::READY, kernel::release);
     idle->fd_table = nullptr;
     idle->fd_count = 0;
     idle->parent_tid = 0;
@@ -343,8 +347,8 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->ipc_waiting = false;
     for (int s = 0; s < thread::MAX_SIGNALS; ++s)
         t->sig_handlers[s] = nullptr;
-    t->sig_mask = 0;
-    t->sig_pending = 0;
+    t->sig_mask.store(0, kernel::relaxed);
+    t->sig_pending.store(0, kernel::relaxed);
     t->exit_code = 0;
     t->exited = false;
     t->process_id = t->tid;
@@ -404,8 +408,8 @@ thread* scheduler::spawn_user(uintptr_t pml4_phys, void* entry, void* stack, voi
     t->ipc_waiting = false;
     for (int s = 0; s < thread::MAX_SIGNALS; ++s)
         t->sig_handlers[s] = nullptr;
-    t->sig_mask = 0;
-    t->sig_pending = 0;
+    t->sig_mask.store(0, kernel::relaxed);
+    t->sig_pending.store(0, kernel::relaxed);
     t->exit_code = 0;
     t->exited = false;
     t->process_id = t->tid;
@@ -560,7 +564,7 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
 // ─── Enqueue ───────────────────────────────────────────────────────────────
 
 void scheduler::add_thread(thread* t) noexcept {
-    t->state = thread_state::READY;
+    t->state.store(thread_state::READY, kernel::release);
     TRACE_INSTANT(TRACE_EVENT_THREAD_ENQUEUE, t->tid, static_cast<uint64_t>(t->last_cpu));
 
     // Prefer the CPU this thread last ran on (cache affinity)
@@ -583,7 +587,7 @@ void scheduler::cleanup_terminated() noexcept {
     thread* prev = nullptr;
     thread* cur = g_all_threads;
     while (cur) {
-        if (cur->state == thread_state::TERMINATED && cur != this_thread) {
+        if (cur->state.load(kernel::acquire) == thread_state::TERMINATED && cur != this_thread) {
             // Defer reaping if the parent is still alive; sys_waitpid()
             // will collect the corpse and consume the exit status.
             if (cur->process_id == cur->tid && cur->parent_tid != 0 && find_thread_locked(cur->parent_tid) != nullptr) {
@@ -623,9 +627,9 @@ choose_next:
         uintptr_t rq_flags = pcpu->sched_lock.lock();
 
         // Re-enqueue the old thread if it was running
-        if (old_thread && old_thread->state == thread_state::RUNNING && old_thread != pcpu->idle_thread &&
-            !old_thread_requeued) {
-            old_thread->state = thread_state::READY;
+        if (old_thread && old_thread->state.load(kernel::acquire) == thread_state::RUNNING &&
+            old_thread != pcpu->idle_thread && !old_thread_requeued) {
+            old_thread->state.store(thread_state::READY, kernel::release);
             old_thread->last_cpu = pcpu->cpu_id;
             enqueue_on_cpu(pcpu, old_thread);
             old_thread_requeued = true;
@@ -644,7 +648,8 @@ choose_next:
 
     // If still nothing, check if current thread can continue
     if (!new_thread) {
-        if (old_thread && (old_thread->state == thread_state::RUNNING || old_thread->state == thread_state::READY)) {
+        if (old_thread && (old_thread->state.load(kernel::acquire) == thread_state::RUNNING ||
+                           old_thread->state.load(kernel::acquire) == thread_state::READY)) {
             kernel::rcu::process_callbacks();
             kernel::irq_restore(flags);
             return;
@@ -659,7 +664,7 @@ choose_next:
         goto choose_next;
     }
 
-    new_thread->state = thread_state::RUNNING;
+    new_thread->state.store(thread_state::RUNNING, kernel::release);
     new_thread->last_cpu = pcpu->cpu_id;
     pcpu->current_thread = new_thread;
 
@@ -705,7 +710,7 @@ void scheduler::block(thread_state reason) noexcept {
     auto* cur = cpu::this_cpu()->current_thread;
     if (!cur) return;
     TRACE_INSTANT(TRACE_EVENT_THREAD_BLOCK, cur->tid, static_cast<uint64_t>(reason));
-    cur->state = reason;
+    cur->state.store(reason, kernel::release);
     schedule();
 }
 
@@ -714,51 +719,57 @@ void scheduler::yield() noexcept {
 }
 
 void scheduler::unblock(thread* t) noexcept {
-    t->state = thread_state::READY;
+    if (!t) return;
+    kernel::irq_lock_guard guard(t->wait_lock);
+    // Cancellation and a normal event may race. An interruptible enrollment
+    // must be queued once, even if the event arrives before schedule().
+    if (t->state.load(kernel::acquire) == thread_state::TERMINATED) return;
+    if (t->interruptible_wait && t->state.load(kernel::acquire) != thread_state::BLOCKED) return;
+    t->state.store(thread_state::READY, kernel::release);
     add_thread(t);
 }
 
 void scheduler::sleep_until(uint64_t tick) noexcept {
     auto* cur = cpu::this_cpu()->current_thread;
     if (!cur) return;
-    uintptr_t flags = kernel::irq_save();
-    if (tick <= kernel::time_manager::get_ticks()) {
-        kernel::irq_restore(flags);
-        return;
-    }
-    {
+    const uintptr_t flags = kernel::irq_save();
+    bool enrolled = false;
+    if (tick > kernel::time_manager::get_ticks()) {
         kernel::irq_lock_guard guard(g_sleep_queue_lock);
-        cur->wake_tick = tick;
-        cur->state = thread_state::BLOCKED;
-        thread** ptr = &g_sleep_queue_head;
-        while (*ptr && (*ptr)->wake_tick <= tick)
-            ptr = &(*ptr)->next_sleeper;
-        cur->next_sleeper = *ptr;
-        *ptr = cur;
+        if (cur->begin_interruptible_wait()) {
+            cur->wake_tick = tick;
+            thread** ptr = &g_sleep_queue_head;
+            while (*ptr && (*ptr)->wake_tick <= tick)
+                ptr = &(*ptr)->next_sleeper;
+            cur->next_sleeper = *ptr;
+            *ptr = cur;
+            enrolled = true;
+        }
     }
-    schedule();
+    if (enrolled) {
+        schedule();
+        kernel::irq_lock_guard guard(g_sleep_queue_lock);
+        auto** link = &g_sleep_queue_head;
+        while (*link && *link != cur)
+            link = &(*link)->next_sleeper;
+        if (*link) *link = cur->next_sleeper;
+        cur->next_sleeper = nullptr;
+        cur->wake_tick = 0;
+        cur->end_interruptible_wait();
+    }
     kernel::irq_restore(flags);
 }
 
 void scheduler::check_sleepers(uint64_t current_tick) noexcept {
-
-    thread* to_wake = nullptr;
-    {
-        kernel::irq_lock_guard guard(g_sleep_queue_lock);
-        while (g_sleep_queue_head && g_sleep_queue_head->wake_tick <= current_tick) {
-            thread* t = g_sleep_queue_head;
-            g_sleep_queue_head = t->next_sleeper;
-            t->next_sleeper = to_wake; // Build local list to unblock outside lock
-            to_wake = t;
-        }
-    }
-
-    while (to_wake) {
-        thread* t = to_wake;
-        to_wake = t->next_sleeper;
-        t->next_sleeper = nullptr;
-        t->wake_tick = 0;
-        unblock(t);
+    kernel::irq_lock_guard guard(g_sleep_queue_lock);
+    while (g_sleep_queue_head && g_sleep_queue_head->wake_tick <= current_tick) {
+        auto* sleeper = g_sleep_queue_head;
+        g_sleep_queue_head = sleeper->next_sleeper;
+        sleeper->next_sleeper = nullptr;
+        sleeper->wake_tick = 0;
+        // The resuming thread must reacquire this lock before its wait scope
+        // ends. Do not carry an unpinned thread pointer into a post-lock list.
+        unblock(sleeper);
     }
 }
 
@@ -771,7 +782,13 @@ void scheduler::exit(int status) noexcept {
     kernel::vfs::vfs_manager::close_all(cur);
     cur->exited = true;
     cur->exit_code = (status & 0xff) << 8;
-    cur->state = thread_state::TERMINATED;
+    cur->state.store(thread_state::TERMINATED, kernel::release);
+    finish_termination();
+}
+
+void scheduler::finish_termination() noexcept {
+    auto* cur = current_thread();
+    if (!cur) return;
     notify_parent_of_exit(cur);
     schedule();
     while (true) {
@@ -786,6 +803,17 @@ void scheduler::exit(int status) noexcept {
 }
 
 // ─── Thread lookup ─────────────────────────────────────────────────────────
+
+int scheduler::signal_thread(int pid, int sig) noexcept {
+    auto* sender = current_thread();
+    if (!sender) return -1;
+    kernel::irq_lock_guard guard(g_threads_lock);
+    auto* target =
+        pid == 0 || static_cast<uint32_t>(pid) == sender->tid ? sender : find_thread_locked(static_cast<uint32_t>(pid));
+    if (!target || target->state.load(kernel::acquire) == thread_state::TERMINATED) return -3;
+    if (!kernel::process::may_signal(sender->creds, sender->tid, target->creds, target->tid)) return -1;
+    return kernel::process::signal_manager::post_signal(target, sig);
+}
 
 thread* scheduler::get_thread_by_tid(uint32_t tid) noexcept {
     kernel::irq_lock_guard guard(g_threads_lock);
@@ -816,7 +844,7 @@ int scheduler::sys_top(void* buffer, size_t size) noexcept {
     thread* cur = g_all_threads;
     while (cur && *num_processes < capacity) {
         processes[*num_processes].tid = cur->tid;
-        processes[*num_processes].state = static_cast<uint32_t>(cur->state);
+        processes[*num_processes].state = static_cast<uint32_t>(cur->state.load(kernel::acquire));
         processes[*num_processes].priority = static_cast<uint8_t>(cur->priority);
         processes[*num_processes].cpu = cur->last_cpu;
         (*num_processes)++;
@@ -829,77 +857,73 @@ int scheduler::sys_top(void* buffer, size_t size) noexcept {
 long scheduler::sys_waitpid(int pid, int* wstatus, int options) noexcept {
     constexpr int WNOHANG = 1;
     if ((options & ~WNOHANG) || pid == 0 || pid < -1) return -22;
-
     auto* current = current_thread();
     if (!current) return -1;
-    uint32_t owner_tid = current->process_id;
-
+    const uint32_t owner_tid = current->process_id;
     while (true) {
-        bool has_matching_child = false;
         {
             kernel::irq_lock_guard guard(g_threads_lock);
-            // Arm the wakeup hook BEFORE the scan, so any concurrent child
-            // exit racing with us takes the unblock() path in
-            // notify_parent_of_exit instead of the silent-skip path.
-            current->wait_target_tid = static_cast<int32_t>(pid);
-            current->waiting_for_child = true;
-
-            thread* prev = nullptr;
-            thread* cur = g_all_threads;
-            while (cur) {
-                bool is_child = cur->parent_tid == owner_tid && cur->process_id == cur->tid && cur != current;
-                bool matches_pid = (pid == -1) || (static_cast<uint32_t>(pid) == cur->tid);
-                if (is_child && matches_pid) {
-                    has_matching_child = true;
-                    if (cur->state == thread_state::TERMINATED) {
-                        int status = cur->exit_code;
-                        uint32_t tid = cur->tid;
-                        reap_thread_locked(cur, prev);
+            current->waiting_for_child = false;
+            current->wait_target_tid = -1;
+            if (current->fatal_signal_pending()) return -4;
+            bool has_child = false;
+            thread* previous = nullptr;
+            for (auto* child = g_all_threads; child; child = child->all_next) {
+                const bool matches = child->parent_tid == owner_tid && child->process_id == child->tid &&
+                                     child != current && (pid == -1 || static_cast<uint32_t>(pid) == child->tid);
+                if (matches) {
+                    has_child = true;
+                    if (child->state.load(kernel::acquire) == thread_state::TERMINATED) {
+                        const int status = child->exit_code;
+                        const auto tid = child->tid;
+                        reap_thread_locked(child, previous);
                         if (wstatus) *wstatus = status;
-                        current->waiting_for_child = false;
-                        current->wait_target_tid = -1;
                         return tid;
                     }
                 }
-                prev = cur;
-                cur = cur->all_next;
+                previous = child;
             }
+            if (!has_child) return -10;
+            if (options & WNOHANG) return 0;
+            if (!current->begin_interruptible_wait()) return -4;
+            current->wait_target_tid = pid;
+            current->waiting_for_child = true;
         }
-
-        if (!has_matching_child) {
+        schedule();
+        {
+            kernel::irq_lock_guard guard(g_threads_lock);
             current->waiting_for_child = false;
             current->wait_target_tid = -1;
-            return -10;
+            current->end_interruptible_wait();
         }
-        if (options & WNOHANG) {
-            current->waiting_for_child = false;
-            current->wait_target_tid = -1;
-            return 0;
-        }
-
-        // waiting_for_child is set; any child exit between now and the
-        // block() below will call unblock() on us. unblock() enqueues us
-        // unconditionally, and schedule() promotes whatever it picks to
-        // RUNNING — so even the unblock-then-block ordering preserves the
-        // wakeup.
-        block(thread_state::BLOCKED);
     }
 }
 
 // ─── IRQ waiters ───────────────────────────────────────────────────────────
 
 void scheduler::wait_for_irq(uint8_t irq) noexcept {
-    auto* cur = cpu::this_cpu()->current_thread;
+    auto* cur = current_thread();
     if (!cur) return;
-    g_irq_waiters[irq] = cur;
-    block(thread_state::BLOCKED);
+    {
+        kernel::irq_lock_guard guard(g_irq_waiters_lock);
+        if (!cur->begin_interruptible_wait()) return;
+        g_irq_waiters[irq] = cur;
+    }
+    schedule();
+    {
+        kernel::irq_lock_guard guard(g_irq_waiters_lock);
+        if (g_irq_waiters[irq] == cur) g_irq_waiters[irq] = nullptr;
+        cur->end_interruptible_wait();
+    }
 }
 
 void scheduler::wake_irq_waiters(uint8_t irq) noexcept {
-    if (g_irq_waiters[irq]) {
-        TRACE_INSTANT(TRACE_EVENT_IRQ_WAKE, irq, g_irq_waiters[irq]->tid);
-        unblock(g_irq_waiters[irq]);
-        g_irq_waiters[irq] = nullptr;
+    kernel::irq_lock_guard guard(g_irq_waiters_lock);
+    auto* waiter = g_irq_waiters[irq];
+    g_irq_waiters[irq] = nullptr;
+    if (waiter) {
+        TRACE_INSTANT(TRACE_EVENT_IRQ_WAKE, irq, waiter->tid);
+        unblock(waiter);
     }
 }
 

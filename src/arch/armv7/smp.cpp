@@ -45,7 +45,7 @@ extern "C" void ap_entry_arm(uint32_t cpu_id) {
     for (int i = 0; i < 8; ++i)
         *(--stack) = 0; // r4-r11
     idle->stack_pointer = reinterpret_cast<uintptr_t>(stack);
-    idle->state = kernel::scheduler::thread_state::READY;
+    idle->state.store(kernel::scheduler::thread_state::READY, kernel::release);
 
     pcpu->idle_thread = idle;
     pcpu->current_thread = nullptr;

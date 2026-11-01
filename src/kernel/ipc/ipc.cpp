@@ -43,7 +43,7 @@ void ipc_manager::send_sync(uint32_t target_tid, const message& msg) noexcept {
         cur->send_queue_next = current;
     }
 
-    if (target->state == scheduler::thread_state::BLOCKED && target->recv_buffer) {
+    if (target->state.load(kernel::acquire) == scheduler::thread_state::BLOCKED && target->recv_buffer) {
         scheduler::scheduler::unblock(target);
     }
 
@@ -63,7 +63,7 @@ void ipc_manager::send_async(uint32_t target_tid, const message& msg) noexcept {
     lib::memcpy(entry.data, msg.data, sizeof(msg.data));
     target->async_tail = next_tail;
 
-    if (target->state == scheduler::thread_state::BLOCKED && target->recv_buffer == nullptr) {
+    if (target->state.load(kernel::acquire) == scheduler::thread_state::BLOCKED && target->recv_buffer == nullptr) {
         scheduler::scheduler::unblock(target);
     }
 }
@@ -126,7 +126,7 @@ static void direct_switch(scheduler::thread* from, scheduler::thread* to) noexce
     auto* pcpu = cpu::this_cpu();
     kernel::rcu::note_quiescent_state();
 
-    to->state = scheduler::thread_state::RUNNING;
+    to->state.store(scheduler::thread_state::RUNNING, kernel::release);
     to->last_cpu = pcpu->cpu_id;
     pcpu->current_thread = to;
 
@@ -177,7 +177,7 @@ long sys_ipc_call(uint32_t target_tid, fast_msg* regs) noexcept {
 
         // Record that sender is waiting for a reply
         receiver->ipc_caller = sender;
-        sender->state = scheduler::thread_state::BLOCKED;
+        sender->state.store(scheduler::thread_state::BLOCKED, kernel::release);
 
         // Direct switch: sender → receiver (no scheduler)
         direct_switch(sender, receiver);
@@ -195,7 +195,7 @@ long sys_ipc_call(uint32_t target_tid, fast_msg* regs) noexcept {
 
     // Slow path: receiver is not waiting — queue and block
     receiver->ipc_caller = sender;
-    sender->state = scheduler::thread_state::BLOCKED;
+    sender->state.store(scheduler::thread_state::BLOCKED, kernel::release);
 
     // Use the scheduler to block — the receiver will pick us up
     // when it calls ipc_wait()
@@ -232,8 +232,8 @@ long sys_ipc_reply(fast_msg* regs) noexcept {
     caller->ipc_regs[3] = regs->d2;
 
     // Direct switch: server → caller (caller resumes in ipc_call)
-    caller->state = scheduler::thread_state::RUNNING;
-    server->state = scheduler::thread_state::READY;
+    caller->state.store(scheduler::thread_state::RUNNING, kernel::release);
+    server->state.store(scheduler::thread_state::READY, kernel::release);
 
     // Put server back on the run queue
     scheduler::scheduler::add_thread(server);
@@ -265,7 +265,7 @@ long sys_ipc_wait(fast_msg* regs) noexcept {
 
     // No caller yet — block
     server->ipc_waiting = true;
-    server->state = scheduler::thread_state::BLOCKED;
+    server->state.store(scheduler::thread_state::BLOCKED, kernel::release);
     irq_restore(flags);
     scheduler::scheduler::schedule();
 

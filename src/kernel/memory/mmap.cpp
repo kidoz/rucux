@@ -57,6 +57,8 @@ int populate(address_space* mm, vfs::vfs_node* node, uintptr_t virt_start, size_
 
     const page_flags pflags = flags_for_prot(static_cast<uint32_t>(prot));
     for (size_t i = 0; i < pages; ++i) {
+        auto* owner = scheduler::scheduler::current_thread();
+        if (owner && owner->fatal_signal_pending()) return -4;
         const uintptr_t virt = virt_start + i * pmm::PAGE_SIZE;
         if (file_map) {
             uintptr_t phys = node->ops->mmap(node, offset + (i * pmm::PAGE_SIZE));

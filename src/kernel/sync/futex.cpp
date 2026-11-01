@@ -44,6 +44,11 @@ long futex_wait(uint32_t* uaddr, uint32_t val) noexcept {
         return -1; // Value changed — don't sleep
     }
 
+    if (!t->begin_interruptible_wait()) {
+        bucket.lock.unlock(flags);
+        return -4;
+    }
+
     // Allocate waiter on stack (it's valid while we're blocked)
     futex_waiter waiter;
     waiter.thread = t;
@@ -54,10 +59,18 @@ long futex_wait(uint32_t* uaddr, uint32_t val) noexcept {
 
     bucket.lock.unlock(flags);
 
-    // Block the calling thread
-    scheduler::scheduler::block(scheduler::thread_state::BLOCKED);
+    // BLOCKED was published before dropping the bucket lock. A wake arriving
+    // before schedule() must not be overwritten by another block().
+    scheduler::scheduler::schedule();
 
-    return 0;
+    flags = bucket.lock.lock();
+    auto** link = &bucket.head;
+    while (*link && *link != &waiter)
+        link = &(*link)->next;
+    if (*link) *link = waiter.next;
+    t->end_interruptible_wait();
+    bucket.lock.unlock(flags);
+    return t->fatal_signal_pending() ? -4 : 0;
 }
 
 long futex_wake(uint32_t* uaddr, uint32_t count) noexcept {

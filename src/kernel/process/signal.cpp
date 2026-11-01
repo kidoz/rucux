@@ -19,7 +19,6 @@ struct kernel_sigaction {
 };
 
 // Signal constants
-static constexpr int SIG_DFL_VAL = 0;
 static constexpr int SIG_IGN_VAL = 1;
 static constexpr int SIGKILL_VAL = 9;
 static constexpr int SIGTERM_VAL = 15;
@@ -52,34 +51,24 @@ int signal_manager::sys_sigaction(int signum, const void* act, void* oldact) noe
 int signal_manager::sys_kill(int pid, int sig) noexcept {
     if (sig < 0 || sig >= scheduler::thread::MAX_SIGNALS) return -1;
 
-    // pid == 0 or pid == current tid → send to self
-    auto* t = scheduler::scheduler::current_thread();
-    if (!t) return -1;
+    return scheduler::scheduler::signal_thread(pid, sig);
+}
 
-    scheduler::thread* target = nullptr;
-    if (pid == 0 || static_cast<uint32_t>(pid) == t->tid)
-        target = t;
-    else
-        target = scheduler::scheduler::get_thread_by_tid(static_cast<uint32_t>(pid));
-
-    if (!target || target->state == scheduler::thread_state::TERMINATED) return -3; // ESRCH
-
-    if (!may_signal(t->creds, t->tid, target->creds, target->tid)) return -1;
-
-    if (sig == 0) return 0; // Signal 0 = check permission only
-
-    // Check if signal is ignored
-    auto handler = target->sig_handlers[sig];
-    if (handler == reinterpret_cast<scheduler::thread::sighandler_t>(SIG_IGN_VAL)) return 0; // Silently ignored
-
-    // Set pending bit
-    target->sig_pending |= (1U << sig);
-
-    // If target is blocked, unblock it so it can process the signal
-    if (target->state == scheduler::thread_state::BLOCKED) {
-        scheduler::scheduler::unblock(target);
-    }
-
+int signal_manager::post_signal(scheduler::thread* target, int sig) noexcept {
+    if (!target || sig < 0 || sig >= scheduler::thread::MAX_SIGNALS) return -22;
+    irq_lock_guard guard(target->wait_lock);
+    if (target->state.load(kernel::acquire) == scheduler::thread_state::TERMINATED) return -3;
+    if (!sig) return 0;
+    if ((sig == SIGKILL_VAL || sig == SIGTERM_VAL) && !target->user_entry) return -1;
+    if (sig != SIGKILL_VAL &&
+        target->sig_handlers[sig] == reinterpret_cast<scheduler::thread::sighandler_t>(SIG_IGN_VAL))
+        return 0;
+    target->sig_pending.fetch_or(1U << sig, release);
+    // Only waits with an explicit queue-cleanup path may be interrupted. Legacy
+    // IPC remains pending until its normal completion; never abandon its stack.
+    if (target->fatal_signal_pending() && target->interruptible_wait &&
+        target->state.load(kernel::acquire) == scheduler::thread_state::BLOCKED)
+        scheduler::scheduler::add_thread(target);
     return 0;
 }
 
@@ -88,35 +77,38 @@ int signal_manager::sys_sigprocmask(int how, const void* set, void* oldset) noex
     if (!t) return -1;
 
     if (oldset) {
-        *reinterpret_cast<uint32_t*>(oldset) = t->sig_mask;
+        *reinterpret_cast<uint32_t*>(oldset) = t->sig_mask.load(relaxed);
     }
 
     if (set) {
         uint32_t new_mask = *reinterpret_cast<const uint32_t*>(set);
         switch (how) {
         case 0:
-            t->sig_mask |= new_mask;
+            t->sig_mask.fetch_or(new_mask, relaxed);
             break; // SIG_BLOCK
         case 1:
-            t->sig_mask &= ~new_mask;
+            t->sig_mask.fetch_and(~new_mask, relaxed);
             break; // SIG_UNBLOCK
         case 2:
-            t->sig_mask = new_mask;
+            t->sig_mask.store(new_mask, relaxed);
             break; // SIG_SETMASK
         default:
             return -1;
         }
         // Never allow masking SIGKILL or SIGSTOP
-        t->sig_mask &= ~((1U << 9) | (1U << 19));
+        t->sig_mask.fetch_and(~((1U << 9) | (1U << 19)), relaxed);
     }
 
     return 0;
 }
 
 bool signal_manager::consume_fatal_signal(scheduler::thread* t) noexcept {
-    if (!t) return false;
+    if (!t || !t->user_entry || t->state.load(kernel::acquire) == scheduler::thread_state::TERMINATED ||
+        t->kernel_depth.load(acquire) != 0)
+        return false;
 
-    uint32_t pending = t->sig_pending & ~t->sig_mask;
+    const uint32_t mask = t->sig_mask.load(relaxed) & ~(1U << SIGKILL_VAL);
+    uint32_t pending = t->sig_pending.load(acquire) & ~mask;
     int fatal_sig = 0;
 
     if (pending & (1U << SIGKILL_VAL)) {
@@ -130,10 +122,10 @@ bool signal_manager::consume_fatal_signal(scheduler::thread* t) noexcept {
     // Fatal delivery, like exit(), releases descriptors before making the
     // thread reapable. No global thread-list lock is held here.
     vfs::vfs_manager::close_all(t);
-    t->sig_pending &= ~(1U << fatal_sig);
+    t->sig_pending.fetch_and(~(1U << fatal_sig), acq_rel);
     t->exit_code = fatal_sig & 0x7f; // waitpid signal-status encoding
     t->exited = true;
-    t->state = scheduler::thread_state::TERMINATED;
+    t->state.store(scheduler::thread_state::TERMINATED, kernel::release);
     return true;
 }
 

@@ -49,16 +49,17 @@ extern "C" void check_signals(uintptr_t* rsp) {
         rsp[9] = ctx->rip;
         rsp[10] = ctx->rsp;
 
-        t->sig_mask = ctx->oldmask;
+        t->sig_mask.store(ctx->oldmask, kernel::relaxed);
         return;
     }
 
     // Check for pending unmasked signals
-    uint32_t pending = t->sig_pending & ~t->sig_mask;
+    uint32_t pending = t->sig_pending.load(kernel::acquire) & ~t->sig_mask.load(kernel::relaxed);
     if (!pending) return;
 
     // First, process any fatal signals
     if (kernel::process::signal_manager::consume_fatal_signal(t)) {
+        kernel::scheduler::scheduler::finish_termination();
         return;
     }
 
@@ -76,7 +77,7 @@ extern "C" void check_signals(uintptr_t* rsp) {
     auto handler = t->sig_handlers[signum];
     if (!handler || handler == reinterpret_cast<kernel::scheduler::thread::sighandler_t>(1)) {
         // Ignored or DFL (and DFL wasn't fatal), just clear it
-        t->sig_pending &= ~(1U << signum);
+        t->sig_pending.fetch_and(~(1U << signum), kernel::acq_rel);
         return;
     }
 
@@ -101,7 +102,7 @@ extern "C" void check_signals(uintptr_t* rsp) {
     ctx->rflags = rsp[8];
     ctx->rip = rsp[9];
     ctx->rsp = rsp[10];
-    ctx->oldmask = t->sig_mask;
+    ctx->oldmask = t->sig_mask.load(kernel::relaxed);
 
     // Set up the registers to jump to the handler
     rsp[9] = reinterpret_cast<uintptr_t>(handler); // New RIP
@@ -123,8 +124,8 @@ extern "C" void check_signals(uintptr_t* rsp) {
     // Wait, the handler won't get the correct signum!
 
     // Clear the pending bit and mask the signal
-    t->sig_pending &= ~(1U << signum);
-    t->sig_mask |= (1U << signum);
+    t->sig_pending.fetch_and(~(1U << signum), kernel::acq_rel);
+    t->sig_mask.fetch_or(1U << signum, kernel::relaxed);
 }
 
 static long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a5, long a6) {

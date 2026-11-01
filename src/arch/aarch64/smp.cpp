@@ -65,7 +65,7 @@ extern "C" void aarch64_ap_main(uint64_t cpu_id) {
         stack[i] = 0;
     stack[11] = reinterpret_cast<uint64_t>(&kernel::scheduler::idle_task); // x30
     idle->stack_pointer = reinterpret_cast<uintptr_t>(stack);
-    idle->state = kernel::scheduler::thread_state::READY;
+    idle->state.store(kernel::scheduler::thread_state::READY, kernel::release);
 
     pcpu->idle_thread = idle;
     pcpu->current_thread = nullptr;

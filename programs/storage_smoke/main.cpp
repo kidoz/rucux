@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: MIT
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <poll.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/reboot.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <uapi/kernel/syscalls.h>
+#include <uapi/kernel/top.h>
 #include <unistd.h>
 
 namespace {
@@ -170,6 +177,112 @@ bool verify_ownership() {
     return true;
 }
 
+struct cancellation_probe {
+    unsigned operation;
+    unsigned ready = 0, returned = 0;
+    uint32_t word = 0;
+};
+
+void blocked_probe(void* argument) {
+    auto* probe = static_cast<cancellation_probe*>(argument);
+    int fd = -1;
+    if (probe->operation == 2) fd = open("/dev/tty", O_RDONLY);
+    if (probe->operation == 3) fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (probe->operation == 4) {
+        fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd >= 0) {
+            sockaddr_in address{};
+            address.sin_family = AF_INET;
+            address.sin_addr.s_addr = htonl(0x7F000001);
+            address.sin_port = htons(19093);
+            if (bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 || listen(fd, 1) != 0) _exit(1);
+        }
+    }
+    if (probe->operation == 6) fd = epoll_create(1);
+    if ((probe->operation == 2 || probe->operation == 3 || probe->operation == 4 || probe->operation == 6) && fd < 0)
+        _exit(1);
+    __atomic_store_n(&probe->ready, 1U, __ATOMIC_RELEASE);
+    char bytes[32]{};
+    switch (probe->operation) {
+    case 0: {
+        timespec delay{60, 0};
+        syscall(SYS_NANOSLEEP, reinterpret_cast<long>(&delay), 0);
+        break;
+    }
+    case 1:
+        syscall(SYS_FUTEX, reinterpret_cast<long>(&probe->word), 0, 0);
+        break;
+    case 2:
+    case 3:
+        read(fd, bytes, sizeof(bytes));
+        break;
+    case 4:
+        accept(fd, nullptr, nullptr);
+        break;
+    case 5:
+        poll(nullptr, 0, -1);
+        break;
+    case 6: {
+        epoll_event event{};
+        epoll_wait(fd, &event, 1, -1);
+        break;
+    }
+    default:
+        _exit(1);
+    }
+    __atomic_store_n(&probe->returned, 1U, __ATOMIC_RELEASE);
+    _exit(1); // A cancelled syscall must never return to userspace.
+}
+
+bool wait_blocked(long tid) {
+    for (unsigned attempt = 0; attempt < 10000; ++attempt) {
+        top_info info{};
+        if (syscall(SYS_TOP, reinterpret_cast<long>(&info), sizeof(info)) < 0) return false;
+        for (uint32_t i = 0; i < info.num_processes; ++i) {
+            if (info.processes[i].tid != static_cast<uint32_t>(tid)) continue;
+            if (info.processes[i].state == 2) return true;
+            if (info.processes[i].state == 3) return false;
+        }
+        sched_yield();
+    }
+    return false;
+}
+
+bool verify_cancellation() {
+    constexpr size_t STACK = 64 * 1024;
+    for (unsigned operation = 0; operation < 7; ++operation) {
+        auto* stack = static_cast<uint8_t*>(mmap(nullptr, STACK, READ_WRITE, PRIVATE_ANON, -1, 0));
+        if (stack == MAP_FAILED) return false;
+        cancellation_probe probe{operation, 0, 0, 0};
+        const long tid = syscall(SYS_CLONE, reinterpret_cast<long>(blocked_probe),
+                                 reinterpret_cast<long>(stack + STACK), reinterpret_cast<long>(&probe));
+        if (tid < 0) {
+            munmap(stack, STACK);
+            return false;
+        }
+        if (!wait_blocked(tid) || !__atomic_load_n(&probe.ready, __ATOMIC_ACQUIRE)) return false;
+        if (kill(static_cast<int>(tid), operation & 1U ? SIGKILL : SIGTERM) != 0) return false;
+        while (kill(static_cast<int>(tid), 0) >= 0)
+            sched_yield();
+        if (__atomic_load_n(&probe.returned, __ATOMIC_ACQUIRE)) return false;
+        if (syscall(SYS_FUTEX, reinterpret_cast<long>(&probe.word), 1, 1) != 0) return false;
+        if (munmap(stack, STACK) != 0) return false;
+        // The interrupted operation must not leave storage reservations or
+        // unfinished VMAs that poison the next ordinary operation.
+        {
+            const int fd = open("/fat32/mmap.bin", O_RDONLY);
+            if (fd < 0) return false;
+            struct stat info{};
+            uint8_t byte{};
+            const bool ok = fstat(fd, &info) == 0 && info.st_size == 8192 + 37 && read(fd, &byte, 1) == 1 && byte == 11;
+            close(fd);
+            if (!ok) return false;
+        }
+    }
+    printf("storage_smoke: safe fatal syscall cancellation PASS\n");
+    return true;
+}
+
 bool verify_ramfs() {
     int fd = open("/run/log/journal.log", O_RDWR);
     if (fd < 0) return false;
@@ -323,6 +436,7 @@ int main() {
     REQUIRE(read(stage_fd, &stage, 1) == 1 && stage >= '0' && stage <= '2');
     REQUIRE(verify_lookup());
     REQUIRE(verify_ownership());
+    REQUIRE(verify_cancellation());
     REQUIRE(verify_ramfs());
     REQUIRE(verify_mmap());
     if (stage == '0') {

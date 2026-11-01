@@ -27,6 +27,7 @@ std::atomic<unsigned> finalized{0};
 size_t refreshed_length;
 int refresh_result;
 uint64_t ticks;
+void (*on_sleep)();
 
 void reset() {
     current.fd_table = descriptors;
@@ -49,6 +50,9 @@ void reset() {
     };
     descriptors[1] = {&node, 99, 2};
     has_current = true;
+    current.sig_pending.store(0);
+    current.sig_mask.store(0);
+    on_sleep = nullptr;
     callback_result = 0;
     truncated = synced = 0;
     refreshed = 0;
@@ -116,6 +120,7 @@ bool thread::ensure_fd_capacity(size_t count) noexcept {
 }
 void scheduler::sleep_until(uint64_t tick) noexcept {
     ticks = tick;
+    if (on_sleep) on_sleep();
 }
 } // namespace scheduler
 } // namespace kernel
@@ -814,6 +819,23 @@ TEST(ramfs_invalid_io_is_distinct_from_eof) {
     ASSERT_EQ(file->ops->write(file, 0, 0, nullptr), 0L);
     ASSERT_EQ(file->ops->read(file, 8, 1, &byte), 0L);
     ASSERT_EQ(file->length, 8UL);
+}
+
+TEST(vfs_infinite_poll_select_and_epoll_cancel_at_sleep_boundary) {
+    for (unsigned operation = 0; operation < 3; ++operation) {
+        reset();
+        on_sleep = [] { current.sig_pending.store(1U << 15); };
+        if (operation == 0) ASSERT_EQ(vfs_manager::sys_select(0, nullptr, nullptr, nullptr, nullptr), -4);
+        if (operation == 1) ASSERT_EQ(vfs_manager::sys_poll(nullptr, 0, -1), -4);
+        if (operation == 2) {
+            const int fd = vfs_manager::sys_epoll_create(1);
+            ASSERT(fd >= 0);
+            uint8_t events[12]{};
+            ASSERT_EQ(vfs_manager::sys_epoll_wait(fd, events, 1, -1), -4);
+            ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+        }
+        current.sig_pending.store(0);
+    }
 }
 
 int main() {

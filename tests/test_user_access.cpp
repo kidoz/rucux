@@ -3,6 +3,8 @@
 #include <cstring>
 #include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vmm.hpp>
+#include <kernel/process/signal.hpp>
+#include <kernel/scheduler/scheduler.hpp>
 #include <kernel/syscall.hpp>
 #include <uapi/kernel/syscalls.h>
 
@@ -195,3 +197,15 @@ TEST(waitpid_rejects_kernel_status_pointer) {
 int main() {
     return rucux_test::run_all_tests("User access and syscall marshalling");
 }
+
+namespace kernel::scheduler {
+thread* scheduler::current_thread() noexcept {
+    return nullptr;
+}
+void scheduler::finish_termination() noexcept {}
+} // namespace kernel::scheduler
+namespace kernel::process {
+bool signal_manager::consume_fatal_signal(scheduler::thread*) noexcept {
+    return false;
+}
+} // namespace kernel::process

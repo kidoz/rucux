@@ -113,14 +113,17 @@ extern "C" void check_signals(uintptr_t* sp_ptr) {
         set_user_lr(ctx->lr);
         set_spsr(ctx->cpsr);
 
-        t->sig_mask = ctx->oldmask;
+        t->sig_mask.store(ctx->oldmask, kernel::relaxed);
         return;
     }
 
-    uint32_t pending = t->sig_pending & ~t->sig_mask;
+    uint32_t pending = t->sig_pending.load(kernel::acquire) & ~t->sig_mask.load(kernel::relaxed);
     if (!pending) return;
 
-    if (kernel::process::signal_manager::consume_fatal_signal(t)) return;
+    if (kernel::process::signal_manager::consume_fatal_signal(t)) {
+        kernel::scheduler::scheduler::finish_termination();
+        return;
+    }
 
     int signum = -1;
     for (int i = 1; i < kernel::scheduler::thread::MAX_SIGNALS; ++i) {
@@ -133,7 +136,7 @@ extern "C" void check_signals(uintptr_t* sp_ptr) {
 
     auto handler = t->sig_handlers[signum];
     if (!handler || handler == reinterpret_cast<kernel::scheduler::thread::sighandler_t>(1)) {
-        t->sig_pending &= ~(1U << signum);
+        t->sig_pending.fetch_and(~(1U << signum), kernel::acq_rel);
         return;
     }
 
@@ -160,7 +163,7 @@ extern "C" void check_signals(uintptr_t* sp_ptr) {
     ctx->lr = get_user_lr();
     ctx->pc = sp_ptr[13]; // return address
     ctx->cpsr = get_spsr();
-    ctx->oldmask = t->sig_mask;
+    ctx->oldmask = t->sig_mask.load(kernel::relaxed);
 
     if (!kernel::memory::copy_to_user(reinterpret_cast<void*>(user_sp), ctx, sizeof(*ctx)) ||
         !kernel::memory::user_range(reinterpret_cast<uintptr_t>(handler), 1) ||
@@ -174,8 +177,8 @@ extern "C" void check_signals(uintptr_t* sp_ptr) {
     set_user_sp(user_sp);
     set_user_lr(reinterpret_cast<uint32_t>(t->sig_restorers[signum])); // lr = trampoline
 
-    t->sig_pending &= ~(1U << signum);
-    t->sig_mask |= (1U << signum);
+    t->sig_pending.fetch_and(~(1U << signum), kernel::acq_rel);
+    t->sig_mask.fetch_or(1U << signum, kernel::relaxed);
 }
 
 // Shared syscall dispatcher — called from the SVC assembly stub.

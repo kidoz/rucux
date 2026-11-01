@@ -10,7 +10,9 @@
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vma.hpp>
+#include <kernel/process/signal.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/time.hpp>
 #include <kernel/vfs/vfs.hpp>
 #include <map>
 #include <new>
@@ -48,6 +50,9 @@ struct Fixture {
     Fixture() {
         mm.vmas.init();
         mm.next_mmap = START;
+        current.sig_pending.store(0);
+        current.sig_mask.store(0);
+        current.state.store(kernel::scheduler::thread_state::RUNNING, kernel::release);
         current.mm = &mm;
         current.fd_table = descriptors;
         current.fd_count = 2;
@@ -135,7 +140,31 @@ namespace kernel::scheduler {
 thread* scheduler::current_thread() noexcept {
     return has_thread ? &current : nullptr;
 }
+bool thread::ensure_fd_capacity(size_t count) noexcept {
+    return fd_table && fd_count >= count;
+}
+void scheduler::add_thread(thread* target) noexcept {
+    target->state.store(thread_state::READY, kernel::release);
+}
+void scheduler::sleep_until(uint64_t) noexcept {}
+int scheduler::signal_thread(int, int) noexcept {
+    return -3;
+}
 } // namespace kernel::scheduler
+
+namespace kernel {
+void kwrite(const char*) noexcept {}
+void kputc(char) noexcept {}
+uint64_t time_manager::get_ticks() noexcept {
+    return 0;
+}
+namespace console {
+uintptr_t lock_output() noexcept {
+    return 0;
+}
+void unlock_output(uintptr_t) noexcept {}
+} // namespace console
+} // namespace kernel
 
 namespace kernel::memory {
 void* pmm::alloc_page() noexcept {
@@ -176,6 +205,35 @@ bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
     return true;
 }
 } // namespace kernel::memory
+
+TEST(mmap_fatal_signal_rolls_back_partial_population_before_node_cleanup) {
+    Fixture fixture;
+    current.user_entry = reinterpret_cast<void*>(1);
+    current.state.store(kernel::scheduler::thread_state::RUNNING, kernel::release);
+    managed_file();
+    {
+        kernel::scheduler::kernel_scope scope(&current);
+        on_read = [] {
+            ASSERT_EQ(kernel::process::signal_manager::post_signal(&current, 15), 0);
+            ASSERT(!kernel::process::signal_manager::consume_fatal_signal(&current));
+            ASSERT_EQ(finalized, 0U);
+        };
+        ASSERT_EQ(map_file(), -4);
+        ASSERT_EQ(finalized, 0U);
+        assert_clean();
+    }
+    ASSERT(kernel::process::signal_manager::consume_fatal_signal(&current));
+    ASSERT_EQ(finalized, 1U);
+    ASSERT(descriptors[0].node == nullptr);
+    current.sig_pending.store(0);
+    current.state.store(kernel::scheduler::thread_state::RUNNING, kernel::release);
+    managed_file();
+    ASSERT_EQ(map_file(), static_cast<intptr_t>(START));
+    close_file();
+    ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START), PAGE * 2), 0);
+    ASSERT(frames.empty());
+    ASSERT(!bad_free);
+}
 
 TEST(mmap_eager_population_pins_node_across_reentrant_descriptor_close) {
     Fixture fixture;

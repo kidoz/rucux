@@ -58,6 +58,8 @@ int time_manager::sys_nanosleep(const timespec* req, timespec* rem) noexcept {
     // Syscall entry masks IRQs. Yielding a still-runnable sleeper can keep the
     // CPU in the kernel forever; blocking lets the idle thread enable IRQs.
     if (duration) scheduler::scheduler::sleep_until(now + duration);
+    auto* owner = scheduler::scheduler::current_thread();
+    if (owner && owner->fatal_signal_pending()) return -4;
 
     if (rem) {
         rem->tv_sec = 0;

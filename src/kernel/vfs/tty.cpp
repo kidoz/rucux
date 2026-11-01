@@ -99,7 +99,8 @@ void feed_input(char c) noexcept {
     if (g_tty.waiting_thread && (!canonical || g_tty.lines_available)) {
         auto* reader = g_tty.waiting_thread;
         g_tty.waiting_thread = nullptr;
-        if (reader->state == scheduler::thread_state::BLOCKED) scheduler::scheduler::unblock(reader);
+        if (reader->state.load(kernel::acquire) == scheduler::thread_state::BLOCKED)
+            scheduler::scheduler::unblock(reader);
     }
 }
 
@@ -118,6 +119,13 @@ static long tty_read(vfs_node*, size_t, size_t size, void* buffer) noexcept {
     while (true) {
         uintptr_t flags = kernel::irq_save();
         uintptr_t locked = g_tty_lock.lock();
+        auto* reader = scheduler::scheduler::current_thread();
+        if (g_tty.waiting_thread == reader) g_tty.waiting_thread = nullptr;
+        if (reader && reader->fatal_signal_pending()) {
+            g_tty_lock.unlock(locked);
+            kernel::irq_restore(flags);
+            return -4;
+        }
         const bool canonical = g_tty.term.c_lflag & ICANON;
         size_t need = g_tty.term.c_cc[6]; // VMIN
         if (need > size) need = size;
@@ -141,12 +149,19 @@ static long tty_read(vfs_node*, size_t, size_t size, void* buffer) noexcept {
             kernel::irq_restore(flags);
             return static_cast<long>(count);
         }
-        auto* reader = scheduler::scheduler::current_thread();
+        if (!reader || !reader->begin_interruptible_wait()) {
+            g_tty_lock.unlock(locked);
+            kernel::irq_restore(flags);
+            return reader ? -4 : -3;
+        }
         g_tty.waiting_thread = reader;
-        reader->state = scheduler::thread_state::BLOCKED;
         g_tty_lock.unlock(locked);
         // Enrollment and BLOCKED publication precede dropping the lock.
         scheduler::scheduler::schedule();
+        locked = g_tty_lock.lock();
+        if (g_tty.waiting_thread == reader) g_tty.waiting_thread = nullptr;
+        reader->end_interruptible_wait();
+        g_tty_lock.unlock(locked);
         kernel::irq_restore(flags);
     }
 }
