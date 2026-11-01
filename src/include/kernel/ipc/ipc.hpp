@@ -36,5 +36,12 @@ long sys_ipc_wait(fast_msg* regs) noexcept;
 // Close IPC before publishing termination. Idempotently detach both directions,
 // release peer pins, and wake surviving senders/callers with -EPIPE.
 void detach_thread(scheduler::thread* owner) noexcept;
+#ifdef RUCUX_VM_SELF_TEST
+struct debug_state {
+    uint32_t kind, peer, caller, queued, cancelled;
+    int result;
+};
+debug_state inspect(const scheduler::thread* owner) noexcept;
+#endif
 
 } // namespace kernel::ipc

@@ -36,3 +36,44 @@ and the Ethernet test peer has typed interfaces.
 
 Tool caches are stored under `build/python-tools/`. CI runs the same checks
 exposed locally through `just`.
+
+## AArch64 retirement campaigns
+
+Run a bounded four-CPU scheduler/IPC retirement campaign without host networking:
+
+```sh
+python3 tools/test_retirement_smoke.py --seed 37 --rounds 4096 --attempts 20
+```
+
+The helper configures `build/retirement-investigation` for `smoke-qemu-aarch64`.
+Meson options `retirement_seed` and `retirement_rounds` default to 0 and 48;
+seed 0 disables the extra actor-local yield checkpoints. Runtime dependencies
+must already be installed; the helper fetches nothing.
+
+Each campaign creates a unique directory under `build/retirement-evidence/`
+containing the exact ELF, its SHA-256, QEMU/host configuration, commands, serial
+output, monitor output and incremental results. All success markers, including
+thread identity, IPC retirement, userspace shared-mm access and final root
+teardown, are mandatory. An assertion freezes the event rings and keeps the
+controller alive before cleanup. On failure or timeout the helper stops QEMU,
+captures all CPU registers and two 16 MiB guest-memory ranges (kernel metadata
+and the upper allocator region), then quits through its private stdin monitor.
+These bounded snapshots are not a complete guest-memory dump.
+
+Replay an archived ELF with matching seed and round count:
+
+```sh
+python3 tools/test_retirement_smoke.py --kernel build/retirement-evidence/<campaign>/kernel.elf \
+    --seed 37 --rounds 4096 --attempts 20
+```
+
+The seed reproduces yield choices, not an exact SMP interleaving. Parallel TCG
+is the default. `--tcg-threads single --icount 3` provides an instruction-counted
+alternative; it does not prove hardware ordering. All build and artifact paths
+must stay inside the workspace's `build/` directory.
+
+Check the helper's evidence policy with:
+
+```sh
+python3 -m unittest discover -s tools -p test_retirement_smoke_unit.py
+```

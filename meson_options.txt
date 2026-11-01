@@ -4,3 +4,7 @@ option(
   value: 'dev-qemu-amd64',
   description: 'Product manifest that selects embedded userspace composition'
 )
+option('retirement_rounds', type: 'integer', value: 48, min: 3, max: 4096,
+       description: 'AArch64 smoke retirement rounds (production products ignore this)')
+option('retirement_seed', type: 'integer', value: 0, min: 0, max: 2147483647,
+       description: 'AArch64 smoke yield-injection seed; zero preserves normal timing')

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/cpu/percpu.hpp>
 #include <kernel/scheduler/dispatch.hpp>
+#include <kernel/scheduler/retirement_diagnostics.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#ifdef RUCUX_VM_SELF_TEST
+#include <kernel/print.hpp>
+#endif
 
 namespace kernel::cpu {
 void run_queue::init() noexcept {
@@ -38,6 +42,7 @@ void queue_locked(thread* owner, cpu::per_cpu* pcpu) noexcept {
     owner->run_queued = true;
     pcpu->queues[static_cast<uint8_t>(owner->priority)].enqueue(owner);
     ++pcpu->total_runnable;
+    RETIREMENT_NOTE(enqueue, owner->tid, pcpu->cpu_id, pcpu->total_runnable);
 }
 thread* peek(cpu::per_cpu* pcpu) noexcept {
     for (auto& queue : pcpu->queues)
@@ -51,6 +56,7 @@ thread* take(cpu::per_cpu* source, uint32_t destination) noexcept {
             next->run_queued = false;
             next->dispatch_cpu = destination;
             next->last_cpu = destination;
+            RETIREMENT_NOTE(claim, next->tid, destination, source->cpu_id);
             return next;
         }
     }
@@ -124,6 +130,7 @@ void finish_switch(cpu::per_cpu* pcpu) noexcept {
     pcpu->switching_from = nullptr;
     if (!old) return;
     old->dispatch_cpu = NO_CPU;
+    RETIREMENT_NOTE(off_cpu, old->tid, static_cast<uint32_t>(old->state.load(acquire)), old->pins.load(acquire));
     if (old->state.load(acquire) == thread_state::READY) queue_locked(old, pcpu);
     // Do not touch old after releasing dispatch: a remote reaper can free it.
 }
@@ -136,6 +143,35 @@ uint32_t cpu_of(const thread* owner) noexcept {
     irq_lock_guard guard(dispatch_lock);
     return owner->last_cpu;
 }
+#ifdef RUCUX_VM_SELF_TEST
+ownership inspect(const thread* owner) noexcept {
+    irq_lock_guard guard(dispatch_lock);
+    return {owner->dispatch_cpu, owner->run_queued, owner->last_cpu};
+}
+void dump_queues() noexcept {
+    for (uint32_t id = 0; id < cpu::g_cpu_count.load(acquire); ++id) {
+        struct row {
+            uint32_t count, head, tail;
+        } rows[NUM_PRIOS];
+        uint32_t current, outgoing, total;
+        {
+            irq_lock_guard guard(dispatch_lock);
+            const auto* pcpu = cpu::get_cpu(id);
+            current = pcpu->current_thread ? pcpu->current_thread->tid : 0;
+            outgoing = pcpu->switching_from ? pcpu->switching_from->tid : 0;
+            total = pcpu->total_runnable;
+            for (uint32_t p = 0; p < NUM_PRIOS; ++p) {
+                const auto& queue = pcpu->queues[p];
+                rows[p] = {queue.count, queue.head ? queue.head->tid : 0, queue.tail ? queue.tail->tid : 0};
+            }
+        }
+        kernel::print("retirement cpu: id {} current {} outgoing {} runnable {}\n", id, current, outgoing, total);
+        for (uint32_t p = 0; p < NUM_PRIOS; ++p)
+            kernel::print("retirement queue: cpu {} priority {} count {} head {} tail {}\n", id, p, rows[p].count,
+                          rows[p].head, rows[p].tail);
+    }
+}
+#endif
 bool queues_valid() noexcept {
     irq_lock_guard guard(dispatch_lock);
     const uint32_t count = cpu::g_cpu_count.load(acquire);

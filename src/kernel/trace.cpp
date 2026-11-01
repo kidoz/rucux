@@ -113,8 +113,13 @@ static uint32_t current_thread_id() noexcept {
 void record(uint16_t type, uint16_t event, uint64_t arg0, uint64_t arg1) noexcept {
     if (!is_enabled()) return;
 
+    // Keep the CPU buffer and thread identity stable through record publication.
+    const auto flags = kernel::irq_save();
     auto* pcpu = kernel::cpu::this_cpu();
-    if (!pcpu || pcpu->cpu_id >= kernel::cpu::MAX_CPUS) return;
+    if (!pcpu || pcpu->cpu_id >= kernel::cpu::MAX_CPUS) {
+        kernel::irq_restore(flags);
+        return;
+    }
 
     trace_cpu_buffer& buffer = g_buffers[pcpu->cpu_id];
     uint64_t seq = buffer.write_pos.fetch_add(1, kernel::relaxed);
@@ -132,11 +137,13 @@ void record(uint16_t type, uint16_t event, uint64_t arg0, uint64_t arg1) noexcep
     slot.record.reserved = 0;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     __atomic_store_n(&slot.committed_seq, seq + 1, __ATOMIC_RELEASE);
+    kernel::irq_restore(flags);
 }
 
 void record_crash(uint16_t type, uint16_t event, uint64_t arg0, uint64_t arg1) noexcept {
     if (g_crash_ring.magic != CRASH_RING_MAGIC) return;
 
+    const auto flags = kernel::irq_save();
     auto* pcpu = kernel::cpu::this_cpu();
     uint32_t cpu_id = (pcpu && pcpu->cpu_id < kernel::cpu::MAX_CPUS) ? pcpu->cpu_id : 0xFFFFFFFF;
 
@@ -152,6 +159,7 @@ void record_crash(uint16_t type, uint16_t event, uint64_t arg0, uint64_t arg1) n
     rec.type = type;
     rec.event = event;
     rec.reserved = 0;
+    kernel::irq_restore(flags);
 }
 
 void dump_crash_ring() noexcept {

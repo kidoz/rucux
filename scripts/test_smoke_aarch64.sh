@@ -16,6 +16,7 @@ mkdir -p "$(dirname "${LOG_PATH}")" "$(dirname "${SMP_LOG_PATH}")"
 # secondary, and an intact marker line proves console output is serialized —
 # without the console lock these interleave and the line is unmatchable.
 smp_markers=(
+    "SMP retirement: thread identity verified"
     "shared mm: userspace map/protect/reuse/clone PASS"
     "shared mm: root teardown PASS (CPU mask 15)"
     "SMP retirement: held outgoing stack and single wait status verified"
@@ -54,6 +55,7 @@ required_markers=(
 # A translation mismatch still boots, so assert its absence explicitly rather
 # than relying on the positive markers alone.
 forbidden_markers=(
+    "SMP retirement: check"
     "shared mm: FAIL"
     "shared mm: root teardown FAIL"
     "SMP retirement: FAIL"

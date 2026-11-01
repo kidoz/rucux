@@ -27,5 +27,12 @@ bool reclaimable(const thread* owner) noexcept;
 // Bounded queue traversal under dispatch; useful for target and hosted stress.
 bool queues_valid() noexcept;
 uint32_t cpu_of(const thread* owner) noexcept;
+#ifdef RUCUX_VM_SELF_TEST
+struct ownership {
+    uint32_t cpu, queued, last_cpu;
+};
+ownership inspect(const thread* owner) noexcept;
+void dump_queues() noexcept;
+#endif
 } // namespace dispatch
 } // namespace kernel::scheduler

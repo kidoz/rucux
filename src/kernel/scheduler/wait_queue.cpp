@@ -5,7 +5,7 @@
 namespace kernel::scheduler {
 
 bool wait_queue::wait(uint64_t wake_tick) noexcept {
-    auto* cur = cpu::this_cpu()->current_thread;
+    auto* cur = scheduler::current_thread();
     if (!cur) return false;
 
     {

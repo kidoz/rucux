@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <kernel/ipc/ipc.hpp>
+#include <kernel/scheduler/retirement_diagnostics.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/sync/spinlock.hpp>
 #include <lib/string.hpp>
@@ -75,6 +76,7 @@ void complete(thread* sender, int result, bool cancelled = false) noexcept {
     sender->ipc_peer = nullptr;
     sender->has_queued_msg = false;
     sender->ipc_result = result;
+    RETIREMENT_NOTE(ipc_complete, sender->tid, peer->tid, static_cast<uint32_t>(result));
     scheduler::scheduler::unblock(sender);
     peer->unpin();
     sender->unpin();
@@ -275,4 +277,15 @@ void detach_thread(thread* owner) noexcept {
     if (owner->ipc_kind == ipc_wait_kind::legacy_receive || owner->ipc_kind == ipc_wait_kind::receive_call)
         scheduler::scheduler::unblock(owner);
 }
+#ifdef RUCUX_VM_SELF_TEST
+debug_state inspect(const scheduler::thread* owner) noexcept {
+    irq_lock_guard guard(ipc_lock);
+    return {static_cast<uint32_t>(owner->ipc_kind),
+            owner->ipc_peer ? owner->ipc_peer->tid : 0,
+            owner->ipc_caller ? owner->ipc_caller->tid : 0,
+            static_cast<uint32_t>(owner->ipc_queue_count),
+            owner->ipc_reply_cancelled,
+            owner->ipc_result};
+}
+#endif
 } // namespace kernel::ipc

@@ -216,6 +216,9 @@ public:
     // Publish status, TERMINATED and parent wake under the thread-list lock.
     // Caller retains its CPU claim until the incoming switch tail.
     static void publish_termination(thread* owner, int status) noexcept;
+#ifdef RUCUX_VM_SELF_TEST
+    static void dump_retirement_state() noexcept;
+#endif
     // Holds the thread-list lock through lookup and signal posting.
     static int signal_thread(int pid, int sig) noexcept;
 

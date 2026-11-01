@@ -10,6 +10,7 @@
 #include <kernel/print.hpp>
 #include <kernel/process/signal.hpp>
 #include <kernel/scheduler/dispatch.hpp>
+#include <kernel/scheduler/retirement_diagnostics.hpp>
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/sync/futex.hpp>
 #include <kernel/sync/rcu.hpp>
@@ -137,6 +138,7 @@ void scheduler::publish_termination(thread* child, int status) noexcept {
     child->exit_code = status;
     child->exited = true;
     child->state.store(thread_state::TERMINATED, kernel::release);
+    RETIREMENT_NOTE(exit_status, child->tid, status, child->parent_tid);
     // Local preemption cannot abandon the exiting stack between publication
     // and notification. A remote waitpid enrolls under this same lock.
     if (child->parent_tid == 0) return;
@@ -149,6 +151,46 @@ void scheduler::publish_termination(thread* child, int status) noexcept {
         }
     }
 }
+#ifdef RUCUX_VM_SELF_TEST
+void scheduler::dump_retirement_state() noexcept {
+    struct row {
+        uint32_t tid, state, parent, target, waiting, pins, depth, enrolled;
+        int status;
+        dispatch::ownership ownership;
+        ipc::debug_state ipc;
+    };
+    static row rows[64]; // Bounded failure-only snapshot; never keep TCB pointers.
+    uint32_t count = 0;
+    {
+        kernel::irq_lock_guard guard(g_threads_lock);
+        for (auto* t = g_all_threads; t && count < 64; t = t->all_next) {
+            auto& r = rows[count++];
+            r.tid = t->tid;
+            r.state = static_cast<uint32_t>(t->state.load(kernel::acquire));
+            r.parent = t->parent_tid;
+            r.target = static_cast<uint32_t>(t->wait_target_tid);
+            r.waiting = t->waiting_for_child;
+            r.status = t->exit_code;
+            r.pins = t->pins.load(kernel::acquire);
+            r.depth = t->kernel_depth.load(kernel::acquire);
+            r.ipc = ipc::inspect(t);
+            kernel::irq_lock_guard wait(t->wait_lock);
+            r.enrolled = t->interruptible_wait;
+            r.ownership = dispatch::inspect(t);
+        }
+    }
+    for (uint32_t n = 0; n < count; ++n) {
+        const auto& r = rows[n];
+        kernel::print("retirement thread: tid {} state {} parent {} status {} waiting {} target {} pins {} depth {}\n",
+                      r.tid, r.state, r.parent, r.status, r.waiting, r.target, r.pins, r.depth);
+        kernel::print("retirement ownership: tid {} cpu {} queued {} last {} enrolled {}\n", r.tid, r.ownership.cpu,
+                      r.ownership.queued, r.ownership.last_cpu, r.enrolled);
+        kernel::print("retirement ipc: tid {} kind {} peer {} caller {} queued {} cancelled {} result {}\n", r.tid,
+                      r.ipc.kind, r.ipc.peer, r.ipc.caller, r.ipc.queued, r.ipc.cancelled, r.ipc.result);
+    }
+    dispatch::dump_queues();
+}
+#endif
 
 // ─── FD table ──────────────────────────────────────────────────────────────
 
@@ -545,9 +587,8 @@ extern "C" void scheduler_finish_switch() noexcept {
 // ─── Schedule (per-CPU) ────────────────────────────────────────────────────
 
 void scheduler::cleanup_terminated() noexcept {
-    auto* this_thread = cpu::this_cpu()->current_thread;
-
     kernel::irq_lock_guard guard(g_threads_lock);
+    auto* this_thread = cpu::this_cpu()->current_thread;
     thread* prev = nullptr;
     thread* cur = g_all_threads;
     while (cur) {
@@ -635,11 +676,14 @@ void scheduler::schedule() noexcept {
 // ─── Block / Unblock / Yield ───────────────────────────────────────────────
 
 void scheduler::block(thread_state reason) noexcept {
+    const auto flags = kernel::irq_save();
     auto* cur = cpu::this_cpu()->current_thread;
-    if (!cur) return;
-    TRACE_INSTANT(TRACE_EVENT_THREAD_BLOCK, cur->tid, static_cast<uint64_t>(reason));
-    cur->state.store(reason, kernel::release);
-    schedule();
+    if (cur) {
+        TRACE_INSTANT(TRACE_EVENT_THREAD_BLOCK, cur->tid, static_cast<uint64_t>(reason));
+        cur->state.store(reason, kernel::release);
+        schedule();
+    }
+    kernel::irq_restore(flags);
 }
 
 void scheduler::yield() noexcept {
@@ -657,9 +701,12 @@ void scheduler::unblock(thread* t) noexcept {
 }
 
 void scheduler::sleep_until(uint64_t tick) noexcept {
-    auto* cur = cpu::this_cpu()->current_thread;
-    if (!cur) return;
     const uintptr_t flags = kernel::irq_save();
+    auto* cur = cpu::this_cpu()->current_thread;
+    if (!cur) {
+        kernel::irq_restore(flags);
+        return;
+    }
     bool enrolled = false;
     if (tick > kernel::time_manager::get_ticks()) {
         kernel::irq_lock_guard guard(g_sleep_queue_lock);
@@ -701,7 +748,7 @@ void scheduler::check_sleepers(uint64_t current_tick) noexcept {
 }
 
 void scheduler::exit(int status) noexcept {
-    auto* cur = cpu::this_cpu()->current_thread;
+    auto* cur = current_thread();
     if (!cur) return;
     TRACE_INSTANT(TRACE_EVENT_THREAD_EXIT, cur->tid, 0);
     // Close callbacks may take subsystem locks; run before marking the thread
@@ -761,7 +808,12 @@ thread* scheduler::get_thread_by_tid(uint32_t tid) noexcept {
 }
 
 thread* scheduler::current_thread() noexcept {
-    return cpu::this_cpu()->current_thread;
+    // A timer can migrate this stack between reading the CPU base and its
+    // current-thread field. Complete both reads before restoring preemption.
+    const auto flags = kernel::irq_save();
+    auto* current = cpu::this_cpu()->current_thread;
+    kernel::irq_restore(flags);
+    return current;
 }
 
 int scheduler::sys_top(void* buffer, size_t size) noexcept {
@@ -811,6 +863,7 @@ long scheduler::sys_waitpid(int pid, int* wstatus, int options) noexcept {
                     if (child->state.load(kernel::acquire) == thread_state::TERMINATED) {
                         const int status = child->exit_code;
                         const auto tid = child->tid;
+                        RETIREMENT_NOTE(wait_result, current->tid, tid, status);
                         reap_thread_locked(child, previous);
                         if (wstatus) *wstatus = status;
                         return tid;
@@ -823,6 +876,7 @@ long scheduler::sys_waitpid(int pid, int* wstatus, int options) noexcept {
             if (!current->begin_interruptible_wait()) return -4;
             current->wait_target_tid = pid;
             current->waiting_for_child = true;
+            RETIREMENT_NOTE(wait_enroll, current->tid, pid, owner_tid);
         }
         schedule();
         {
