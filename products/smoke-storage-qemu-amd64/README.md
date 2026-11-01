@@ -50,18 +50,34 @@ The required marker is `storage_smoke: vnode references and thread cleanup PASS`
 Hosted allocation counters establish exact reclamation; these target checks
 exercise real clone/exit/mapping paths and do not measure kernel heap usage.
 
-Each boot also starts seven clone workers blocked in nanosleep, futex, tty read,
-UDP receive, TCP accept, poll and epoll. SYS_TOP must show each worker BLOCKED
+Each boot also starts nine clone workers blocked in nanosleep, futex, tty read,
+UDP receive, TCP accept, poll, epoll, legacy IPC receive and fixed-message IPC
+wait. SYS_TOP must show each worker BLOCKED
 before the parent sends SIGTERM/SIGKILL. The interrupted syscall must not return
 to userspace. A later futex wake must find no stale stack waiter, and a fresh
 FAT32 metadata/byte read must work after every cancellation. Clone stacks are
 explicitly unmapped after termination. The required serial marker is
 `storage_smoke: safe fatal syscall cancellation PASS`.
 These guest socket tests use loopback only; QEMU still runs with `-nic none` and
-opens no host network socket. Legacy IPC waits stay uninterruptible pending
-normal protocol completion. Hosted tests inject signals within FAT32 reads and
+opens no host network socket. Hosted tests inject signals within FAT32 reads and
 partial mmap population; this target campaign does not inject mid-transfer disk
 signals or establish general SMP cancellation/reclamation safety.
+
+Additional IPC clones check queued legacy/fixed requests when a peer is killed,
+an accepted caller when its server exits normally, and queued/accepted caller
+cancellation. Surviving callers must receive raw `-EPIPE` without output-buffer
+changes. For accepted-call cancellation, another caller queues before the server
+attempts its old reply: `SYS_IPC_WAIT` and then `SYS_IPC_REPLY` must each return
+`-ECANCELED`; only the reply acknowledges cancellation, allowing the server to
+receive and answer the next caller. The new exchange must return its own reply.
+Killed workers must never return from the interrupted syscall. Every clone stack
+is unmapped, and SYS_TOP must return to the starting thread count, checking that
+IPC pins do not indefinitely retain exited threads. The required marker is
+`storage_smoke: IPC cancellation and peer teardown PASS`.
+`SYS_IPC_WAIT=64` uses the shared 32-byte fixed payload in `uapi/kernel/ipc.h`;
+the legacy layout and existing syscall IDs are preserved. This campaign uses one
+CPU and does not establish general SMP thread-reclamation safety or measure IPC
+performance.
 
 Every boot checks an eager private file mapping, snapshot-EOF zero filling,
 independent FD offsets, private-copy writes and errno for invalid descriptors

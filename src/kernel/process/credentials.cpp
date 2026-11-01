@@ -27,9 +27,11 @@ bool ipc_send_allowed(uint32_t target_tid) noexcept {
     auto* caller = current();
     if (!caller) return false;
     // A missing target keeps the existing send path, which reports the miss.
-    auto* target = scheduler::scheduler::get_thread_by_tid(target_tid);
+    auto* target = scheduler::scheduler::pin_thread(target_tid);
     if (!target) return true;
-    return may_ipc(caller->creds, target->creds);
+    const bool allowed = may_ipc(caller->creds, target->creds);
+    target->unpin();
+    return allowed;
 }
 
 long sys_getuid() noexcept {

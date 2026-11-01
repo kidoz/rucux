@@ -104,6 +104,10 @@ namespace kernel::scheduler {
 thread* scheduler::current_thread() noexcept {
     return &current;
 }
+thread* scheduler::pin_thread(uint32_t) noexcept {
+    return nullptr;
+}
+
 void scheduler::add_thread(thread* target) noexcept {
     ++queued;
     target->state.store(thread_state::READY, kernel::release);
@@ -152,7 +156,7 @@ uintptr_t vmm::get_user_phys(uintptr_t address, bool) noexcept {
         callback();
     }
     if (address < USER_BEGIN || address >= USER_BEGIN + sizeof(user_page)) return 0;
-    return reinterpret_cast<uintptr_t>(user_page + address - USER_BEGIN);
+    return reinterpret_cast<uintptr_t>(user_page + (address - USER_BEGIN));
 }
 } // namespace kernel::memory
 TEST(fatal_signal_waits_for_syscall_resources_to_unwind) {

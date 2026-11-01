@@ -138,6 +138,9 @@ static long marshal_syscall(syscall_handler handler, long number, long a1, long 
     case SYS_IPC_REPLY:
         ok = a.marshal(0, sizeof(ipc::fast_msg), INPUT);
         break;
+    case SYS_IPC_WAIT:
+        ok = a.marshal(0, sizeof(ipc::fast_msg), OUTPUT);
+        break;
     case SYS_IOCTL:
         switch (a2) {
         case 0x5401:

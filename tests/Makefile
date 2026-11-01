@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++23 -Wall -Wextra -g
 CPPFLAGS = -I../src/include -idirafter ../lib/include -I..
 LDLIBS = -lpthread
 OBJDIR ?= ../build/host-tests
-TEST_NAMES = test_cancellation test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write test_mmap test_vma test_file_mmap
+TEST_NAMES = test_ipc test_cancellation test_atomic test_spinlock test_buddy test_libc test_elf test_user_access test_time test_tty test_network test_credentials test_rcu test_fat32 test_ata test_vfs test_file_sync test_file_metadata test_file_write test_mmap test_vma test_file_mmap
 TESTS = $(addprefix $(OBJDIR)/,$(TEST_NAMES))
 LIBC_SOURCES = vsprintf snprintf strtol sscanf inet
 LIBC_OBJECTS = $(addprefix $(OBJDIR)/libc_,$(addsuffix .o,$(LIBC_SOURCES)))
@@ -40,7 +40,7 @@ $(OBJDIR)/test_rcu: $(OBJDIR)/test_rcu.o $(OBJDIR)/rcu.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/fat32.o: ../src/kernel/vfs/fat32.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
-$(OBJDIR)/test_fat32: $(OBJDIR)/test_fat32.o $(OBJDIR)/fat32.o $(OBJDIR)/vfs.o $(OBJDIR)/signal.o
+$(OBJDIR)/test_fat32: $(OBJDIR)/test_fat32.o $(OBJDIR)/fat32.o $(OBJDIR)/vfs.o $(OBJDIR)/signal.o $(OBJDIR)/ipc.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/ata.o: ../src/arch/amd64/ata.cpp | $(OBJDIR)
 	$(CXX) -Isupport $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
@@ -56,7 +56,7 @@ $(OBJDIR)/vma.o: ../src/kernel/memory/vma.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 $(OBJDIR)/rbtree.o: ../src/kernel/ds/rbtree.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
-$(OBJDIR)/test_mmap: $(OBJDIR)/test_mmap.o $(OBJDIR)/mmap.o $(OBJDIR)/vma.o $(OBJDIR)/rbtree.o $(OBJDIR)/vfs.o $(OBJDIR)/signal.o
+$(OBJDIR)/test_mmap: $(OBJDIR)/test_mmap.o $(OBJDIR)/mmap.o $(OBJDIR)/vma.o $(OBJDIR)/rbtree.o $(OBJDIR)/vfs.o $(OBJDIR)/signal.o $(OBJDIR)/ipc.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 $(OBJDIR)/test_vma: $(OBJDIR)/test_vma.o $(OBJDIR)/vma.o $(OBJDIR)/rbtree.o
 	$(CXX) -o $@ $^ $(LDLIBS)
@@ -137,8 +137,16 @@ $(OBJDIR)/fuzz_network: $(FUZZ_OBJECTS)
 
 $(OBJDIR)/signal.o: ../src/kernel/process/signal.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
-$(OBJDIR)/test_cancellation: $(OBJDIR)/test_cancellation.o $(OBJDIR)/signal.o $(OBJDIR)/syscall.o $(OBJDIR)/user_access.o $(OBJDIR)/futex.o
+$(OBJDIR)/test_cancellation: $(OBJDIR)/test_cancellation.o $(OBJDIR)/signal.o $(OBJDIR)/syscall.o $(OBJDIR)/user_access.o $(OBJDIR)/futex.o $(OBJDIR)/ipc.o
 	$(CXX) -o $@ $^ $(LDLIBS)
 
 $(OBJDIR)/futex.o: ../src/kernel/sync/futex.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+$(OBJDIR)/ipc.o: ../src/kernel/ipc/ipc.cpp | $(OBJDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/test_ipc: $(OBJDIR)/test_ipc.o $(OBJDIR)/ipc.o $(OBJDIR)/signal.o $(OBJDIR)/syscall.o $(OBJDIR)/credentials.o
+	$(CXX) -o $@ $^ $(LDLIBS)
+
+$(OBJDIR)/credentials.o: ../src/kernel/process/credentials.cpp | $(OBJDIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c -o $@ $<

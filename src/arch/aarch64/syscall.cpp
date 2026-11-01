@@ -96,14 +96,14 @@ long dispatch_kernel(long num, long a1, long a2, long a3, long a4, long a5, long
         kernel::scheduler::scheduler::yield();
         return 0;
     case SYS_IPC_SEND:
-        kernel::ipc::ipc_manager::send_sync(static_cast<uint32_t>(a1),
-                                            *reinterpret_cast<const kernel::ipc::message*>(a2));
-        return 0;
+        return kernel::ipc::ipc_manager::send_sync(static_cast<uint32_t>(a1),
+                                                   *reinterpret_cast<const kernel::ipc::message*>(a2));
     case SYS_IPC_RECV:
-        kernel::ipc::ipc_manager::receive_sync(*reinterpret_cast<kernel::ipc::message*>(a1));
-        return 0;
+        return kernel::ipc::ipc_manager::receive_sync(*reinterpret_cast<kernel::ipc::message*>(a1));
     case SYS_IPC_CALL:
         return kernel::ipc::sys_ipc_call(static_cast<uint32_t>(a1), reinterpret_cast<kernel::ipc::fast_msg*>(a2));
+    case SYS_IPC_WAIT:
+        return kernel::ipc::sys_ipc_wait(reinterpret_cast<kernel::ipc::fast_msg*>(a1));
     case SYS_IPC_REPLY:
         return kernel::ipc::sys_ipc_reply(reinterpret_cast<kernel::ipc::fast_msg*>(a1));
     case SYS_SPAWN:

@@ -52,8 +52,8 @@
 #define SYS_SIGPROCMASK 47
 #define SYS_NANOSLEEP 48
 #define SYS_GETTIMEOFDAY 49
-#define SYS_IPC_CALL 50  // Fast IPC: send + wait for reply (register-based)
-#define SYS_IPC_REPLY 51 // Fast IPC: reply to caller + resume them
+#define SYS_IPC_CALL 50  // Fixed-word IPC: send + wait for reply
+#define SYS_IPC_REPLY 51 // Fixed-word IPC: reply to the accepted caller
 #define SYS_SPAWN 52     // Process creation: spawn a new process from an ELF file
 #define SYS_SIGRETURN 53 // Return from a user-space signal handler
 
@@ -69,3 +69,5 @@
 
 #define SYS_WAITPID 62
 #define SYS_NET_INFO 63
+
+#define SYS_IPC_WAIT 64 // Fixed-word IPC: receive one call into a 32-byte buffer

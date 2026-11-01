@@ -303,7 +303,8 @@ releasing the subsystem queue lock, enqueue once when an event races a signal,
 then unlink the wait record before clearing enrollment and unwinding.
 
 Supported cancellation points include futex, terminal read, UDP receive, TCP
-accept/connect/receive, sleep, waitpid, IRQ wait and poll/select/epoll. Futex
+accept/connect/receive, sleep, waitpid, IRQ wait, poll/select/epoll and the IPC
+send/receive/call/wait paths described below. Futex
 removes its stack waiter even when cancellation won the wake race. Sleep and IRQ
 queues retain the target under their queue lock until wakeup completes. mmap
 checks fatal requests between pages and rolls back partial population. Bounded
@@ -336,21 +337,81 @@ make -C tests OBJDIR=../build/host-tests/cancellation-tsan \
 
 Run the resulting executables in the chosen object directory. Hosted IRQ masking
 is a no-op; host tests do not prove target scheduling or general SMP reclamation.
-The storage QEMU smoke confirms each of seven workers is BLOCKED using SYS_TOP,
+The storage QEMU smoke confirms each of nine workers is BLOCKED using SYS_TOP,
 then sends TERM/KILL during sleep, futex, tty read, UDP receive, TCP accept, poll
-or epoll. The worker must terminate without returning from the interrupted
+or epoll, legacy IPC receive or fixed-message IPC wait. The worker must terminate without returning from the interrupted
 syscall; later futex wake finds no stale waiter, and subsequent storage reads
 succeed. Each clone stack is unmapped after termination. The harness requires
 `storage_smoke: safe fatal syscall cancellation PASS` on all three boots.
 
-Legacy synchronous/fast IPC waits remain uninterruptible until normal protocol
-completion: fatal signals stay pending so peer links and kernel buffers cannot
-be abandoned. Ordinary nonfatal signals do not cancel registered waits; full
+Ordinary nonfatal signals do not cancel registered waits; full
 POSIX EINTR/restart/handler semantics are not added. This is cooperative fatal
 cancellation, not arbitrary stack unwinding, rollback of completed side effects,
-or a guarantee that an unresponsive device/IPC peer can be killed immediately.
-IRQ/waitpid cancellation is cross-built; the seven-operation target campaign
+or a guarantee that an unresponsive device can be killed immediately.
+IRQ/waitpid cancellation is cross-built; the nine-operation target campaign
 does not exercise those two cancellation paths or TCP connect/receive.
+
+## IPC cancellation and peer teardown
+
+`test_ipc` links production IPC, signal policy, credential checks and shared
+syscall marshalling. Host threads and a condition variable replace the scheduler
+context-switch edges. Twenty tests cover FIFO legacy sends and fixed calls,
+authenticated legacy sender IDs, typed receiver wakeups, the 15-entry async
+ring, the 64-request incoming queue limit, queued/accepted cancellation, peer
+exit, mutual call cycles, reply/cancellation races and balanced lifetime pins.
+Two cases actually free a heap peer/caller before the surviving side resumes
+or replies, so ASan can detect an escaped thread pointer. `test_user_access`
+checks the new fixed wait's exact 32-byte copyout, unchanged output on backend
+failure, and mapping revalidation after a blocked operation.
+
+All peer links are serialized by the IPC lock. An outgoing request owns a peer
+pin; its queue or accepted-call slot owns a sender pin. Lookup pins under the
+thread-list lock, and completion unlinks and wakes before releasing either
+pin. Normal/fatal exit detaches both directions before publishing TERMINATED.
+Reaping defers while pins remain; waitpid can consume status without freeing a
+pinned thread. No IPC path retains a syscall-buffer or caller-stack pointer.
+
+The public layouts are in `uapi/kernel/ipc.h`: a 40-byte legacy message and
+32-byte fixed payload. Existing syscall IDs are preserved; `SYS_IPC_WAIT=64`
+exposes the previously unwired fixed-message receive helper through all three
+dispatchers and shared output marshalling. IPC uses normal scheduler wakeups;
+the former direct context-switch shortcut has been removed. This change makes
+no latency/throughput parity claim.
+
+Queued senders/callers receive `-EPIPE` when the peer exits. Cancellation
+unlinks a queued request; cancellation after acceptance leaves a tombstone in
+the server. `WAIT` returns `-ECANCELED` without consuming it; `REPLY` acknowledges
+it with `-ECANCELED` before another call can be accepted. A late old reply thus
+cannot satisfy a new caller. The interrupted syscall unwinds with `-EINTR`
+internally, then fatal delivery prevents return to userspace. Queue/ring
+overflow returns `-EAGAIN`, a missing peer `-ESRCH`, self-call/send `-EDEADLK`,
+and waiting with an outstanding accepted call `-EBUSY`. The incoming bound is
+64 queued requests across both kinds plus one accepted call; FIFO is per kind.
+
+```sh
+make -C tests test_ipc test_user_access
+build/host-tests/test_ipc
+build/host-tests/test_user_access
+
+make -C tests OBJDIR=../build/host-tests/ipc-sanitized \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=address,undefined' \
+  LDLIBS='-lpthread -fsanitize=address,undefined' \
+  test_ipc test_cancellation test_fat32 test_mmap test_user_access
+
+make -C tests OBJDIR=../build/host-tests/ipc-tsan \
+  CXXFLAGS='-std=c++23 -Wall -Wextra -g -fsanitize=thread' \
+  LDLIBS='-lpthread -fsanitize=thread' test_ipc test_cancellation
+```
+
+Run the resulting binaries with `UBSAN_OPTIONS=halt_on_error=1` for the
+ASan/UBSan build. The storage QEMU smoke additionally verifies queued peer
+exit, accepted server exit, accepted/queued caller cancellation, a late reply
+with a second caller already queued, successful subsequent exchange, explicit
+clone-stack unmapping and return to the baseline thread count. All three boots
+require `storage_smoke: IPC cancellation and peer teardown PASS`. These target
+checks run on one CPU; hosted concurrency and AArch64 SMP boot do not establish
+general target SMP scheduling/reclamation correctness. No IPC deadline API or
+complete POSIX signal handlers/restart policy is added.
 
 ## File-backed mmap population and rollback
 

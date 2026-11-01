@@ -140,8 +140,18 @@ namespace kernel::scheduler {
 thread* scheduler::current_thread() noexcept {
     return has_thread ? &current : nullptr;
 }
+thread* scheduler::pin_thread(uint32_t) noexcept {
+    return nullptr;
+}
+
 bool thread::ensure_fd_capacity(size_t count) noexcept {
     return fd_table && fd_count >= count;
+}
+void scheduler::unblock(thread* target) noexcept {
+    target->state.store(thread_state::READY);
+}
+void scheduler::schedule() noexcept {
+    std::abort();
 }
 void scheduler::add_thread(thread* target) noexcept {
     target->state.store(thread_state::READY, kernel::release);

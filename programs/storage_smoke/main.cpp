@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
+#include <uapi/kernel/ipc.h>
 #include <uapi/kernel/syscalls.h>
 #include <uapi/kernel/top.h>
 #include <unistd.h>
@@ -227,6 +228,16 @@ void blocked_probe(void* argument) {
         epoll_wait(fd, &event, 1, -1);
         break;
     }
+    case 7: {
+        rucux_ipc_message message{};
+        syscall(SYS_IPC_RECV, reinterpret_cast<long>(&message));
+        break;
+    }
+    case 8: {
+        rucux_ipc_words words{};
+        syscall(SYS_IPC_WAIT, reinterpret_cast<long>(&words));
+        break;
+    }
     default:
         _exit(1);
     }
@@ -250,7 +261,7 @@ bool wait_blocked(long tid) {
 
 bool verify_cancellation() {
     constexpr size_t STACK = 64 * 1024;
-    for (unsigned operation = 0; operation < 7; ++operation) {
+    for (unsigned operation = 0; operation < 9; ++operation) {
         auto* stack = static_cast<uint8_t*>(mmap(nullptr, STACK, READ_WRITE, PRIVATE_ANON, -1, 0));
         if (stack == MAP_FAILED) return false;
         cancellation_probe probe{operation, 0, 0, 0};
@@ -281,6 +292,155 @@ bool verify_cancellation() {
     }
     printf("storage_smoke: safe fatal syscall cancellation PASS\n");
     return true;
+}
+
+struct ipc_probe {
+    unsigned mode;
+    uint32_t peer;
+    unsigned accepted = 0, proceed = 0, done = 0, returned = 0;
+    long result = -999, wait_result = -999, late_result = -999;
+    rucux_ipc_words words{123, 11, 22, 33};
+};
+
+void ipc_worker(void* argument) {
+    auto* probe = static_cast<ipc_probe*>(argument);
+    if (probe->mode == 0) {
+        timespec delay{60, 0};
+        syscall(SYS_NANOSLEEP, reinterpret_cast<long>(&delay), 0);
+        _exit(1);
+    }
+    if (probe->mode == 1) {
+        rucux_ipc_message message{999, 42, {1, 2, 3, 4}};
+        probe->result = syscall(SYS_IPC_SEND, probe->peer, reinterpret_cast<long>(&message));
+        __atomic_store_n(&probe->returned, 1U, __ATOMIC_RELEASE);
+    } else if (probe->mode == 2) {
+        probe->result = syscall(SYS_IPC_CALL, probe->peer, reinterpret_cast<long>(&probe->words));
+        __atomic_store_n(&probe->returned, 1U, __ATOMIC_RELEASE);
+    } else {
+        rucux_ipc_words request{};
+        probe->result = syscall(SYS_IPC_WAIT, reinterpret_cast<long>(&request));
+        if (probe->result != 0) _exit(1);
+        __atomic_store_n(&probe->accepted, 1U, __ATOMIC_RELEASE);
+        while (!__atomic_load_n(&probe->proceed, __ATOMIC_ACQUIRE))
+            sched_yield();
+        if (probe->mode == 3) _exit(0); // Normal server exit with an accepted caller.
+        probe->wait_result = syscall(SYS_IPC_WAIT, reinterpret_cast<long>(&request));
+        probe->late_result = syscall(SYS_IPC_REPLY, reinterpret_cast<long>(&request));
+        if (probe->wait_result != -125 || probe->late_result != -125) _exit(1);
+        probe->result = syscall(SYS_IPC_WAIT, reinterpret_cast<long>(&request));
+        if (probe->result != 0 || request.d0 != 77) _exit(1);
+        request.d0 = 88;
+        probe->result = syscall(SYS_IPC_REPLY, reinterpret_cast<long>(&request));
+    }
+    __atomic_store_n(&probe->done, 1U, __ATOMIC_RELEASE);
+    _exit(0);
+}
+struct ipc_child {
+    static constexpr size_t STACK = 64 * 1024;
+    uint8_t* stack = nullptr;
+    long tid = -1;
+    bool start(ipc_probe& probe) {
+        stack = static_cast<uint8_t*>(mmap(nullptr, STACK, READ_WRITE, PRIVATE_ANON, -1, 0));
+        if (stack == MAP_FAILED) {
+            stack = nullptr;
+            return false;
+        }
+        tid = syscall(SYS_CLONE, reinterpret_cast<long>(ipc_worker), reinterpret_cast<long>(stack + STACK),
+                      reinterpret_cast<long>(&probe));
+        return tid >= 0;
+    }
+    bool join() {
+        if (tid < 0) return false;
+        while (kill(static_cast<int>(tid), 0) >= 0)
+            sched_yield();
+        const bool ok = munmap(stack, STACK) == 0;
+        stack = nullptr;
+        return ok;
+    }
+    ~ipc_child() {
+        if (stack) {
+            if (tid >= 0) {
+                kill(static_cast<int>(tid), SIGKILL);
+                join();
+            } else {
+                munmap(stack, STACK);
+            }
+        }
+    }
+};
+
+bool verify_ipc_lifecycle() {
+    // Let earlier cancelled clones be reaped before recording the thread count.
+    sched_yield();
+    sched_yield();
+    top_info before{};
+    if (syscall(SYS_TOP, reinterpret_cast<long>(&before), sizeof(before)) < 0) return false;
+    for (unsigned mode = 1; mode <= 2; ++mode) {
+        ipc_probe server_probe{0, 0}, sender_probe{mode, 0};
+        ipc_child server, sender;
+        if (!server.start(server_probe) || !wait_blocked(server.tid)) return false;
+        sender_probe.peer = static_cast<uint32_t>(server.tid);
+        if (!sender.start(sender_probe) || !wait_blocked(sender.tid)) return false;
+        if (kill(static_cast<int>(server.tid), SIGTERM) != 0 || !server.join() || !sender.join()) return false;
+        if (!__atomic_load_n(&sender_probe.done, __ATOMIC_ACQUIRE) || sender_probe.result != -32 ||
+            sender_probe.words.d0 != 11)
+            return false;
+    }
+    {
+        ipc_probe server_probe{3, 0}, caller_probe{2, 0};
+        ipc_child server, caller;
+        if (!server.start(server_probe) || !wait_blocked(server.tid)) return false;
+        caller_probe.peer = static_cast<uint32_t>(server.tid);
+        if (!caller.start(caller_probe)) return false;
+        while (!__atomic_load_n(&server_probe.accepted, __ATOMIC_ACQUIRE))
+            sched_yield();
+        __atomic_store_n(&server_probe.proceed, 1U, __ATOMIC_RELEASE);
+        if (!server.join() || !caller.join()) return false;
+        if (!__atomic_load_n(&caller_probe.done, __ATOMIC_ACQUIRE) || caller_probe.result != -32 ||
+            caller_probe.words.d0 != 11)
+            return false;
+    }
+    {
+        ipc_probe server_probe{4, 0}, cancelled_probe{2, 0}, later_probe{2, 0};
+        ipc_child server, cancelled, later;
+        if (!server.start(server_probe) || !wait_blocked(server.tid)) return false;
+        cancelled_probe.peer = later_probe.peer = static_cast<uint32_t>(server.tid);
+        if (!cancelled.start(cancelled_probe)) return false;
+        while (!__atomic_load_n(&server_probe.accepted, __ATOMIC_ACQUIRE))
+            sched_yield();
+        if (kill(static_cast<int>(cancelled.tid), SIGKILL) != 0 || !cancelled.join()) return false;
+        if (__atomic_load_n(&cancelled_probe.returned, __ATOMIC_ACQUIRE) || cancelled_probe.words.d0 != 11)
+            return false;
+        later_probe.words.d0 = 77;
+        if (!later.start(later_probe) || !wait_blocked(later.tid)) return false;
+        __atomic_store_n(&server_probe.proceed, 1U, __ATOMIC_RELEASE);
+        if (!later.join() || !server.join()) return false;
+        if (!__atomic_load_n(&server_probe.done, __ATOMIC_ACQUIRE) || server_probe.result != 0 ||
+            server_probe.wait_result != -125 || server_probe.late_result != -125 ||
+            !__atomic_load_n(&later_probe.done, __ATOMIC_ACQUIRE) || later_probe.result != 0 ||
+            later_probe.words.d0 != 88)
+            return false;
+    }
+    {
+        ipc_probe server_probe{0, 0}, sender_probe{1, 0};
+        ipc_child server, sender;
+        if (!server.start(server_probe) || !wait_blocked(server.tid)) return false;
+        sender_probe.peer = static_cast<uint32_t>(server.tid);
+        if (!sender.start(sender_probe) || !wait_blocked(sender.tid)) return false;
+        if (kill(static_cast<int>(sender.tid), SIGTERM) != 0 || !sender.join()) return false;
+        if (__atomic_load_n(&sender_probe.returned, __ATOMIC_ACQUIRE)) return false;
+        if (kill(static_cast<int>(server.tid), SIGKILL) != 0 || !server.join()) return false;
+    }
+    for (unsigned attempt = 0; attempt < 1000; ++attempt) {
+        sched_yield();
+        top_info after{};
+        if (syscall(SYS_TOP, reinterpret_cast<long>(&after), sizeof(after)) < 0) return false;
+        if (after.num_processes == before.num_processes) {
+            printf("storage_smoke: IPC cancellation and peer teardown PASS\n");
+            return true;
+        }
+    }
+    return false; // A leaked peer pin would retain a terminated thread.
 }
 
 bool verify_ramfs() {
@@ -437,6 +597,7 @@ int main() {
     REQUIRE(verify_lookup());
     REQUIRE(verify_ownership());
     REQUIRE(verify_cancellation());
+    REQUIRE(verify_ipc_lifecycle());
     REQUIRE(verify_ramfs());
     REQUIRE(verify_mmap());
     if (stage == '0') {

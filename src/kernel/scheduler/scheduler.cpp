@@ -3,6 +3,7 @@
 #include <arch/armv7/exception.hpp>
 #endif
 #include <kernel/cpu/percpu.hpp>
+#include <kernel/ipc/ipc.hpp>
 #include <kernel/memory/user_access.hpp>
 #include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
@@ -64,6 +65,7 @@ static thread* find_thread_locked(uint32_t tid, thread** prev_out = nullptr) noe
 
 static void destroy_thread(thread* t) noexcept {
     if (!t) return;
+    kernel::ipc::detach_thread(t);
     kernel::vfs::tty::detach_reader(t);
     {
         kernel::irq_lock_guard guard(g_irq_waiters_lock);
@@ -99,6 +101,10 @@ static void destroy_thread(thread* t) noexcept {
 
 static void reap_thread_locked(thread* victim, thread* prev) noexcept {
     if (!victim) return;
+    if (victim->pins.load(kernel::acquire)) {
+        victim->parent_tid = 0; // Status consumed; reclaim after the last peer pin.
+        return;
+    }
     if (prev)
         prev->all_next = victim->all_next;
     else
@@ -590,7 +596,8 @@ void scheduler::cleanup_terminated() noexcept {
         if (cur->state.load(kernel::acquire) == thread_state::TERMINATED && cur != this_thread) {
             // Defer reaping if the parent is still alive; sys_waitpid()
             // will collect the corpse and consume the exit status.
-            if (cur->process_id == cur->tid && cur->parent_tid != 0 && find_thread_locked(cur->parent_tid) != nullptr) {
+            if (cur->pins.load(kernel::acquire) || (cur->process_id == cur->tid && cur->parent_tid != 0 &&
+                                                    find_thread_locked(cur->parent_tid) != nullptr)) {
                 prev = cur;
                 cur = cur->all_next;
                 continue;
@@ -779,6 +786,7 @@ void scheduler::exit(int status) noexcept {
     TRACE_INSTANT(TRACE_EVENT_THREAD_EXIT, cur->tid, 0);
     // Close callbacks may take subsystem locks; run before marking the thread
     // reapable and without the global thread-list lock.
+    kernel::ipc::detach_thread(cur);
     kernel::vfs::vfs_manager::close_all(cur);
     cur->exited = true;
     cur->exit_code = (status & 0xff) << 8;
@@ -813,6 +821,16 @@ int scheduler::signal_thread(int pid, int sig) noexcept {
     if (!target || target->state.load(kernel::acquire) == thread_state::TERMINATED) return -3;
     if (!kernel::process::may_signal(sender->creds, sender->tid, target->creds, target->tid)) return -1;
     return kernel::process::signal_manager::post_signal(target, sig);
+}
+
+thread* scheduler::pin_thread(uint32_t tid) noexcept {
+    kernel::irq_lock_guard guard(g_threads_lock);
+    auto* target = find_thread_locked(tid);
+    if (!target || target->state.load(kernel::acquire) == thread_state::TERMINATED ||
+        target->ipc_closed.load(kernel::acquire))
+        return nullptr;
+    target->pin();
+    return target;
 }
 
 thread* scheduler::get_thread_by_tid(uint32_t tid) noexcept {

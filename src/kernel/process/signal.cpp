@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <kernel/ipc/ipc.hpp>
 #include <kernel/process/credentials.hpp>
 #include <kernel/process/signal.hpp>
 #include <kernel/scheduler/scheduler.hpp>
@@ -64,8 +65,8 @@ int signal_manager::post_signal(scheduler::thread* target, int sig) noexcept {
         target->sig_handlers[sig] == reinterpret_cast<scheduler::thread::sighandler_t>(SIG_IGN_VAL))
         return 0;
     target->sig_pending.fetch_or(1U << sig, release);
-    // Only waits with an explicit queue-cleanup path may be interrupted. Legacy
-    // IPC remains pending until its normal completion; never abandon its stack.
+    // Only explicitly enrolled waits may be interrupted; their kernel scopes
+    // resume and unlink queue records before fatal delivery.
     if (target->fatal_signal_pending() && target->interruptible_wait &&
         target->state.load(kernel::acquire) == scheduler::thread_state::BLOCKED)
         scheduler::scheduler::add_thread(target);
@@ -121,6 +122,7 @@ bool signal_manager::consume_fatal_signal(scheduler::thread* t) noexcept {
 
     // Fatal delivery, like exit(), releases descriptors before making the
     // thread reapable. No global thread-list lock is held here.
+    ipc::detach_thread(t);
     vfs::vfs_manager::close_all(t);
     t->sig_pending.fetch_and(~(1U << fatal_sig), acq_rel);
     t->exit_code = fatal_sig & 0x7f; // waitpid signal-status encoding

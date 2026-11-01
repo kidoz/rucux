@@ -1,282 +1,278 @@
 // SPDX-License-Identifier: MIT
-#include <kernel/cpu/percpu.hpp>
 #include <kernel/ipc/ipc.hpp>
-#include <kernel/memory/vmm.hpp>
-#include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
-#include <kernel/sync/rcu.hpp>
 #include <kernel/sync/spinlock.hpp>
 #include <lib/string.hpp>
 
-#ifdef __x86_64__
-#include <arch/amd64/tss.hpp>
-#endif
-
-extern "C" void switch_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
-extern "C" uintptr_t g_current_kernel_stack;
-
 namespace kernel::ipc {
+namespace {
+using scheduler::ipc_wait_kind;
+using scheduler::thread;
+using scheduler::thread_state;
+irq_spinlock ipc_lock;
+constexpr int PENDING = -115;
 
-// ─── Legacy IPC (unchanged) ───────────────────────────────────────────────
-
-void ipc_manager::send_sync(uint32_t target_tid, const message& msg) noexcept {
-    scheduler::thread* current = scheduler::scheduler::current_thread();
-    scheduler::thread* target = scheduler::scheduler::get_thread_by_tid(target_tid);
-
-    if (!target) {
-        kernel::print("IPC: Target {} not found\n", target_tid);
-        return;
+// Lock order: thread-list (lookup/exit) -> IPC -> per-thread wait -> run queue.
+// Lookup obtains a pin before taking IPC; unpin never takes the thread-list lock.
+class peer_pin {
+public:
+    explicit peer_pin(thread* peer) noexcept
+        : peer_(peer) {}
+    ~peer_pin() {
+        if (peer_) peer_->unpin();
+    }
+    peer_pin(const peer_pin&) = delete;
+    peer_pin& operator=(const peer_pin&) = delete;
+    thread* get() const noexcept { return peer_; }
+    thread* detach() noexcept {
+        auto* result = peer_;
+        peer_ = nullptr;
+        return result;
     }
 
-    current->queued_msg.sender = current->tid;
-    current->queued_msg.type = msg.type;
-    lib::memcpy(current->queued_msg.data, msg.data, sizeof(msg.data));
-    current->has_queued_msg = true;
-    current->send_queue_next = nullptr;
+private:
+    thread* peer_;
+};
 
-    if (!target->send_queue_head) {
-        target->send_queue_head = current;
-    } else {
-        scheduler::thread* cur = target->send_queue_head;
-        while (cur->send_queue_next)
-            cur = cur->send_queue_next;
-        cur->send_queue_next = current;
+bool closed(const thread* owner) noexcept {
+    return owner->ipc_closed.load(acquire) || owner->state.load(acquire) == thread_state::TERMINATED;
+}
+void copy_regs(fast_msg& out, const thread& owner) noexcept {
+    out = {owner.ipc_regs[0], owner.ipc_regs[1], owner.ipc_regs[2], owner.ipc_regs[3]};
+}
+void save_regs(thread& owner, const fast_msg& in) noexcept {
+    owner.ipc_regs[0] = in.type;
+    owner.ipc_regs[1] = in.d0;
+    owner.ipc_regs[2] = in.d1;
+    owner.ipc_regs[3] = in.d2;
+}
+void unlink_request(thread* peer, thread* sender) noexcept {
+    thread* previous = nullptr;
+    auto** link = &peer->send_queue_head;
+    while (*link && *link != sender) {
+        previous = *link;
+        link = &(*link)->send_queue_next;
     }
-
-    if (target->state.load(kernel::acquire) == scheduler::thread_state::BLOCKED && target->recv_buffer) {
-        scheduler::scheduler::unblock(target);
-    }
-
-    scheduler::scheduler::block(scheduler::thread_state::BLOCKED);
+    if (!*link) return; // The pin may instead belong to an accepted call.
+    *link = sender->send_queue_next;
+    if (peer->send_queue_tail == sender) peer->send_queue_tail = previous;
+    sender->send_queue_next = nullptr;
+    --peer->ipc_queue_count;
 }
 
-void ipc_manager::send_async(uint32_t target_tid, const message& msg) noexcept {
-    scheduler::thread* target = scheduler::scheduler::get_thread_by_tid(target_tid);
-    if (!target) return;
+// Caller holds IPC. The peer's queue or accepted-call slot owns one sender pin;
+// the sender owns one peer pin. Wake before dropping those pins, with no raw
+// pointer escaping the lock. A resuming sender must take IPC before returning.
+void complete(thread* sender, int result, bool cancelled = false) noexcept {
+    auto* peer = sender->ipc_peer;
+    if (!peer) return;
+    if (peer->ipc_caller == sender) {
+        peer->ipc_caller = nullptr;
+        if (cancelled && !closed(peer)) peer->ipc_reply_cancelled = true;
+    } else {
+        unlink_request(peer, sender);
+    }
+    sender->ipc_peer = nullptr;
+    sender->has_queued_msg = false;
+    sender->ipc_result = result;
+    scheduler::scheduler::unblock(sender);
+    peer->unpin();
+    sender->unpin();
+}
+thread* first_request(thread* receiver, ipc_wait_kind kind) noexcept {
+    for (;;) {
+        auto* sender = receiver->send_queue_head;
+        while (sender && sender->ipc_kind != kind)
+            sender = sender->send_queue_next;
+        if (!sender) return nullptr;
+        if (!sender->fatal_signal_pending()) return sender;
+        complete(sender, -4, true);
+    }
+}
+void clear_wait(thread* owner) noexcept {
+    owner->ipc_kind = ipc_wait_kind::none;
+    owner->ipc_waiting = false;
+    owner->recv_buffer = nullptr;
+    owner->end_interruptible_wait();
+}
 
-    size_t next_tail = (target->async_tail + 1) % scheduler::thread::ASYNC_QUEUE_SIZE;
-    if (next_tail == target->async_head) return;
+int submit(uint32_t tid, ipc_wait_kind kind, const message* legacy, const fast_msg* fixed, fast_msg* reply) noexcept {
+    auto* sender = scheduler::scheduler::current_thread();
+    if (!sender) return -3;
+    if (sender->tid == tid) return -35;
+    peer_pin target(scheduler::scheduler::pin_thread(tid));
+    if (!target.get()) return -3;
+    {
+        irq_lock_guard guard(ipc_lock);
+        auto* peer = target.get();
+        if (closed(sender) || closed(peer)) return -32;
+        if (!process::may_ipc(sender->creds, peer->creds)) return -1;
+        if (sender->ipc_kind != ipc_wait_kind::none) return -16;
+        if (peer->ipc_queue_count >= MAX_PENDING_REQUESTS) return -11;
+        if (!sender->begin_interruptible_wait()) return -4;
+        sender->ipc_kind = kind;
+        sender->ipc_result = PENDING;
+        sender->ipc_peer = target.detach();
+        sender->send_queue_next = nullptr;
+        if (legacy) {
+            sender->queued_msg.sender = sender->tid;
+            sender->queued_msg.type = legacy->type;
+            lib::memcpy(sender->queued_msg.data, legacy->data, sizeof(legacy->data));
+            sender->has_queued_msg = true;
+        } else {
+            save_regs(*sender, *fixed);
+        }
+        sender->pin(); // Ownership of this request transfers to the peer queue.
+        if (peer->send_queue_tail)
+            peer->send_queue_tail->send_queue_next = sender;
+        else
+            peer->send_queue_head = sender;
+        peer->send_queue_tail = sender;
+        ++peer->ipc_queue_count;
+        const auto wanted = kind == ipc_wait_kind::call ? ipc_wait_kind::receive_call : ipc_wait_kind::legacy_receive;
+        if (peer->ipc_kind == wanted) scheduler::scheduler::unblock(peer);
+    }
+    for (;;) {
+        scheduler::scheduler::schedule();
+        irq_lock_guard guard(ipc_lock);
+        if (sender->fatal_signal_pending() && sender->ipc_peer) complete(sender, -4, true);
+        if (sender->ipc_result != PENDING) {
+            const int result = sender->fatal_signal_pending() ? -4 : sender->ipc_result;
+            if (!result && reply) copy_regs(*reply, *sender);
+            clear_wait(sender);
+            return result;
+        }
+        // Unrelated/spurious wakeups do not fabricate a successful exchange.
+        sender->end_interruptible_wait();
+        if (!sender->begin_interruptible_wait()) {
+            complete(sender, -4, true);
+            clear_wait(sender);
+            return -4;
+        }
+    }
+}
+} // namespace
 
-    auto& entry = target->async_queue[target->async_tail];
-    entry.sender = scheduler::scheduler::current_thread()->tid;
+int ipc_manager::send_sync(uint32_t target_tid, const message& msg) noexcept {
+    return submit(target_tid, ipc_wait_kind::legacy_send, &msg, nullptr, nullptr);
+}
+int ipc_manager::send_async(uint32_t target_tid, const message& msg) noexcept {
+    auto* sender = scheduler::scheduler::current_thread();
+    if (!sender) return -3;
+    peer_pin target(scheduler::scheduler::pin_thread(target_tid));
+    if (!target.get()) return -3;
+    irq_lock_guard guard(ipc_lock);
+    auto* peer = target.get();
+    if (closed(sender) || closed(peer)) return -32;
+    if (!process::may_ipc(sender->creds, peer->creds)) return -1;
+    if (sender->fatal_signal_pending()) return -4;
+    const size_t next = (peer->async_tail + 1) % thread::ASYNC_QUEUE_SIZE;
+    if (next == peer->async_head) return -11;
+    auto& entry = peer->async_queue[peer->async_tail];
+    entry.sender = sender->tid;
     entry.type = msg.type;
     lib::memcpy(entry.data, msg.data, sizeof(msg.data));
-    target->async_tail = next_tail;
-
-    if (target->state.load(kernel::acquire) == scheduler::thread_state::BLOCKED && target->recv_buffer == nullptr) {
-        scheduler::scheduler::unblock(target);
+    peer->async_tail = next;
+    if (peer->ipc_kind == ipc_wait_kind::legacy_receive) scheduler::scheduler::unblock(peer);
+    return 0;
+}
+int ipc_manager::receive_sync(message& msg) noexcept {
+    auto* receiver = scheduler::scheduler::current_thread();
+    if (!receiver) return -3;
+    for (;;) {
+        {
+            irq_lock_guard guard(ipc_lock);
+            if (closed(receiver)) return -32;
+            if (receiver->fatal_signal_pending()) return -4;
+            if (receiver->ipc_kind != ipc_wait_kind::none) return -16;
+            if (receiver->async_head != receiver->async_tail) {
+                const auto& entry = receiver->async_queue[receiver->async_head];
+                msg.sender = entry.sender;
+                msg.type = entry.type;
+                lib::memcpy(msg.data, entry.data, sizeof(msg.data));
+                receiver->async_head = (receiver->async_head + 1) % thread::ASYNC_QUEUE_SIZE;
+                return 0;
+            }
+            if (auto* sender = first_request(receiver, ipc_wait_kind::legacy_send)) {
+                msg.sender = sender->tid;
+                msg.type = sender->queued_msg.type;
+                lib::memcpy(msg.data, sender->queued_msg.data, sizeof(msg.data));
+                complete(sender, 0);
+                return 0;
+            }
+            if (!receiver->begin_interruptible_wait()) return -4;
+            receiver->ipc_kind = ipc_wait_kind::legacy_receive;
+        }
+        scheduler::scheduler::schedule();
+        irq_lock_guard guard(ipc_lock);
+        clear_wait(receiver);
     }
 }
-
-void ipc_manager::receive_sync(message& msg) noexcept {
-    scheduler::thread* current = scheduler::scheduler::current_thread();
-
-    if (current->async_head != current->async_tail) {
-        auto& entry = current->async_queue[current->async_head];
-        msg.sender = entry.sender;
-        msg.type = entry.type;
-        lib::memcpy(msg.data, entry.data, sizeof(msg.data));
-        current->async_head = (current->async_head + 1) % scheduler::thread::ASYNC_QUEUE_SIZE;
-        return;
-    }
-
-    if (current->send_queue_head) {
-        scheduler::thread* sender = current->send_queue_head;
-        current->send_queue_head = sender->send_queue_next;
-        msg.sender = sender->queued_msg.sender;
-        msg.type = sender->queued_msg.type;
-        lib::memcpy(msg.data, sender->queued_msg.data, sizeof(msg.data));
-        sender->has_queued_msg = false;
-        scheduler::scheduler::unblock(sender);
-        return;
-    }
-
-    current->recv_buffer = &msg;
-    scheduler::scheduler::block(scheduler::thread_state::BLOCKED);
-
-    if (current->send_queue_head) {
-        scheduler::thread* sender = current->send_queue_head;
-        current->send_queue_head = sender->send_queue_next;
-        msg.sender = sender->queued_msg.sender;
-        msg.type = sender->queued_msg.type;
-        lib::memcpy(msg.data, sender->queued_msg.data, sizeof(msg.data));
-        sender->has_queued_msg = false;
-        scheduler::scheduler::unblock(sender);
-    }
-    current->recv_buffer = nullptr;
-}
-
-// ─── Fast IPC (register-based, direct thread switch) ──────────────────────
-//
-// The fast path performs a DIRECT context switch between sender and receiver,
-// bypassing the scheduler's run queues entirely. This eliminates:
-//   - Two run-queue enqueue/dequeue operations
-//   - Two lock acquisitions on the scheduler
-//   - The scheduling decision overhead
-//
-// Message data stays in the ipc_regs[] array (which maps 1:1 to CPU registers
-// in the syscall ABI). A truly optimized implementation would keep data in
-// actual CPU registers through the entire switch, but that requires custom
-// assembly. This C++ implementation uses a 4-word buffer which the compiler
-// keeps in registers or L1 cache.
-
-// Direct thread switch: save current context, switch to target.
-// Like switch_context but also handles CR3/TSS for cross-address-space calls.
-static void direct_switch(scheduler::thread* from, scheduler::thread* to) noexcept {
-    auto* pcpu = cpu::this_cpu();
-    kernel::rcu::note_quiescent_state();
-
-    to->state.store(scheduler::thread_state::RUNNING, kernel::release);
-    to->last_cpu = pcpu->cpu_id;
-    pcpu->current_thread = to;
-
-    uintptr_t new_kstack = to->stack_base + to->stack_size;
-    pcpu->kernel_stack = new_kstack;
-    g_current_kernel_stack = new_kstack;
-
-#ifdef __x86_64__
-    arch::amd64::tss_set_rsp0(new_kstack);
-#endif
-    if (to->pml4_phys && to->pml4_phys != from->pml4_phys) {
-        kernel::memory::vmm::switch_to(to->pml4_phys);
-    }
-
-#if defined(__x86_64__)
-    arch::amd64::switch_fpu(&from->fpu, to->fpu);
-#endif
-    switch_context(&from->stack_pointer, to->stack_pointer);
-}
-
 long sys_ipc_call(uint32_t target_tid, fast_msg* regs) noexcept {
-    uintptr_t flags = irq_save();
-
-    auto* sender = cpu::this_cpu()->current_thread;
-    auto* receiver = scheduler::scheduler::get_thread_by_tid(target_tid);
-
-    if (!receiver) {
-        irq_restore(flags);
-        return -1;
-    }
-
-    // Copy message into sender's register buffer
-    sender->ipc_regs[0] = regs->type;
-    sender->ipc_regs[1] = regs->d0;
-    sender->ipc_regs[2] = regs->d1;
-    sender->ipc_regs[3] = regs->d2;
-
-    // Is the receiver waiting for us?
-    if (receiver->ipc_waiting) {
-        // Fast path: direct switch to receiver
-        receiver->ipc_waiting = false;
-
-        // Transfer message to receiver's register buffer
-        receiver->ipc_regs[0] = regs->type;
-        receiver->ipc_regs[1] = regs->d0;
-        receiver->ipc_regs[2] = regs->d1;
-        receiver->ipc_regs[3] = regs->d2;
-
-        // Record that sender is waiting for a reply
-        receiver->ipc_caller = sender;
-        sender->state.store(scheduler::thread_state::BLOCKED, kernel::release);
-
-        // Direct switch: sender → receiver (no scheduler)
-        direct_switch(sender, receiver);
-
-        // When we get here, the receiver has replied.
-        // Our ipc_regs now contain the reply.
-        regs->type = sender->ipc_regs[0];
-        regs->d0 = sender->ipc_regs[1];
-        regs->d1 = sender->ipc_regs[2];
-        regs->d2 = sender->ipc_regs[3];
-
-        irq_restore(flags);
-        return 0;
-    }
-
-    // Slow path: receiver is not waiting — queue and block
-    receiver->ipc_caller = sender;
-    sender->state.store(scheduler::thread_state::BLOCKED, kernel::release);
-
-    // Use the scheduler to block — the receiver will pick us up
-    // when it calls ipc_wait()
-    irq_restore(flags);
-    scheduler::scheduler::schedule();
-
-    // Woken by reply — read response
-    flags = irq_save();
-    regs->type = sender->ipc_regs[0];
-    regs->d0 = sender->ipc_regs[1];
-    regs->d1 = sender->ipc_regs[2];
-    regs->d2 = sender->ipc_regs[3];
-    irq_restore(flags);
-    return 0;
+    if (!regs) return -14;
+    return submit(target_tid, ipc_wait_kind::call, nullptr, regs, regs);
 }
-
-long sys_ipc_reply(fast_msg* regs) noexcept {
-    uintptr_t flags = irq_save();
-
-    auto* server = cpu::this_cpu()->current_thread;
-    auto* caller = server->ipc_caller;
-
-    if (!caller) {
-        irq_restore(flags);
-        return -1; // No pending caller
-    }
-
-    server->ipc_caller = nullptr;
-
-    // Transfer reply into caller's register buffer
-    caller->ipc_regs[0] = regs->type;
-    caller->ipc_regs[1] = regs->d0;
-    caller->ipc_regs[2] = regs->d1;
-    caller->ipc_regs[3] = regs->d2;
-
-    // Direct switch: server → caller (caller resumes in ipc_call)
-    caller->state.store(scheduler::thread_state::RUNNING, kernel::release);
-    server->state.store(scheduler::thread_state::READY, kernel::release);
-
-    // Put server back on the run queue
-    scheduler::scheduler::add_thread(server);
-
-    // Direct switch to caller
-    direct_switch(server, caller);
-
-    irq_restore(flags);
-    return 0;
-}
-
 long sys_ipc_wait(fast_msg* regs) noexcept {
-    uintptr_t flags = irq_save();
-
-    auto* server = cpu::this_cpu()->current_thread;
-
-    // Check if a caller is already queued
-    if (server->ipc_caller) {
-        auto* caller = server->ipc_caller;
-        // Copy caller's message to our regs
-        regs->type = caller->ipc_regs[0];
-        regs->d0 = caller->ipc_regs[1];
-        regs->d1 = caller->ipc_regs[2];
-        regs->d2 = caller->ipc_regs[3];
-
-        irq_restore(flags);
-        return 0;
+    if (!regs) return -14;
+    auto* server = scheduler::scheduler::current_thread();
+    if (!server) return -3;
+    for (;;) {
+        {
+            irq_lock_guard guard(ipc_lock);
+            if (closed(server)) return -32;
+            if (server->fatal_signal_pending()) return -4;
+            if (server->ipc_kind != ipc_wait_kind::none || server->ipc_caller) return -16;
+            if (server->ipc_reply_cancelled) return -125;
+            if (auto* caller = first_request(server, ipc_wait_kind::call)) {
+                unlink_request(server, caller); // Transfer the queue pin to ipc_caller.
+                server->ipc_caller = caller;
+                copy_regs(*regs, *caller);
+                return 0;
+            }
+            if (!server->begin_interruptible_wait()) return -4;
+            server->ipc_kind = ipc_wait_kind::receive_call;
+            server->ipc_waiting = true;
+        }
+        scheduler::scheduler::schedule();
+        irq_lock_guard guard(ipc_lock);
+        clear_wait(server);
     }
-
-    // No caller yet — block
-    server->ipc_waiting = true;
-    server->state.store(scheduler::thread_state::BLOCKED, kernel::release);
-    irq_restore(flags);
-    scheduler::scheduler::schedule();
-
-    // Woken by ipc_call direct switch — ipc_regs already populated
-    flags = irq_save();
-    regs->type = server->ipc_regs[0];
-    regs->d0 = server->ipc_regs[1];
-    regs->d1 = server->ipc_regs[2];
-    regs->d2 = server->ipc_regs[3];
-    irq_restore(flags);
+}
+long sys_ipc_reply(fast_msg* regs) noexcept {
+    if (!regs) return -14;
+    auto* server = scheduler::scheduler::current_thread();
+    if (!server) return -3;
+    irq_lock_guard guard(ipc_lock);
+    if (closed(server)) return -32;
+    if (server->fatal_signal_pending()) return -4;
+    if (server->ipc_kind != ipc_wait_kind::none) return -16;
+    if (server->ipc_reply_cancelled) {
+        server->ipc_reply_cancelled = false;
+        return -125;
+    }
+    auto* caller = server->ipc_caller;
+    if (!caller) return -2;
+    if (caller->fatal_signal_pending()) {
+        complete(caller, -4, true);
+        server->ipc_reply_cancelled = false; // This reply acknowledges cancellation.
+        return -125;
+    }
+    save_regs(*caller, *regs);
+    complete(caller, 0);
     return 0;
 }
-
+void detach_thread(thread* owner) noexcept {
+    if (!owner) return;
+    irq_lock_guard guard(ipc_lock);
+    if (owner->ipc_closed.exchange(true, acq_rel)) return;
+    if (owner->ipc_peer) complete(owner, -4, true);
+    while (owner->send_queue_head)
+        complete(owner->send_queue_head, -32);
+    if (owner->ipc_caller) complete(owner->ipc_caller, -32);
+    owner->ipc_reply_cancelled = false;
+    owner->async_head = owner->async_tail = 0;
+    owner->recv_buffer = nullptr;
+    if (owner->ipc_kind == ipc_wait_kind::legacy_receive || owner->ipc_kind == ipc_wait_kind::receive_call)
+        scheduler::scheduler::unblock(owner);
+}
 } // namespace kernel::ipc

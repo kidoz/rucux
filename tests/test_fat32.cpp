@@ -152,6 +152,16 @@ namespace scheduler {
 thread* scheduler::current_thread() noexcept {
     return &current;
 }
+thread* scheduler::pin_thread(uint32_t) noexcept {
+    return nullptr;
+}
+
+void scheduler::unblock(thread* target) noexcept {
+    target->state.store(thread_state::READY);
+}
+void scheduler::schedule() noexcept {
+    std::abort();
+}
 void scheduler::add_thread(thread* target) noexcept {
     target->state.store(thread_state::READY, kernel::release);
 }

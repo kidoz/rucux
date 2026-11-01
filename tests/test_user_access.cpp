@@ -137,6 +137,35 @@ TEST(ipc_receive_copies_to_caller_after_blocking) {
     ASSERT_EQ(pages[39], 0);
     ASSERT_EQ(pages[40], 0xA5);
 }
+TEST(ipc_wait_copies_exactly_four_words_and_preserves_output_on_error) {
+    reset();
+    auto success = +[](long, long buf, long, long, long, long, long) -> long {
+        memset(reinterpret_cast<void*>(buf), 0x42, 32);
+        return 0;
+    };
+    ASSERT_EQ(kernel::checked_syscall(success, SYS_IPC_WAIT, BASE, 0, 0, 0, 0, 0), 0);
+    ASSERT_EQ(pages[31], 0x42);
+    ASSERT_EQ(pages[32], 0xA5);
+    reset();
+    auto failed = +[](long, long buf, long, long, long, long, long) -> long {
+        memset(reinterpret_cast<void*>(buf), 0x42, 32);
+        return -125;
+    };
+    ASSERT_EQ(kernel::checked_syscall(failed, SYS_IPC_WAIT, BASE, 0, 0, 0, 0, 0), -125);
+    ASSERT_EQ(pages[0], 0xA5);
+    ASSERT_EQ(pages[31], 0xA5);
+}
+TEST(ipc_wait_rechecks_output_mapping_after_blocking) {
+    reset();
+    auto handler = +[](long, long buf, long, long, long, long, long) -> long {
+        memset(reinterpret_cast<void*>(buf), 0x42, 32);
+        present[0] = false;
+        return 0;
+    };
+    ASSERT_EQ(kernel::checked_syscall(handler, SYS_IPC_WAIT, BASE, 0, 0, 0, 0, 0), -14);
+    ASSERT_EQ(pages[0], 0xA5);
+    ASSERT_EQ(pages[31], 0xA5);
+}
 TEST(socket_address_respects_short_capacity) {
     reset();
     *reinterpret_cast<uint32_t*>(pages + 64) = 2;
