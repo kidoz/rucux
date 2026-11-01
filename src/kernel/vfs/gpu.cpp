@@ -36,7 +36,7 @@ static vfs_ops gem_ops = {.read = nullptr,
                           .write = nullptr,
                           .truncate = nullptr,
                           .open = nullptr,
-                          .close = gem_close,
+                          .close = nullptr,
                           .ioctl = nullptr,
                           .readdir = nullptr,
                           .lookup = nullptr,
@@ -94,6 +94,7 @@ static int gpu_ioctl(vfs_node*, unsigned long request, void* arg) {
                 node->length = g_gems[i].size;
                 node->type = file_type::CHAR_DEVICE;
                 node->ops = &gem_ops;
+                node->destroy = gem_close;
                 node->ptr = reinterpret_cast<vfs_node*>(&g_gems[i]);
 
                 int fd = kernel::vfs::vfs_manager::install_fd(node, 2); // O_RDWR

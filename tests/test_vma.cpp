@@ -60,6 +60,38 @@ bool has_flag(page_flags flags, page_flags bit) {
     return (raw & static_cast<uint64_t>(bit)) != 0;
 }
 
+TEST(vma_releases_borrowed_backing_references_across_interior_removal) {
+    auto manager = make_manager();
+    kernel::vfs::vfs_node backing{};
+    static unsigned finalized;
+    finalized = 0;
+    backing.destroy = [](kernel::vfs::vfs_node*) { ++finalized; };
+    ASSERT(manager.insert(0x1000, 0x5000, k_read, 0, 4, 0, &backing));
+    ASSERT_EQ(backing.references.load(), 2U);
+    ASSERT(manager.insert(0x2000, 0x3000, k_read, 0, 4, 0, &backing) == nullptr);
+    ASSERT_EQ(backing.references.load(), 2U);
+    backing.release();
+    ASSERT(manager.remove(0x2000, 0x1000));
+    ASSERT_EQ(backing.references.load(), 2U); // Both surviving pieces own a pin.
+    ASSERT(!manager.owns_frame(0x1000));
+    ASSERT(manager.owns_frame(0x2000)); // A hole belongs to private ELF/stack policy.
+    ASSERT(manager.remove(0x1000, 0x1000));
+    ASSERT_EQ(finalized, 0U);
+    manager.destroy_all();
+    ASSERT_EQ(finalized, 1U);
+}
+
+TEST(vma_owned_frames_are_distinguished_from_borrowed_regions_and_holes) {
+    auto manager = make_manager();
+    ASSERT(manager.insert(0x1000, 0x2000, k_read, kernel::memory::VMA_OWNS_FRAMES, -1, 0));
+    ASSERT(manager.insert(0x2000, 0x3000, k_read, 0, 4, 0));
+    ASSERT(manager.owns_frame(0));
+    ASSERT(manager.owns_frame(0x1000));
+    ASSERT(!manager.owns_frame(0x2000));
+    ASSERT(manager.owns_frame(0x3000));
+    manager.destroy_all();
+}
+
 TEST(overlap_is_rejected) {
     auto manager = make_manager();
     ASSERT(manager.insert(0x1000, 0x3000, k_read, 0, -1, 0) != nullptr);

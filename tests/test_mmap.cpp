@@ -13,6 +13,7 @@
 #include <kernel/scheduler/scheduler.hpp>
 #include <kernel/vfs/vfs.hpp>
 #include <map>
+#include <new>
 #include <set>
 #include <thread>
 
@@ -36,6 +37,7 @@ address_space mm{};
 vfs_node file{};
 vfs_ops ops{};
 std::array<uint8_t, PAGE * 3> contents;
+unsigned finalized;
 size_t read_calls, fail_read = SIZE_MAX, read_limit = SIZE_MAX;
 long read_error = -5;
 void (*on_read)();
@@ -51,12 +53,13 @@ struct Fixture {
         current.fd_count = 2;
         has_thread = true;
         alloc_calls = map_calls = read_calls = 0;
+        finalized = 0;
         fail_alloc = fail_map = fail_read = read_limit = SIZE_MAX;
         read_error = -5;
         bad_free = false;
         on_read = nullptr;
         on_free = nullptr;
-        file = {};
+        new (&file) vfs_node{};
         file.type = file_type::REGULAR;
         file.length = contents.size();
         file.ops = &ops;
@@ -80,15 +83,43 @@ struct Fixture {
         };
     }
     ~Fixture() {
+        for (auto& descriptor : descriptors) {
+            auto* target = static_cast<vfs_node*>(descriptor.node);
+            descriptor = {};
+            if (target && target->destroy) target->close_reference();
+        }
         leaves.clear();
+        mm.vmas.destroy_all();
         for (void* frame : frames)
             std::free(frame);
         frames.clear();
-        mm.vmas.destroy_all();
     }
 };
 intptr_t map_file(size_t length = PAGE * 2, long offset = 0, int flags = PRIVATE, void* address = nullptr) {
     return reinterpret_cast<intptr_t>(mmap_manager::sys_mmap(address, length, READ, flags, 0, offset));
+}
+vfs_node* managed_file(bool borrowed_frames = false) {
+    auto* target = new vfs_node();
+    target->type = borrowed_frames ? file_type::CHAR_DEVICE : file_type::REGULAR;
+    target->length = contents.size();
+    target->ops = &ops;
+    target->destroy = [](vfs_node* node) {
+        ++finalized;
+        if (node->ptr) pmm::free_page(node->ptr);
+        delete node;
+    };
+    if (borrowed_frames) {
+        target->ptr = reinterpret_cast<vfs_node*>(pmm::alloc_page());
+        ASSERT(target->ptr);
+        ops.mmap = [](vfs_node* node, size_t) { return reinterpret_cast<uintptr_t>(node->ptr); };
+    }
+    descriptors[0].node = target;
+    return target;
+}
+void close_file() {
+    auto* target = static_cast<vfs_node*>(descriptors[0].node);
+    descriptors[0] = {};
+    if (target) target->close_reference();
 }
 void assert_clean() {
     ASSERT(frames.empty());
@@ -145,6 +176,86 @@ bool vmm::protect(uintptr_t virt, page_flags flags) noexcept {
     return true;
 }
 } // namespace kernel::memory
+
+TEST(mmap_eager_population_pins_node_across_reentrant_descriptor_close) {
+    Fixture fixture;
+    managed_file();
+    on_read = [] {
+        close_file();
+        ASSERT_EQ(finalized, 0U);
+    };
+    ASSERT_EQ(map_file(), static_cast<intptr_t>(START));
+    ASSERT_EQ(finalized, 1U); // Private copied frames no longer depend on the file.
+    ASSERT(mm.vmas.find(START)->backing.get() == nullptr);
+    ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START), PAGE * 2), 0);
+    ASSERT(frames.empty());
+    ASSERT(leaves.empty());
+    ASSERT(mm.vmas.find(START) == nullptr);
+    ASSERT(!bad_free);
+}
+
+TEST(mmap_failed_population_releases_pin_after_rollback) {
+    for (size_t failing : {0UL, 1UL}) {
+        Fixture fixture;
+        managed_file();
+        fail_read = failing;
+        on_read = [] { close_file(); };
+        ASSERT_EQ(map_file(), -5);
+        ASSERT_EQ(finalized, 1U);
+        assert_clean();
+    }
+}
+
+TEST(mmap_borrowed_owner_survives_close_splits_and_partial_unmap) {
+    Fixture fixture;
+    managed_file(true);
+    ASSERT_EQ(map_file(PAGE * 3), static_cast<intptr_t>(START));
+    close_file();
+    ASSERT_EQ(finalized, 0U);
+    ASSERT(!mm.vmas.owns_frame(START));
+    ASSERT_EQ(mmap_manager::sys_mprotect(reinterpret_cast<void*>(START + PAGE), PAGE, READ | WRITE), 0);
+    ASSERT(mm.vmas.find(START)->backing.get());
+    ASSERT(mm.vmas.find(START + PAGE)->backing.get());
+    ASSERT(mm.vmas.find(START + PAGE * 2)->backing.get());
+    ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START + PAGE), PAGE), 0);
+    ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START), PAGE), 0);
+    ASSERT_EQ(finalized, 0U);
+    ASSERT_EQ(mmap_manager::sys_munmap(reinterpret_cast<void*>(START + PAGE * 2), PAGE), 0);
+    ASSERT_EQ(finalized, 1U);
+    ASSERT(frames.empty());
+    ASSERT(!bad_free);
+}
+
+TEST(mmap_borrowed_owner_is_released_after_inactive_translations_are_dropped) {
+    Fixture fixture;
+    managed_file(true);
+    ASSERT_EQ(map_file(), static_cast<intptr_t>(START));
+    close_file();
+    ASSERT_EQ(finalized, 0U);
+    ASSERT(!mm.vmas.owns_frame(START));
+    ASSERT(mm.vmas.owns_frame(START + PAGE * 8)); // ELF/stack frames outside VMAs.
+    // Model inactive page-table reclamation: skip borrowed frames, remove the
+    // translations, then destroy VMAs and their last backing references.
+    leaves.clear();
+    mm.vmas.destroy_all();
+    ASSERT_EQ(finalized, 1U);
+    ASSERT(frames.empty());
+    ASSERT(!bad_free);
+}
+
+TEST(mmap_borrowed_population_failure_drops_vma_and_temporary_pins) {
+    Fixture fixture;
+    auto* target = managed_file(true);
+    fail_map = 1;
+    ASSERT_EQ(map_file(), -12);
+    ASSERT_EQ(finalized, 0U);
+    ASSERT_EQ(target->references.load(), 1U); // Only the descriptor remains.
+    ASSERT(leaves.empty());
+    ASSERT(mm.vmas.find(START) == nullptr);
+    close_file();
+    ASSERT_EQ(finalized, 1U);
+    assert_clean();
+}
 
 TEST(mmap_first_backing_read_failure_is_reported_and_releases_everything) {
     Fixture fixture;

@@ -2,6 +2,7 @@
 #pragma once
 #include <kernel/ds/rbtree.hpp>
 #include <kernel/sync/spinlock.hpp>
+#include <kernel/vfs/vfs.hpp>
 #include <lib/stddef.hpp>
 #include <stdint.h>
 
@@ -23,6 +24,8 @@ struct vma {
     uint32_t flags;    // MAP_* plus VMA_OWNS_FRAMES
     int fd;            // Backing file descriptor (-1 for anonymous)
     long file_offset;  // Offset into backing file
+    // Only borrowed device frames depend on their node after eager population.
+    vfs::node_ref backing;
 };
 
 // Mappings that belong to one page-table root. Clone siblings share one object.
@@ -31,7 +34,8 @@ public:
     void init() noexcept;
 
     // Insert a new VMA. Returns the VMA or nullptr on overlap/OOM.
-    vma* insert(uintptr_t start, uintptr_t end, uint32_t prot, uint32_t flags, int fd, long offset) noexcept;
+    vma* insert(uintptr_t start, uintptr_t end, uint32_t prot, uint32_t flags, int fd, long offset,
+                vfs::vfs_node* backing = nullptr) noexcept;
 
     // Find the VMA containing the given address, or nullptr.
     vma* find(uintptr_t addr) const noexcept;
@@ -51,7 +55,10 @@ public:
     // have been removed.
     bool remove(uintptr_t start, size_t length) noexcept;
 
-    // Delete VMA nodes only. Frames belong to the page tables.
+    // Used by inactive page-table teardown; holes are private ELF/stack frames.
+    bool owns_frame(uintptr_t address) const noexcept;
+
+    // Drop VMA nodes and backing references after detaching their translations.
     void destroy_all() noexcept;
 
 private:

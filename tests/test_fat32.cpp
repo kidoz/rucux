@@ -118,6 +118,7 @@ struct Fixture {
         vfs_node* file = nullptr;
         ASSERT_EQ(vfs_manager::lookup(root, "journal.log", file), 0);
         ASSERT(file);
+        root->release();
         return file;
     }
 };
@@ -150,8 +151,8 @@ namespace scheduler {
 thread* scheduler::current_thread() noexcept {
     return &current;
 }
-bool thread::ensure_fd_capacity(size_t) noexcept {
-    return false;
+bool thread::ensure_fd_capacity(size_t count) noexcept {
+    return fd_table && fd_count >= count;
 }
 void scheduler::sleep_until(uint64_t) noexcept {}
 } // namespace scheduler
@@ -213,6 +214,144 @@ TEST(fat32_stops_at_first_data_read_failure) {
     fail_read = ROOT + 3;
     ASSERT_EQ(file->ops->write(file, 0, data.size(), data.data()), 512L);
     ASSERT_EQ(write_attempts, 1UL);
+}
+
+TEST(fat32_repeated_stat_and_open_close_return_allocations_to_mount_baseline) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const auto baseline = allocation_count;
+    for (unsigned i = 0; i < 32; ++i) {
+        struct stat info{};
+        ASSERT_EQ(vfs_manager::sys_stat("/journal.log", &info), 0);
+        ASSERT_EQ(info.st_size, 128);
+        ASSERT_EQ(allocation_count, baseline);
+        const int fd = vfs_manager::sys_open("/journal.log", 0);
+        ASSERT_EQ(fd, 0);
+        ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+        ASSERT_EQ(allocation_count, baseline);
+    }
+}
+
+TEST(fat32_nested_lookup_releases_intermediates_and_failure_results) {
+    Fixture fixture;
+    auto* entry = disk.data() + ROOT * SECTOR + 64;
+    std::memcpy(entry, "SUBDIR     ", 11);
+    entry[11] = 0x10;
+    put16(entry + 26, 6);
+    put32(disk.data() + (PARTITION + 2) * SECTOR + 24, 0x0FFFFFFF);
+    std::memcpy(disk.data() + (ROOT + 8) * SECTOR, disk.data() + ROOT * SECTOR, 32);
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const auto baseline = allocation_count;
+    for (unsigned i = 0; i < 32; ++i) {
+        struct stat info{};
+        ASSERT_EQ(vfs_manager::sys_stat("/subdir/journal.log", &info), 0);
+        ASSERT_EQ(allocation_count, baseline);
+        ASSERT_EQ(vfs_manager::sys_open("/subdir/journal.log/", 0), -20);
+        ASSERT_EQ(allocation_count, baseline);
+        ASSERT_EQ(vfs_manager::sys_open("/subdir/missing.bin", 0), -2);
+        ASSERT_EQ(allocation_count, baseline);
+        fail_read = ROOT + 8;
+        ASSERT_EQ(vfs_manager::sys_open("/subdir/journal.log", 0), -5);
+        ASSERT_EQ(allocation_count, baseline);
+        fail_read = ROOT + 8;
+        info.st_size = -123;
+        ASSERT_EQ(vfs_manager::sys_stat("/subdir/journal.log", &info), -5);
+        ASSERT_EQ(info.st_size, -123);
+        ASSERT_EQ(allocation_count, baseline);
+    }
+    for (size_t extra = 0; extra < 8; ++extra) {
+        allocation_limit = baseline + extra;
+        ASSERT_EQ(vfs_manager::sys_open("/subdir/journal.log", 0), -12);
+        ASSERT_EQ(allocation_count, baseline);
+    }
+    allocation_limit = SIZE_MAX;
+    // A refresh error occurs after both successful lookups acquired references.
+    on_read = [] { on_read = [] { on_read = [] { on_read = [] { fail_read = ROOT + 8; }; }; }; };
+    struct stat info{};
+    ASSERT_EQ(vfs_manager::sys_stat("/subdir/journal.log", &info), -5);
+    ASSERT_EQ(allocation_count, baseline);
+}
+
+TEST(fat32_failed_open_releases_nodes_when_fd_growth_fails) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const auto baseline = allocation_count;
+    vfs_node occupied{}; // Permanent fake entries occupy the whole hosted table.
+    for (auto& descriptor : descriptors)
+        descriptor.node = &occupied;
+    for (unsigned i = 0; i < 32; ++i) {
+        ASSERT_EQ(vfs_manager::sys_open("/journal.log", 0), -12);
+        ASSERT_EQ(allocation_count, baseline);
+        ASSERT_EQ(vfs_manager::sys_open("/journal.log", 00200000), -20);
+        ASSERT_EQ(allocation_count, baseline);
+    }
+    vfs_manager::close_all(&current);
+}
+
+TEST(fat32_file_reference_keeps_mount_geometry_alive_after_root_release) {
+    Fixture fixture;
+    auto* root = fat32::mount(PARTITION);
+    ASSERT(root);
+    vfs_node* file = nullptr;
+    ASSERT_EQ(vfs_manager::lookup(root, "journal.log", file), 0);
+    root->name = "mount-point"; // The destructor owns the original allocation.
+    root->release();
+    ASSERT_EQ(allocation_count, 5UL); // File's four allocations and shared geometry.
+    uint8_t byte{};
+    ASSERT_EQ(file->ops->read(file, 0, 1, &byte), 1L);
+    ASSERT_EQ(byte, 17);
+    file->retain();
+    file->release();
+    ASSERT_EQ(allocation_count, 5UL);
+    file->release();
+    ASSERT_EQ(allocation_count, 0UL);
+}
+
+TEST(fat32_copied_descriptors_survive_parent_close_and_release_on_exit) {
+    Fixture fixture;
+    vfs_manager::set_root(fat32::mount(PARTITION));
+    const auto baseline = allocation_count;
+    const int fd = vfs_manager::sys_open("/journal.log", 2);
+    ASSERT_EQ(fd, 0);
+    ASSERT_EQ(vfs_manager::sys_lseek(fd, 7, 0), 7L);
+    kernel::scheduler::thread child{};
+    kernel::scheduler::thread::file_descriptor child_fds[4]{};
+    child.fd_table = child_fds;
+    child.fd_count = 4;
+    ASSERT_EQ(vfs_manager::copy_fds(&current, &child), 0);
+    auto* file = static_cast<vfs_node*>(child_fds[fd].node);
+    ASSERT(file == vfs_manager::get_fd_node(fd));
+    ASSERT_EQ(child_fds[fd].offset, 7UL);
+    ASSERT_EQ(child_fds[fd].flags, 2);
+    ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+    uint8_t byte{};
+    ASSERT_EQ(file->ops->read(file, 0, 1, &byte), 1L);
+    ASSERT_EQ(allocation_count, baseline + 4);
+    vfs_manager::close_all(&child);
+    ASSERT_EQ(allocation_count, baseline);
+    ASSERT(child_fds[fd].node == nullptr);
+    vfs_manager::close_all(&child);
+    ASSERT_EQ(allocation_count, baseline);
+    vfs_manager::set_root(nullptr);
+    ASSERT_EQ(allocation_count, 0UL);
+}
+
+TEST(fat32_root_retains_namespace_reference_across_lookups) {
+    Fixture fixture;
+    // The namespace owns the original mount reference; each lookup owns another.
+    auto* root = fat32::mount(PARTITION);
+    ASSERT(root);
+    vfs_manager::set_root(root);
+    const auto baseline = allocation_count;
+    for (unsigned i = 0; i < 32; ++i) {
+        vfs_node* result = nullptr;
+        ASSERT_EQ(vfs_manager::resolve_path("/", result), 0);
+        ASSERT(result == root);
+        result->release();
+        ASSERT_EQ(allocation_count, baseline);
+    }
+    vfs_manager::set_root(nullptr);
+    ASSERT_EQ(allocation_count, 0UL);
 }
 
 TEST(fat32_checked_lookup_distinguishes_missing_names_and_invalid_short_names) {

@@ -10,6 +10,7 @@ public:
     static vfs_node* create_root() noexcept;
     static vfs_node* create_file(vfs_node* parent, const char* name, const uint8_t* content, size_t size) noexcept;
     static vfs_node* create_directory(vfs_node* parent, const char* name) noexcept;
+    // Transfers one reference to the permanent namespace on success.
     static void attach_node(vfs_node* parent, vfs_node* child) noexcept;
 
     static long read(vfs_node* node, size_t offset, size_t size, void* buffer) noexcept;

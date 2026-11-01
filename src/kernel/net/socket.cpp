@@ -63,7 +63,7 @@ static vfs::vfs_ops socket_ops = {
     .write = socket_write,
     .truncate = nullptr,
     .open = nullptr,
-    .close = socket_close,
+    .close = nullptr,
     .ioctl = nullptr,
     .readdir = nullptr,
     .lookup = nullptr,
@@ -111,17 +111,13 @@ int socket_manager::sys_socket(int domain, int type, int protocol) noexcept {
         ks.pcb = nullptr;
         return -12;
     }
-    lib::memset(node, 0, sizeof(*node));
+    node->destroy = socket_close;
     node->type = vfs::file_type::SOCKET;
     node->inode = sidx;
     node->ops = &socket_ops;
 
-    int fd = vfs::vfs_manager::alloc_fd(node);
-    if (fd < 0) {
-        socket_close(node);
-        return -1;
-    }
-    return fd;
+    vfs::node_ref reference(node);
+    return vfs::vfs_manager::alloc_fd(node);
 }
 
 int socket_manager::sys_bind(int sockfd, const void* addr, uint32_t addrlen) noexcept {
@@ -167,18 +163,14 @@ int socket_manager::sys_accept(int sockfd, void* addr, uint32_t* addrlen) noexce
         g_sockets[nsidx].pcb = nullptr;
         return -12;
     }
-    lib::memset(new_node, 0, sizeof(*new_node));
+    new_node->destroy = socket_close;
     new_node->type = vfs::file_type::SOCKET;
     new_node->inode = nsidx;
     new_node->ops = &socket_ops;
 
+    vfs::node_ref reference(new_node);
     int nfd = vfs::vfs_manager::alloc_fd(new_node);
-    if (nfd < 0) {
-        delete new_node;
-        tcp_close(child);
-        g_sockets[nsidx].pcb = nullptr;
-        return -1;
-    }
+    if (nfd < 0) return nfd;
 
     if (addr && addrlen) {
         auto* sa = reinterpret_cast<sockaddr_in_k*>(addr);

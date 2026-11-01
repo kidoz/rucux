@@ -34,12 +34,15 @@ void open_stdio(kernel::scheduler::thread* t) noexcept {
 
     kernel::vfs::vfs_node* dev = nullptr;
     if (kernel::vfs::vfs_manager::lookup(root, "dev", dev) < 0) return;
+    kernel::vfs::node_ref dev_reference(dev);
     kernel::vfs::vfs_node* tty = nullptr;
     if (kernel::vfs::vfs_manager::lookup(dev, "tty", tty) < 0) return;
 
+    kernel::vfs::node_ref tty_reference(tty);
     if (!t->ensure_fd_capacity(3)) return;
 
     for (int i = 0; i < 3; ++i) {
+        tty->open_reference();
         t->fd_table[i].node = tty;
         t->fd_table[i].offset = 0;
         t->fd_table[i].flags = 2; // O_RDWR
@@ -52,6 +55,7 @@ long spawn_path(const char* path, uint32_t requested_tid) noexcept {
     kernel::vfs::vfs_node* node = nullptr;
     const int error = kernel::vfs::vfs_manager::resolve_path(path, node);
     if (error < 0) return error;
+    kernel::vfs::node_ref reference(node);
     if (node->type != kernel::vfs::file_type::REGULAR || !node->ops || !node->ops->read) {
         kernel::print("SPAWN: {} not found\n", path);
         return -1;

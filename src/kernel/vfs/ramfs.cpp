@@ -237,6 +237,7 @@ int ramfs::lookup(vfs_node* node, const char* name, vfs_node*& result) noexcept 
     auto* cur = internal->first_child;
     while (cur) {
         if (cur->vnode->name_hash == hash && lib::strcmp(cur->vnode->name, name) == 0) {
+            cur->vnode->retain();
             result = cur->vnode;
             return 0;
         }

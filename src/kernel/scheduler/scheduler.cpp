@@ -28,6 +28,8 @@ namespace kernel::scheduler {
 // Global thread list — protected by g_threads_lock
 static thread* g_all_threads = nullptr;
 static kernel::irq_spinlock g_threads_lock;
+// Kernel/idle threads must leave an outgoing user root inactive before reaping.
+static kernel::atomic<uintptr_t> g_kernel_page_table{0};
 
 static thread* g_irq_waiters[256] = {nullptr};
 
@@ -78,14 +80,15 @@ static void destroy_thread(thread* t) noexcept {
     bool shared = false;
     for (auto* other = g_all_threads; other; other = other->all_next)
         if (other != t && other->pml4_phys == t->pml4_phys) shared = true;
-    // Clone siblings share one mm. The last thread drops the VMA nodes; the
-    // page-table walk frees the private frames, so destroy_mm must not.
+    // Clone siblings share one mm. Tear down translations while VMA ownership
+    // and borrowed-frame references remain available, then release those pins.
     if (t->pml4_phys && !shared) {
+        kernel::memory::vmm::discard_address_space(t->pml4_phys, t->mm ? &t->mm->vmas : nullptr);
         kernel::memory::destroy_mm(t->mm);
         t->mm = nullptr;
-        kernel::memory::vmm::discard_address_space(t->pml4_phys);
     }
     delete[] reinterpret_cast<uint8_t*>(t->stack_base);
+    kernel::vfs::vfs_manager::close_all(t);
     delete[] t->fd_table;
     delete t;
 }
@@ -230,6 +233,9 @@ void scheduler::init() noexcept {
     kernel::print("Scheduler initialized\n");
 
     auto* pcpu = cpu::this_cpu();
+    uintptr_t unset = 0;
+    g_kernel_page_table.compare_exchange_strong(unset, kernel::memory::vmm::get_active_page_table(), kernel::relaxed,
+                                                kernel::relaxed);
 
     // Initialize per-CPU run queues
     for (int i = 0; i < static_cast<int>(thread_prio::NUM_PRIOS); ++i)
@@ -468,28 +474,28 @@ long scheduler::sys_clone(void* entry, void* stack, void* arg) noexcept {
     uint32_t owner_tid = parent->process_id;
 
     thread* t = new thread();
+    if (!t) return -12;
     t->tid = g_next_tid.fetch_add(1, kernel::relaxed) + 1;
     t->priority = parent->priority;
     t->last_cpu = cpu::this_cpu()->cpu_id;
     t->stack_size = THREAD_KERNEL_STACK_SIZE;
     t->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[t->stack_size]);
+    if (!t->stack_base) {
+        delete t;
+        return -12;
+    }
     t->pml4_phys = parent->pml4_phys;
     t->mm = parent->mm;
     t->creds = parent->creds;
 
     t->fd_table = nullptr;
     t->fd_count = 0;
-    if (parent->fd_table && parent->fd_count > 0) {
-        t->ensure_fd_capacity(parent->fd_count);
-        for (size_t i = 0; i < t->fd_count && i < parent->fd_count; ++i) {
-            t->fd_table[i] = parent->fd_table[i];
-            if (t->fd_table[i].node) {
-                auto* node = static_cast<kernel::vfs::vfs_node*>(t->fd_table[i].node);
-                if (node->ops && node->ops->open) {
-                    node->ops->open(node);
-                }
-            }
-        }
+    const int copied = kernel::vfs::vfs_manager::copy_fds(parent, t);
+    if (copied < 0) {
+        delete[] reinterpret_cast<uint8_t*>(t->stack_base);
+        delete[] t->fd_table;
+        delete t;
+        return copied;
     }
 
     t->async_head = 0;
@@ -677,9 +683,9 @@ choose_next:
                                                      new_thread->user_saved_spsr);
         }
 #endif
-        if (new_thread->pml4_phys) {
-            kernel::memory::vmm::switch_to(new_thread->pml4_phys);
-        }
+        const uintptr_t root =
+            new_thread->pml4_phys ? new_thread->pml4_phys : g_kernel_page_table.load(kernel::relaxed);
+        kernel::memory::vmm::switch_to(root);
         uintptr_t* old_sp = old_thread ? &old_thread->stack_pointer : nullptr;
 #if defined(__x86_64__)
         arch::amd64::switch_fpu(old_thread ? &old_thread->fpu : nullptr, new_thread->fpu);
@@ -760,6 +766,9 @@ void scheduler::exit(int status) noexcept {
     auto* cur = cpu::this_cpu()->current_thread;
     if (!cur) return;
     TRACE_INSTANT(TRACE_EVENT_THREAD_EXIT, cur->tid, 0);
+    // Close callbacks may take subsystem locks; run before marking the thread
+    // reapable and without the global thread-list lock.
+    kernel::vfs::vfs_manager::close_all(cur);
     cur->exited = true;
     cur->exit_code = (status & 0xff) << 8;
     cur->state = thread_state::TERMINATED;

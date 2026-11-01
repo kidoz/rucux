@@ -84,6 +84,7 @@ namespace vfs {
 int vfs_manager::alloc_fd(vfs_node* node) noexcept {
     for (int i = 3; i < 16; ++i)
         if (!fds[i]) {
+            node->retain();
             fds[i] = node;
             return i;
         }
@@ -113,7 +114,7 @@ void add_ip(netbuf* nb) {
 void close_fd(int fd) {
     auto* node = fds[fd];
     fds[fd] = nullptr;
-    node->ops->close(node);
+    node->close_reference();
 }
 struct Address {
     uint16_t family, port;
@@ -121,6 +122,20 @@ struct Address {
     uint8_t zero[8];
 };
 } // namespace
+TEST(socket_transport_survives_an_inherited_node_reference) {
+    const auto before = live_allocations;
+    const int fd = socket_manager::sys_socket(2, 2, 0);
+    ASSERT(fd >= 0);
+    auto* node = fds[fd];
+    node->open_reference();
+    ASSERT_EQ(node->references.load(), 2U);
+    close_fd(fd);
+    ASSERT_EQ(node->references.load(), 1U);
+    ASSERT(node->ops->poll(node) >= 0);
+    node->close_reference();
+    ASSERT_EQ(live_allocations, before);
+}
+
 TEST(netbuf_rejects_overflow_without_changing_state) {
     auto count = live_allocations;
     ASSERT(!netbuf::alloc(0));

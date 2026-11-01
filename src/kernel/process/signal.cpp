@@ -2,6 +2,7 @@
 #include <kernel/process/credentials.hpp>
 #include <kernel/process/signal.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#include <kernel/vfs/vfs.hpp>
 #include <lib/string.hpp>
 
 namespace kernel::process {
@@ -126,6 +127,9 @@ bool signal_manager::consume_fatal_signal(scheduler::thread* t) noexcept {
 
     if (fatal_sig == 0) return false;
 
+    // Fatal delivery, like exit(), releases descriptors before making the
+    // thread reapable. No global thread-list lock is held here.
+    vfs::vfs_manager::close_all(t);
     t->sig_pending &= ~(1U << fatal_sig);
     t->exit_code = fatal_sig & 0x7f; // waitpid signal-status encoding
     t->exited = true;

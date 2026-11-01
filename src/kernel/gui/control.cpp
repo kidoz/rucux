@@ -145,7 +145,7 @@ static kernel::vfs::vfs_ops display_buffer_ops = {
     .write = nullptr,
     .truncate = nullptr,
     .open = nullptr,
-    .close = display_buffer_close,
+    .close = nullptr,
     .ioctl = nullptr,
     .readdir = nullptr,
     .lookup = nullptr,
@@ -166,6 +166,7 @@ static int install_buffer_fd(display_buffer& buffer) noexcept {
     node->length = buffer.size;
     node->type = kernel::vfs::file_type::CHAR_DEVICE;
     node->ops = &display_buffer_ops;
+    node->destroy = display_buffer_close;
     node->ptr = reinterpret_cast<kernel::vfs::vfs_node*>(&buffer);
 
     int fd = kernel::vfs::vfs_manager::install_fd(node, 2);

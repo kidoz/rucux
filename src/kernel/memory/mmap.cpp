@@ -147,6 +147,7 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
 
     bool owns = true;
     vfs::vfs_node* node = nullptr;
+    vfs::node_ref population_reference;
     size_t file_length = 0;
     if ((flags & MAP_ANONYMOUS) == 0) {
         if (offset < 0 || static_cast<size_t>(offset) % pmm::PAGE_SIZE != 0) return mmap_error(-22);
@@ -157,6 +158,8 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
         if ((access != 0 && access != 2) || (sharing == MAP_SHARED && (prot & PROT_WRITE) && access != 2))
             return mmap_error(-13);
         node = static_cast<vfs::vfs_node*>(thread->fd_table[fd].node);
+        node->retain();
+        population_reference.reset(node);
         if (!node->ops || (!node->ops->mmap && (!node->ops->read || node->type != vfs::file_type::REGULAR)))
             return mmap_error(-19);
         if (node->ops->mmap) {
@@ -194,7 +197,8 @@ void* mmap_manager::sys_mmap(void* addr, size_t length, int prot, int flags, int
         uint32_t vflags = static_cast<uint32_t>(flags);
         if (owns) vflags |= VMA_OWNS_FRAMES;
         vflags |= VMA_POPULATING;
-        if (!mm->vmas.insert(virt_start, virt_start + aligned, static_cast<uint32_t>(prot), vflags, fd, offset))
+        if (!mm->vmas.insert(virt_start, virt_start + aligned, static_cast<uint32_t>(prot), vflags, fd, offset,
+                             owns ? nullptr : node))
             return mmap_error(-12);
         if (!fixed) mm->next_mmap = virt_start + aligned;
     }

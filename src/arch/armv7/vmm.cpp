@@ -14,6 +14,7 @@
 #include <kernel/memory/mmap.hpp>
 #include <kernel/memory/pmm.hpp>
 #include <kernel/memory/user_access.hpp>
+#include <kernel/memory/vma.hpp>
 #include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <lib/string.hpp>
@@ -164,26 +165,32 @@ uintptr_t vmm::create_address_space() noexcept {
     return reinterpret_cast<uintptr_t>(new_l1);
 }
 
-// Only private 4 KiB user mappings belong to an unpublished ELF image.
-static void discard_private_table(uintptr_t address, unsigned depth) noexcept {
+// The caller guarantees an inactive root. Drop page tables while retaining
+// borrowed-frame owners; VMA backing references are released after this walk.
+static void discard_private_table(uintptr_t address, unsigned depth, uintptr_t base,
+                                  const vma_manager* areas) noexcept {
     auto* table = reinterpret_cast<uint64_t*>(address);
     for (size_t i = 0; i < 512; ++i) {
         if (!(table[i] & 1)) continue;
         uintptr_t child = static_cast<uintptr_t>(table[i] & 0x0000FFFFFFFFF000ULL);
-        if (depth == 1)
-            pmm::free_page(reinterpret_cast<void*>(child));
-        else
-            discard_private_table(child, depth - 1);
+        const uintptr_t virt = base + (static_cast<uintptr_t>(i) << (12 + 9 * (depth - 1)));
+        if (depth == 1) {
+            if (!areas || areas->owns_frame(virt)) pmm::free_page(reinterpret_cast<void*>(child));
+        } else {
+            discard_private_table(child, depth - 1, virt, areas);
+        }
     }
     pmm::free_page(reinterpret_cast<void*>(address));
 }
 
-void vmm::discard_address_space(uintptr_t root) noexcept {
+void vmm::discard_address_space(uintptr_t root, const vma_manager* areas) noexcept {
     if (!root || root == get_active_page_table()) return;
     irq_lock_guard guard(user_mapping_lock);
     auto* table = reinterpret_cast<uint64_t*>(root);
     for (size_t i = 2; i < 3; ++i) {
-        if (table[i] & 1) discard_private_table(static_cast<uintptr_t>(table[i] & 0x0000FFFFFFFFF000ULL), 2);
+        if (table[i] & 1)
+            discard_private_table(static_cast<uintptr_t>(table[i] & 0x0000FFFFFFFFF000ULL), 2,
+                                  static_cast<uintptr_t>(i) << 30, areas);
     }
     pmm::free_page(reinterpret_cast<void*>(root));
 }

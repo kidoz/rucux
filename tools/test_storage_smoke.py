@@ -194,6 +194,7 @@ def main() -> int:
             or f"storage_smoke: PASS stage={stage}" not in text
             or "storage_smoke: mmap read-error rollback PASS" not in text
             or "storage_smoke: lookup errno and path validation PASS" not in text
+            or "storage_smoke: vnode references and thread cleanup PASS" not in text
             or any(marker in text for marker in ("storage_smoke: FAIL", "PANIC", "Page Fault", "Exception"))
         ):
             raise RuntimeError(f"stage {stage}: runtime check failed; see {log}")

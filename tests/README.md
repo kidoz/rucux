@@ -250,9 +250,42 @@ The exact block graph is `storage-faults.json`; the serial marker is
 `storage_smoke: lookup errno and path validation PASS`.
 
 RAMFS namespace mutation and FD tables have no new concurrency guarantee.
-FAT32 still creates fresh lookup nodes without VFS reference counting/reclamation;
-this delivery preserves that existing ownership model. Hosted cleanup checks
-cover partial allocation failures, not a complete vnode lifecycle.
+Successful lookup and path resolution return one owned reference. Callers release
+it or transfer it to a `node_ref`; descriptor allocation retains a separate
+reference. `get_root`, `get_fd_node` and readdir entries are borrowed. `set_root`
+and RAMFS attachment consume a reference for the namespace. Permanent RAMFS and
+static nodes need no finalizer; managed FAT32, network socket and epoll nodes
+finalize after their last reference. Per-descriptor open/close hooks remain
+separate from final destruction, including legacy local socket hooks.
+
+FAT32 node cleanup frees its owned name, operations and private data. Shared
+mount geometry outlives the root when a child still references it. The mount's
+owned name remains distinct from a replacement mount-point label. Traversal
+releases intermediate nodes; stat, spawn and failed opens drop temporary pins.
+Clone descriptor copies retain nodes; normal and fatal thread exit close their
+entries before reaping. Closing detaches the descriptor before invoking callbacks.
+
+`test_fat32` counts live allocations over repeated stat/open/close, nested lookup
+and refresh failures, partial allocation failures, FD growth failure, inherited
+handles, and mount-root release. Usage returns to the mount baseline, or zero
+once all mount and child references are released. `test_vfs` verifies concurrent
+retain/release finalizes once, descriptor copying and cleanup, allocation failure,
+reentrant close, epoll inheritance and a managed child pinned by RAMFS.
+`test_network` checks that retaining a socket node keeps its transport alive
+after closing the original descriptor. ASan/UBSan runs should include these
+suites plus `test_mmap` and `test_vma`; run VFS and mmap under ThreadSanitizer too.
+
+The storage smoke repeats stat/open/map/close/unmap 32 times each boot and runs
+four clone probes. Children use an inherited file after the parent closes its
+handle, leave descriptors open, and exit normally or receive SIGTERM while
+yielding. Each clone's user stack is explicitly unmapped after termination.
+The required serial marker is
+`storage_smoke: vnode references and thread cleanup PASS`.
+
+This does not add unmount/unlink, namespace mutation locking, shared open-file
+descriptions/offsets, or POSIX dup. Clone still copies descriptor offsets and
+flags into separate tables. Fatal interruption/unwinding of an in-flight kernel
+operation is outside this coverage; fatal cleanup is tested at yield boundaries.
 
 ## File-backed mmap population and rollback
 
@@ -270,6 +303,18 @@ check errors on first/later reads, partial-read retries, unexpected early EOF,
 zero-filled snapshot-EOF tails, frame/map OOM, borrowed device frames and retries
 after failure. Failed calls remove their VMA and installed leaves, release owned
 frames and restore the allocation hint when no other mapping advanced it.
+
+Regular-file mappings retain their node during eager population, including a
+reentrant descriptor close, then release it once independent copied frames are
+ready. Borrowed-frame mappings keep a backing-node reference in each VMA piece;
+split/remove/protect, rollback and final address-space cleanup balance those
+references. Hosted tests track the finalizer, physical frames and translations,
+including partial unmap after close and failed population. Inactive page-table
+walks distinguish private frames (including ELF/stack holes) from borrowed VMA
+frames and retain VMA metadata until the walk finishes. Kernel/idle switches
+restore the kernel page-table root so a dead user root can become inactive.
+This is ownership coverage; it does not establish device/GUI runtime or remote
+TLB reclamation on SMP targets.
 
 Pending VMAs exclude overlapping mmap/unmap/protect while population or rollback
 runs. Reentrant and sibling-thread tests exercise this boundary; another test

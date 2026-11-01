@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MIT
 #include <errno.h>
 #include <fcntl.h>
+#include <sched.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <uapi/kernel/syscalls.h>
 #include <unistd.h>
 
 namespace {
@@ -94,6 +98,76 @@ bool verify_lookup() {
     ok = ok && fd == -1 && errno == ENOTDIR;
     if (ok) printf("storage_smoke: lookup errno and path validation PASS\n");
     return ok;
+}
+
+struct clone_probe {
+    int fd;
+    unsigned ready = 0, proceed = 0, done = 0;
+    bool fatal;
+    bool ok = false;
+};
+
+void inherited_file_probe(void* argument) {
+    auto* probe = static_cast<clone_probe*>(argument);
+    __atomic_store_n(&probe->ready, 1U, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&probe->proceed, __ATOMIC_ACQUIRE))
+        sched_yield();
+    struct stat info{};
+    // The parent's descriptor is already closed. Leave both child descriptors
+    // open so ordinary/fatal thread exit must release them.
+    probe->ok = fstat(probe->fd, &info) == 0 && info.st_size > 0;
+    const int extra = open("/fat32/mmap.bin", O_RDONLY);
+    probe->ok = probe->ok && extra >= 0;
+    __atomic_store_n(&probe->done, 1U, __ATOMIC_RELEASE);
+    if (probe->fatal) {
+        for (;;)
+            sched_yield();
+    }
+    _exit(probe->ok ? 0 : 1);
+}
+
+bool verify_ownership() {
+    constexpr size_t STACK = 64 * 1024, PAGE = 4096;
+    for (unsigned i = 0; i < 32; ++i) {
+        struct stat info{};
+        if (stat(SHRINK, &info) < 0 || !lookup_error("/fat32/missing.bin", ENOENT)) return false;
+        const int fd = open("/fat32/mmap.bin", O_RDONLY);
+        if (fd < 0) return false;
+        const auto* mapping = static_cast<const uint8_t*>(mmap(nullptr, PAGE, PROT_READ, MAP_PRIVATE, fd, 0));
+        close(fd);
+        if (mapping == MAP_FAILED) return false;
+        const bool ok = mapping[0] == 11 && mapping[PAGE - 1] == static_cast<uint8_t>((PAGE - 1) * 7 + 11);
+        if (munmap(const_cast<uint8_t*>(mapping), PAGE) != 0 || !ok) return false;
+    }
+    for (unsigned i = 0; i < 4; ++i) {
+        const int fd = open("/fat32/mmap.bin", O_RDONLY);
+        if (fd < 0) return false;
+        auto* stack = static_cast<uint8_t*>(mmap(nullptr, STACK, READ_WRITE, PRIVATE_ANON, -1, 0));
+        if (stack == MAP_FAILED) {
+            close(fd);
+            return false;
+        }
+        clone_probe probe{fd, 0, 0, 0, (i & 1U) != 0, false};
+        const long tid = syscall(SYS_CLONE, reinterpret_cast<long>(inherited_file_probe),
+                                 reinterpret_cast<long>(stack + STACK), reinterpret_cast<long>(&probe));
+        if (tid < 0) {
+            close(fd);
+            munmap(stack, STACK);
+            return false;
+        }
+        while (!__atomic_load_n(&probe.ready, __ATOMIC_ACQUIRE))
+            sched_yield();
+        close(fd);
+        __atomic_store_n(&probe.proceed, 1U, __ATOMIC_RELEASE);
+        while (!__atomic_load_n(&probe.done, __ATOMIC_ACQUIRE))
+            sched_yield();
+        if (probe.fatal && kill(static_cast<int>(tid), SIGTERM) < 0) return false;
+        while (kill(static_cast<int>(tid), 0) >= 0)
+            sched_yield();
+        if (munmap(stack, STACK) != 0 || !probe.ok) return false;
+    }
+    printf("storage_smoke: vnode references and thread cleanup PASS\n");
+    return true;
 }
 
 bool verify_ramfs() {
@@ -248,6 +322,7 @@ int main() {
     char stage = 0;
     REQUIRE(read(stage_fd, &stage, 1) == 1 && stage >= '0' && stage <= '2');
     REQUIRE(verify_lookup());
+    REQUIRE(verify_ownership());
     REQUIRE(verify_ramfs());
     REQUIRE(verify_mmap());
     if (stage == '0') {

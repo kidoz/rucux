@@ -8,6 +8,7 @@
 #include <kernel/time.hpp>
 #include <kernel/vfs/ramfs.hpp>
 #include <kernel/vfs/vfs.hpp>
+#include <new>
 #include <thread>
 #include <uapi/kernel/stat.h>
 
@@ -22,6 +23,7 @@ int callback_result;
 unsigned truncated, synced;
 unsigned refreshed;
 unsigned looked_up, opened;
+std::atomic<unsigned> finalized{0};
 size_t refreshed_length;
 int refresh_result;
 uint64_t ticks;
@@ -31,7 +33,7 @@ void reset() {
     current.fd_count = 4;
     for (auto& fd : descriptors)
         fd = {};
-    node = {};
+    new (&node) vfs_node{};
     node.type = file_type::REGULAR;
     node.length = 128;
     node.ops = &ops;
@@ -69,6 +71,7 @@ struct MetadataMount {
     vfs_node root{};
     vfs_ops root_ops{};
     MetadataMount() {
+        if (previous) previous->retain();
         root.type = file_type::DIRECTORY;
         root.ops = &root_ops;
         root_ops.lookup = [](vfs_node*, const char* name, vfs_node*& result) {
@@ -108,8 +111,8 @@ namespace scheduler {
 thread* scheduler::current_thread() noexcept {
     return has_current ? &current : nullptr;
 }
-bool thread::ensure_fd_capacity(size_t) noexcept {
-    return false;
+bool thread::ensure_fd_capacity(size_t count) noexcept {
+    return fd_table && fd_count >= count;
 }
 void scheduler::sleep_until(uint64_t tick) noexcept {
     ticks = tick;
@@ -275,6 +278,130 @@ TEST(ramfs_checked_lookup_returns_children_and_missing_entries) {
     ASSERT(result == directory);
     ASSERT_EQ(vfs_manager::resolve_path("/lookup-dir/missing", result), -2);
     ASSERT(result == nullptr);
+}
+
+TEST(vfs_references_finalize_once_after_concurrent_holders_finish) {
+    finalized.store(0);
+    auto* managed = new vfs_node();
+    managed->destroy = [](vfs_node* target) {
+        finalized.fetch_add(1);
+        delete target;
+    };
+    std::array<std::thread, 4> holders;
+    for (auto& holder : holders) {
+        managed->retain();
+        holder = std::thread([managed] {
+            for (unsigned i = 0; i < 1000; ++i) {
+                managed->retain();
+                managed->release();
+            }
+            managed->release();
+        });
+    }
+    managed->release();
+    for (auto& holder : holders)
+        holder.join();
+    ASSERT_EQ(finalized.load(), 1U);
+}
+
+TEST(vfs_copy_fds_keeps_managed_nodes_and_legacy_open_close_balanced) {
+    reset();
+    finalized.store(0);
+    opened = synced = 0;
+    vfs_ops managed_ops{};
+    managed_ops.open = [](vfs_node*) { ++opened; };
+    managed_ops.close = [](vfs_node*) { ++synced; };
+    auto* managed = new vfs_node();
+    managed->ops = &managed_ops;
+    managed->destroy = [](vfs_node* target) {
+        finalized.fetch_add(1);
+        delete target;
+    };
+    const int fd = vfs_manager::alloc_fd(managed);
+    ASSERT_EQ(fd, 0);
+    managed->release(); // The descriptor owns the remaining reference.
+    kernel::scheduler::thread child{};
+    kernel::scheduler::thread::file_descriptor child_fds[4]{};
+    child.fd_table = child_fds;
+    child.fd_count = 4;
+    ASSERT_EQ(vfs_manager::copy_fds(&current, &child), 0);
+    ASSERT_EQ(opened, 1U);
+    ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+    ASSERT_EQ(synced, 1U);
+    ASSERT_EQ(finalized.load(), 0U);
+    ASSERT(child_fds[fd].node == managed);
+    vfs_manager::close_all(&child);
+    ASSERT_EQ(synced, 2U);
+    ASSERT_EQ(finalized.load(), 1U);
+    vfs_manager::close_all(&child);
+    ASSERT_EQ(synced, 2U);
+}
+
+TEST(vfs_copy_fds_allocation_failure_keeps_source_and_target_unchanged) {
+    reset();
+    kernel::scheduler::thread child{};
+    ASSERT_EQ(vfs_manager::copy_fds(&current, &child), -12);
+    ASSERT(child.fd_table == nullptr);
+    ASSERT_EQ(child.fd_count, 0UL);
+    ASSERT(descriptors[1].node == &node);
+    ASSERT_EQ(vfs_manager::copy_fds(&current, &current), -22);
+    child.fd_table = descriptors;
+    child.fd_count = 4;
+    ASSERT_EQ(vfs_manager::copy_fds(&current, &child), -22);
+}
+
+TEST(vfs_close_detaches_descriptor_before_reentrant_callback) {
+    reset();
+    synced = 0;
+    ops.close = [](vfs_node*) {
+        ++synced;
+        ASSERT(vfs_manager::get_fd_node(1) == nullptr);
+        ASSERT_EQ(vfs_manager::sys_close(1), -9);
+    };
+    vfs_manager::free_fd(1);
+    ASSERT_EQ(synced, 1U);
+    ASSERT_EQ(vfs_manager::sys_close(1), -9);
+}
+
+TEST(vfs_epoll_node_survives_inherited_descriptor_until_last_close) {
+    reset();
+    const int fd = vfs_manager::sys_epoll_create(1);
+    ASSERT_EQ(fd, 0);
+    kernel::scheduler::thread child{};
+    kernel::scheduler::thread::file_descriptor child_fds[4]{};
+    child.fd_table = child_fds;
+    child.fd_count = 4;
+    ASSERT_EQ(vfs_manager::copy_fds(&current, &child), 0);
+    ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+    ASSERT(static_cast<vfs_node*>(child_fds[fd].node)->type == file_type::EPOLL);
+    vfs_manager::close_all(&child);
+}
+
+TEST(ramfs_namespace_pin_survives_managed_child_lookup_and_close) {
+    reset();
+    auto* root = vfs_manager::get_root();
+    if (!root) {
+        root = ramfs::create_root();
+        vfs_manager::set_root(root);
+    }
+    auto* child = new vfs_node();
+    child->type = file_type::DIRECTORY;
+    child->name = "managed-mount";
+    child->name_hash = vfs_node::hash_name(child->name);
+    child->destroy = [](vfs_node* target) { delete target; };
+    ramfs::attach_node(root, child); // The permanent namespace owns its initial pin.
+    for (unsigned i = 0; i < 32; ++i) {
+        vfs_node* result = nullptr;
+        ASSERT_EQ(vfs_manager::resolve_path("/managed-mount", result), 0);
+        ASSERT(result == child);
+        ASSERT_EQ(child->references.load(), 2U);
+        result->release();
+        const int fd = vfs_manager::sys_open("/managed-mount/", 00200000);
+        ASSERT_EQ(fd, 0);
+        ASSERT_EQ(child->references.load(), 2U);
+        ASSERT_EQ(vfs_manager::sys_close(fd), 0);
+        ASSERT_EQ(child->references.load(), 1U);
+    }
 }
 
 TEST(vfs_dispatches_truncate_without_changing_the_offset) {

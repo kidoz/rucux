@@ -59,6 +59,8 @@ vma* vma_manager::split(vma* region, uintptr_t at) noexcept {
     right->prot = region->prot;
     right->flags = region->flags;
     right->fd = region->fd;
+    if (auto* node = region->backing.get()) node->retain();
+    right->backing.reset(region->backing.get());
     right->file_offset = region->file_offset + static_cast<long>(at - region->start);
     right->tree_node.init();
     region->end = at;
@@ -66,7 +68,8 @@ vma* vma_manager::split(vma* region, uintptr_t at) noexcept {
     return right;
 }
 
-vma* vma_manager::insert(uintptr_t start, uintptr_t end, uint32_t prot, uint32_t flags, int fd, long offset) noexcept {
+vma* vma_manager::insert(uintptr_t start, uintptr_t end, uint32_t prot, uint32_t flags, int fd, long offset,
+                         vfs::vfs_node* backing) noexcept {
     if (start >= end || first_overlap(start, end)) return nullptr;
     auto* region = new vma();
     if (!region) return nullptr;
@@ -77,6 +80,8 @@ vma* vma_manager::insert(uintptr_t start, uintptr_t end, uint32_t prot, uint32_t
     region->flags = flags;
     region->fd = fd;
     region->file_offset = offset;
+    if (backing) backing->retain();
+    region->backing.reset(backing);
     region->tree_node.init();
 
     tree_.insert(&region->tree_node, vma_cmp);
@@ -161,6 +166,8 @@ bool vma_manager::remove(uintptr_t start, size_t length) noexcept {
         right->prot = span->prot;
         right->flags = span->flags;
         right->fd = span->fd;
+        if (auto* node = span->backing.get()) node->retain();
+        right->backing.reset(span->backing.get());
         right->file_offset = span->file_offset + static_cast<long>(end - span->start);
         right->tree_node.init();
     }
@@ -187,6 +194,11 @@ bool vma_manager::remove(uintptr_t start, size_t length) noexcept {
 
     delete right;
     return true;
+}
+
+bool vma_manager::owns_frame(uintptr_t address) const noexcept {
+    const auto* region = find(address);
+    return !region || (region->flags & VMA_OWNS_FRAMES) != 0;
 }
 
 void vma_manager::destroy_all() noexcept {

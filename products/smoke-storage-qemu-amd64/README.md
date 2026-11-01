@@ -41,6 +41,15 @@ including NUL; FAT32 retains 8.3 names. Relative paths return EINVAL and dot/par
 components EOPNOTSUPP. The serial marker is
 `storage_smoke: lookup errno and path validation PASS`.
 
+Each boot repeats stat/open/map/close/unmap 32 times, checking that private
+mapping bytes remain readable after closing the file. Four clone probes check
+an inherited file after the parent closes it and deliberately leave the child's
+descriptors open. Two children exit normally and two receive SIGTERM while
+yielding; each probe explicitly unmaps its user stack after termination.
+The required marker is `storage_smoke: vnode references and thread cleanup PASS`.
+Hosted allocation counters establish exact reclamation; these target checks
+exercise real clone/exit/mapping paths and do not measure kernel heap usage.
+
 Every boot checks an eager private file mapping, snapshot-EOF zero filling,
 independent FD offsets, private-copy writes and errno for invalid descriptors
 and write-only access. It then repeats first/later-page EIO mappings 16 times,

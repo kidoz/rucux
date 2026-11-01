@@ -26,7 +26,9 @@ vfs_node* vfs_manager::get_root() noexcept {
 }
 
 void vfs_manager::set_root(vfs_node* node) noexcept {
+    auto* previous = g_root;
     g_root = node;
+    if (previous) previous->release();
 }
 
 namespace {
@@ -82,11 +84,12 @@ int vfs_manager::resolve_path(const char* path, vfs_node*& result) noexcept {
         if (error < 0) return error;
     }
     if (!g_root) return -2;
-    vfs_node* current = g_root;
+    g_root->retain();
+    node_ref current(g_root);
     size_t i = 0;
     while (i < length) {
         if (path[i] == '/') {
-            if (current->type != file_type::DIRECTORY) return -20;
+            if (current.get()->type != file_type::DIRECTORY) return -20;
             ++i;
             continue;
         }
@@ -96,11 +99,11 @@ int vfs_manager::resolve_path(const char* path, vfs_node*& result) noexcept {
             component[count++] = path[i++];
         component[count] = '\0';
         vfs_node* child = nullptr;
-        const int error = lookup(current, component, child);
+        const int error = lookup(current.get(), component, child);
         if (error < 0) return error;
-        current = child;
+        current.reset(child);
     }
-    result = current;
+    result = current.detach();
     return 0;
 }
 
@@ -125,6 +128,7 @@ int vfs_manager::alloc_fd(vfs_node* node) noexcept {
 
     for (size_t i = 0; i < t->fd_count; ++i) {
         if (t->fd_table[i].node == nullptr) {
+            node->retain();
             t->fd_table[i].node = node;
             t->fd_table[i].offset = 0;
             t->fd_table[i].flags = flags;
@@ -135,6 +139,7 @@ int vfs_manager::alloc_fd(vfs_node* node) noexcept {
         size_t old = t->fd_count;
         if (!t->ensure_fd_capacity(t->fd_count + 1)) return -12;
         if (old < t->fd_count) {
+            node->retain();
             t->fd_table[old].node = node;
             t->fd_table[old].offset = 0;
             t->fd_table[old].flags = flags;
@@ -144,10 +149,41 @@ int vfs_manager::alloc_fd(vfs_node* node) noexcept {
     return t->fd_count >= scheduler::thread::MAX_FDS ? -24 : -12;
 }
 
+namespace {
+void close_descriptor(fd_t& descriptor) noexcept {
+    auto* node = static_cast<vfs_node*>(descriptor.node);
+    descriptor = {}; // Detach before a callback can re-enter or destroy the node.
+    if (node) node->close_reference();
+}
+} // namespace
+
 void vfs_manager::free_fd(int fd) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);
-    if (fdesc) fdesc->node = nullptr;
+    if (fdesc) close_descriptor(*fdesc);
+}
+
+void vfs_manager::close_all(scheduler::thread* owner) noexcept {
+    if (!owner || !owner->fd_table) return;
+    for (size_t i = 0; i < owner->fd_count; ++i)
+        close_descriptor(owner->fd_table[i]);
+}
+
+int vfs_manager::copy_fds(const scheduler::thread* source, scheduler::thread* target) noexcept {
+    if (!source || !target || source == target) return -22;
+    // Clone supplies an empty destination; never replace live descriptors.
+    if (target->fd_table) {
+        for (size_t i = 0; i < target->fd_count; ++i)
+            if (target->fd_table[i].node) return -22;
+    }
+    if (!source->fd_table || !source->fd_count) return 0;
+    if (!target->ensure_fd_capacity(source->fd_count)) return -12;
+    for (size_t i = 0; i < source->fd_count; ++i) {
+        target->fd_table[i] = source->fd_table[i];
+        auto* node = static_cast<vfs_node*>(target->fd_table[i].node);
+        if (node) node->open_reference();
+    }
+    return 0;
 }
 
 vfs_node* vfs_manager::get_fd_node(int fd) noexcept {
@@ -163,6 +199,7 @@ int vfs_manager::sys_open(const char* path, int flags) noexcept {
     vfs_node* node = nullptr;
     const int error = resolve_path(path, node);
     if (error < 0) return error;
+    node_ref reference(node);
     constexpr int DIRECTORY = 00200000;
     if ((flags & DIRECTORY) && node->type != file_type::DIRECTORY) return -20;
     const int fd = alloc_fd(node);
@@ -230,12 +267,8 @@ long vfs_manager::sys_write(int fd, const void* buffer, size_t size) noexcept {
 int vfs_manager::sys_close(int fd) noexcept {
     auto* t = scheduler::scheduler::current_thread();
     auto* fdesc = get_fd(t, fd);
-    if (!fdesc || !fdesc->node) return -1;
-
-    vfs_node* node = static_cast<vfs_node*>(fdesc->node);
-    if (node->ops && node->ops->close) node->ops->close(node);
-
-    fdesc->node = nullptr;
+    if (!fdesc || !fdesc->node) return -9;
+    close_descriptor(*fdesc);
     return 0;
 }
 
@@ -344,6 +377,7 @@ int vfs_manager::sys_stat(const char* path, void* statbuf) noexcept {
     vfs_node* node = nullptr;
     const int error = resolve_path(path, node);
     if (error < 0) return error;
+    node_ref reference(node);
     const int result = refresh_metadata(node);
     if (result < 0) return result;
     fill_stat(node, statbuf);
@@ -575,17 +609,21 @@ struct epoll_node_data {
 int vfs_manager::sys_epoll_create(int size) noexcept {
     (void)size;
     auto* node = new vfs_node();
-    lib::memset(node, 0, sizeof(*node));
+    if (!node) return -12;
     node->type = file_type::EPOLL;
 
     // allocate data
     auto* data = new epoll_node_data();
+    if (!data) {
+        delete node;
+        return -12;
+    }
     data->head = nullptr;
     node->ptr = reinterpret_cast<vfs_node*>(data);
 
     // ops
     static vfs_ops epoll_ops = {};
-    epoll_ops.close = [](vfs_node* n) {
+    node->destroy = [](vfs_node* n) {
         auto* d = reinterpret_cast<epoll_node_data*>(n->ptr);
         auto* curr = d->head;
         while (curr) {
@@ -598,12 +636,8 @@ int vfs_manager::sys_epoll_create(int size) noexcept {
     };
     node->ops = &epoll_ops;
 
-    int fd = alloc_fd(node);
-    if (fd < 0) {
-        epoll_ops.close(node);
-        return -1;
-    }
-    return fd;
+    node_ref reference(node);
+    return alloc_fd(node);
 }
 
 int vfs_manager::sys_epoll_ctl(int epfd, int op, int fd, void* event_ptr) noexcept {

@@ -17,6 +17,7 @@ struct fat32_info {
     uint32_t data_lba;
     uint32_t cluster_count;
     uint8_t sectors_per_cluster;
+    atomic<uint32_t> references{0};
 };
 struct fat32_node_internal {
     fat32_info* info;
@@ -24,6 +25,7 @@ struct fat32_node_internal {
     uint32_t start_cluster;
     uint32_t directory_lba;
     uint16_t directory_offset;
+    char* owned_name; // node->name may be replaced by the mount-point label.
 };
 
 // The primary ATA disk is shared by all mounts. A reservation cannot sleep or
@@ -101,6 +103,20 @@ int fat32_refresh_metadata(vfs_node*) noexcept;
 int read_file_entry(vfs_node*, uint8_t (&)[SECTOR_SIZE], uint32_t&) noexcept;
 int fat32_lookup(vfs_node*, const char*, vfs_node*&) noexcept;
 
+void destroy_node(vfs_node* node) noexcept {
+    auto* internal = reinterpret_cast<fat32_node_internal*>(node->ptr);
+    auto* info = internal->info;
+    kfree(internal->owned_name);
+    kfree(internal);
+    kfree(node->ops);
+    node->~vfs_node();
+    kfree(node);
+    if (info->references.fetch_sub(1, acq_rel) == 1) {
+        info->~fat32_info();
+        kfree(info);
+    }
+}
+
 vfs_node* make_node(fat32_info* info, uint32_t cluster, uint64_t capacity, uint32_t length, file_type type,
                     const char* name, uint32_t directory_lba = 0, uint16_t directory_offset = 0) noexcept {
     auto* node = allocate<vfs_node>();
@@ -122,7 +138,9 @@ vfs_node* make_node(fat32_info* info, uint32_t cluster, uint64_t capacity, uint3
     node->type = type;
     node->ops = ops;
     node->ptr = reinterpret_cast<vfs_node*>(internal);
-    *internal = {info, capacity, cluster, directory_lba, directory_offset};
+    *internal = {info, capacity, cluster, directory_lba, directory_offset, owned_name};
+    info->references.fetch_add(1, relaxed);
+    node->destroy = destroy_node;
     ops->fsync = fat32_fsync;
     if (type == file_type::DIRECTORY) {
         ops->lookup = fat32_lookup;
@@ -419,7 +437,10 @@ vfs_node* mount(uint32_t partition_lba) noexcept {
     if (!valid_cluster(parsed, root_cluster) || !chain_capacity(parsed, root_cluster, capacity)) return nullptr;
     auto* info = allocate<fat32_info>();
     if (!info) return nullptr;
-    *info = parsed;
+    info->fat_lba = parsed.fat_lba;
+    info->data_lba = parsed.data_lba;
+    info->cluster_count = parsed.cluster_count;
+    info->sectors_per_cluster = parsed.sectors_per_cluster;
     auto* root = make_node(info, root_cluster, capacity, 0, file_type::DIRECTORY, "/");
     if (!root) {
         kfree(info);

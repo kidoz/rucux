@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <kernel/sync/atomic.hpp>
 #include <lib/stddef.hpp>
 #include <stdint.h>
+
+namespace kernel::scheduler {
+struct thread;
+}
 
 namespace kernel::vfs {
 
@@ -19,8 +24,8 @@ struct vfs_ops {
     void (*open)(vfs_node* node);
     void (*close)(vfs_node* node);
     int (*ioctl)(vfs_node* node, unsigned long request, void* argp);
-    vfs_node* (*readdir)(vfs_node* node, size_t index);
-    // Return 0 and a non-null node, or negative errno and a null result.
+    vfs_node* (*readdir)(vfs_node* node, size_t index); // Borrowed namespace entry.
+    // Return 0 and one owned node reference, or negative errno and a null result.
     int (*lookup)(vfs_node* node, const char* name, vfs_node*& result);
     uintptr_t (*mmap)(vfs_node* node, size_t offset); // Returns physical address
     int (*fsync)(vfs_node* node);
@@ -35,7 +40,7 @@ struct vfs_ops {
 };
 
 struct vfs_node {
-    const char* name;   // Dynamically allocated name string
+    const char* name;   // Static or filesystem-owned; destroy decides how to free.
     uint32_t name_hash; // FNV-1a hash for fast comparison
     uint32_t inode;
     size_t length;
@@ -47,6 +52,30 @@ struct vfs_node {
     vfs_ops* ops;
     vfs_node* ptr; // Implementation specific
 
+    // Null destroy leaves lifetime to the namespace or legacy open/close hooks.
+    // Managed creators publish a finalizer and one initial reference. Their
+    // close hook must not free the node; destroy runs once and must not sleep.
+    atomic<uint32_t> references{1};
+    void (*destroy)(vfs_node* node) = nullptr;
+
+    // The caller must already own a reference (or hold a namespace/FD pin).
+    void retain() noexcept {
+        if (destroy) references.fetch_add(1, relaxed);
+    }
+    void release() noexcept {
+        if (destroy && references.fetch_sub(1, acq_rel) == 1) destroy(this);
+    }
+    void open_reference() noexcept {
+        retain();
+        if (ops && ops->open) ops->open(this);
+    }
+    void close_reference() noexcept {
+        // Legacy permanent nodes may manage their own lifetime in close.
+        const bool managed = destroy != nullptr;
+        if (ops && ops->close) ops->close(this);
+        if (managed) release();
+    }
+
     static uint32_t hash_name(const char* s) noexcept {
         uint32_t h = 2166136261u; // FNV offset basis
         for (; *s; ++s)
@@ -55,19 +84,50 @@ struct vfs_node {
     }
 };
 
+// Adopts one reference; use retain() explicitly when starting from a borrow.
+class node_ref {
+public:
+    node_ref() noexcept = default;
+    explicit node_ref(vfs_node* node) noexcept
+        : node_(node) {}
+    ~node_ref() noexcept { reset(); }
+    node_ref(const node_ref&) = delete;
+    node_ref& operator=(const node_ref&) = delete;
+    vfs_node* get() const noexcept { return node_; }
+    void reset(vfs_node* node = nullptr) noexcept {
+        auto* previous = node_;
+        node_ = node;
+        if (previous) previous->release();
+    }
+    vfs_node* detach() noexcept {
+        auto* result = node_;
+        node_ = nullptr;
+        return result;
+    }
+
+private:
+    vfs_node* node_ = nullptr;
+};
+
 class vfs_manager {
 public:
     static void init() noexcept;
+    // Borrowed root. set_root consumes one reference and releases the old root.
     static vfs_node* get_root() noexcept;
     static void set_root(vfs_node* node) noexcept;
+    // Successful lookup/resolve returns one owned reference.
     // Absolute paths only; 1024 bytes including NUL, components at most 127 bytes.
     static int lookup(vfs_node* directory, const char* name, vfs_node*& result) noexcept;
     static int resolve_path(const char* path, vfs_node*& result) noexcept;
 
     // FD Management
+    // Retains node on success; the caller keeps its reference.
     static int alloc_fd(vfs_node* node) noexcept;
-    static void free_fd(int fd) noexcept;
-    static vfs_node* get_fd_node(int fd) noexcept;
+    static void free_fd(int fd) noexcept;          // Closes and releases the entry.
+    static vfs_node* get_fd_node(int fd) noexcept; // Borrowed until close.
+    // Only the owning thread or an unpublished/terminated table may be changed.
+    static void close_all(scheduler::thread* owner) noexcept;
+    static int copy_fds(const scheduler::thread* source, scheduler::thread* target) noexcept;
 
     // POSIX Syscalls
     static int sys_open(const char* path, int flags) noexcept;
