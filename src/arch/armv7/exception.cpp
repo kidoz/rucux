@@ -15,6 +15,10 @@ namespace arch::armv7 {
 extern "C" void vector_table();
 
 static constexpr uint32_t TIMER_VIRQ = 27;
+extern "C" void armv7_exception_stacks(uint32_t);
+void init_exception_mode_stacks(uint32_t cpu_id) noexcept {
+    armv7_exception_stacks(cpu_id);
+}
 
 // ─── Exception handlers (called from assembly stubs) ───────────────────────
 
@@ -75,7 +79,11 @@ extern "C" void irq_handler_arm() noexcept {
     if (irq_num == 1023) return; // Spurious
 
     if (irq_num == TIMER_VIRQ) {
-        kernel::cpu::this_cpu()->ticks++;
+        auto* pcpu = kernel::cpu::this_cpu();
+        ++pcpu->ticks;
+        generic_timer::set_timer(generic_timer::get_frequency() / 1000);
+        gic_cpu_interface::end_of_interrupt(irq_id);
+        if (pcpu->ticks == 1) kernel::print("CPU{}: timer IRQ verified\n", pcpu->cpu_id);
         if (kernel::cpu::this_cpu()->cpu_id == 0) {
             kernel::time_manager::tick();
             auto ticks = kernel::time_manager::get_ticks();
@@ -84,13 +92,11 @@ extern "C" void irq_handler_arm() noexcept {
                 kernel::net::tcp_tick(ticks);
             }
         }
-        generic_timer::set_timer(generic_timer::get_frequency() / 1000);
         kernel::scheduler::scheduler::schedule();
     } else {
+        gic_cpu_interface::end_of_interrupt(irq_id);
         kernel::scheduler::scheduler::wake_irq_waiters(static_cast<uint8_t>(irq_num));
     }
-
-    gic_cpu_interface::end_of_interrupt(irq_id);
 }
 
 extern "C" void fiq_handler() noexcept {

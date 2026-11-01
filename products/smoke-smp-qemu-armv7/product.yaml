@@ -1,0 +1,5 @@
+name: smoke-smp-qemu-armv7
+board: qemu-armv7-virt
+services: []
+programs: []
+images: []

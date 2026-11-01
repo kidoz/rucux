@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+.arch armv7-a
 // ARMv7 context switch and user-space transition.
 
 .section .text
@@ -46,6 +47,16 @@ switch_context:
     // Restore callee-saved registers; lr → pc (return to new thread)
     pop {r4-r11, pc}
 
+
+// Fresh kernel entries run in SVC with IRQs enabled after the handoff callback.
+.global armv7_thread_entry
+armv7_thread_entry:
+    cpsie i
+    blx r4
+    bl armv7_thread_exit
+1:  cpsid if
+    wfi
+    b 1b
 
 // ─── Save/Restore user-bank return context ────────────────────────────────
 // These helpers are used when a user thread blocks inside SVC mode and the

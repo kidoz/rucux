@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include <arch/armv7/timer.hpp>
 #include <kernel/print.hpp>
+#include <kernel/sync/atomic.hpp>
 
 namespace arch::armv7 {
 
@@ -32,7 +33,7 @@ void generic_timer::disable() noexcept {
 }
 
 // Timer tick count for periodic reload
-static uint32_t g_timer_period = 0;
+static kernel::atomic<uint32_t> g_timer_period{0};
 
 uint32_t generic_timer::init_periodic(uint32_t target_hz) noexcept {
     uint32_t freq = get_frequency();
@@ -41,17 +42,18 @@ uint32_t generic_timer::init_periodic(uint32_t target_hz) noexcept {
         return 0;
     }
 
-    g_timer_period = freq / target_hz;
-
-    set_timer(g_timer_period);
+    if (!target_hz || freq < target_hz) return 0;
+    const auto period = freq / target_hz;
+    g_timer_period.store(period, kernel::relaxed);
+    set_timer(period);
     enable();
 
-    kernel::print("Generic Timer: freq={} Hz, period={} ticks ({} Hz)\n", freq, g_timer_period, target_hz);
-    return g_timer_period;
+    kernel::print("Generic Timer: freq={} Hz, period={} ticks ({} Hz)\n", freq, period, target_hz);
+    return g_timer_period.load(kernel::relaxed);
 }
 
 uint32_t timer_get_period() noexcept {
-    return g_timer_period;
+    return g_timer_period.load(kernel::relaxed);
 }
 
 } // namespace arch::armv7

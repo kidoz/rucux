@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+.arch armv7-a
 
 .section .text.boot, "ax"
 .global _start
@@ -15,6 +16,10 @@ _start:
     .word 0
 
 _start_real:
+    cpsid if
+    mrc p15, 0, r3, c0, c0, 5
+    ands r3, r3, #0xff
+    bne 3f // Firmware secondaries must not share the BSP stack or BSS clear.
     mov r4, r0
     mov r5, r1
     mov r6, r2

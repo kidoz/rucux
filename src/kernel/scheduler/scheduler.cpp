@@ -44,6 +44,12 @@ static kernel::irq_spinlock g_sleep_queue_lock;
 extern "C" void switch_thread_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
 extern "C" {
 void jump_to_user_space(void* entry, void* stack, void* arg);
+#if defined(__arm__)
+void armv7_thread_entry();
+void armv7_thread_exit() {
+    scheduler::exit(0);
+}
+#endif
 #if defined(__x86_64__)
 void amd64_thread_entry();
 void amd64_thread_exit() {
@@ -341,9 +347,10 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
     t->stack_pointer = reinterpret_cast<uintptr_t>(stack);
 #elif defined(__arm__)
     uint32_t* stack = reinterpret_cast<uint32_t*>(t->stack_base + t->stack_size);
-    *(--stack) = reinterpret_cast<uint32_t>(entry);
+    *(--stack) = reinterpret_cast<uint32_t>(armv7_thread_entry);
     for (int i = 0; i < 8; ++i)
         *(--stack) = 0;
+    stack[0] = reinterpret_cast<uint32_t>(entry); // r4 for the fresh-thread trampoline.
     t->stack_pointer = reinterpret_cast<uintptr_t>(stack);
 #elif defined(__aarch64__)
     // A fresh thread is reached by `ret`, so it inherits PSTATE from the

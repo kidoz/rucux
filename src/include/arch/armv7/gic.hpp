@@ -48,6 +48,7 @@ private:
 class gic_cpu_interface {
 public:
     static void init(uintptr_t base) noexcept;
+    static void init_cpu() noexcept;
     static uint32_t acknowledge() noexcept; // Returns interrupt ID
     static void end_of_interrupt(uint32_t irq) noexcept;
     static uint32_t read(uint32_t reg) noexcept;

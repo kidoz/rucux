@@ -28,6 +28,7 @@ constexpr int32_t INTERNAL_FAILURE = -6;
 
 class psci {
 public:
+    static void set_conduit(bool hvc) noexcept;
     // Get PSCI version (returns packed major.minor or NOT_SUPPORTED)
     static int32_t version() noexcept;
 
@@ -42,7 +43,7 @@ public:
 
 private:
     // Invoke PSCI via SMC (conduit auto-detected; default to SMC)
-    static int32_t smc_call(uint32_t fn, uint32_t a1 = 0, uint32_t a2 = 0, uint32_t a3 = 0) noexcept;
+    static int32_t call(uint32_t fn, uint32_t a1 = 0, uint32_t a2 = 0, uint32_t a3 = 0) noexcept;
 };
 
 } // namespace arch::armv7

@@ -91,3 +91,16 @@ root teardown. It rebuilds the matching loader and kernel and keeps unique,
 network-free evidence under `build/amd64-smp-evidence/`. See the
 [product contract](../products/smoke-smp-qemu-amd64/README.md) for required markers,
 boot protocol compatibility, failure captures and limits.
+
+## ARMv7 SMP kernel gate
+
+```sh
+python3 tools/test_armv7_smp_smoke.py --attempts 30
+python3 -m unittest discover -s tools -p test_armv7_smp_smoke_unit.py
+```
+
+This offline gate requires one/four-CPU kernel scheduling, timer preemption,
+broadcast-TLB replacement/protection/unmap/reuse and inactive-root teardown.
+Exact binaries and failure snapshots remain under `build/armv7-smp-evidence/`.
+See the [product contract](../products/smoke-smp-qemu-armv7/README.md) for the
+required evidence and ARMv7's kernel-only scope.

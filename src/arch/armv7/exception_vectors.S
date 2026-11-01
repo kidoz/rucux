@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+.arch armv7-a
 // ARMv7 Exception Vector Table and entry stubs.
 // Each vector saves state and calls a C++ handler.
 
@@ -95,12 +96,18 @@ data_abort_entry:
 
 // ─── IRQ ───────────────────────────────────────────────────────────────────
 irq_entry:
-    sub lr, lr, #4        // IRQ: LR = next instruction + 4
-    stmfd sp!, {r0-r12, lr}
-
-    bl  irq_handler_arm
-
-    ldmfd sp!, {r0-r12, pc}^
+    sub lr, lr, #4
+    // Put PC/CPSR on this thread's SVC stack before changing modes. These
+    // return registers must migrate with the thread, not stay banked per CPU.
+    srsdb sp!, #0x13
+    cps #0x13
+    push {r0-r12, lr}
+    mov r4, sp
+    bic sp, sp, #7
+    bl irq_handler_arm
+    mov sp, r4
+    pop {r0-r12, lr}
+    rfeia sp!
 
 // ─── FIQ ───────────────────────────────────────────────────────────────────
 fiq_entry:

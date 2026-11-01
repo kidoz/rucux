@@ -88,14 +88,16 @@ void gic_cpu_interface::write(uint32_t reg, uint32_t value) noexcept {
 
 void gic_cpu_interface::init(uintptr_t base) noexcept {
     base_ = base;
+    init_cpu();
+    kernel::print("GIC CPU Interface: base=0x{x}\n", reinterpret_cast<void*>(base));
+}
+void gic_cpu_interface::init_cpu() noexcept {
 
     // Set priority mask to accept all priorities
     write(gicc_reg::PMR, 0xFF);
 
     // Enable CPU interface (group 0 + group 1)
     write(gicc_reg::CTLR, 1);
-
-    kernel::print("GIC CPU Interface: base=0x{x}\n", reinterpret_cast<void*>(base));
 }
 
 uint32_t gic_cpu_interface::acknowledge() noexcept {
