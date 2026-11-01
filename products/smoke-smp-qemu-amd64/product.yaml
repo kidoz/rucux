@@ -1,0 +1,7 @@
+name: smoke-smp-qemu-amd64
+board: qemu-amd64
+services: []
+programs:
+  - mm_smp_smoke
+  - syscall_smoke
+images: []

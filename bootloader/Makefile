@@ -31,12 +31,12 @@ endif
 all: $(TARGET)
 
 ifeq ($(ARCH), arm-baremetal)
-$(TARGET): $(SRCS)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $(TARGET_ELF) $^
+$(TARGET): $(SRCS) ../src/include/kernel/boot_protocol.hpp
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $(TARGET_ELF) $(SRCS)
 	$(OBJCOPY) -O binary $(TARGET_ELF) $(TARGET)
 else
-$(TARGET): $(SRCS)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^
+$(TARGET): $(SRCS) uefi/uefi.hpp ../src/include/kernel/boot_protocol.hpp
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(SRCS)
 endif
 
 clean:

@@ -3,6 +3,7 @@
 #include <arch/amd64/idt.hpp>
 #include <arch/amd64/io.hpp>
 #include <arch/amd64/pic.hpp>
+#include <arch/amd64/pit.hpp>
 #include <kernel/print.hpp>
 
 namespace arch::amd64 {
@@ -13,6 +14,10 @@ uintptr_t lapic::base_ = 0;
 
 void lapic::init(uintptr_t base_address) noexcept {
     base_ = base_address;
+    init_cpu();
+}
+
+void lapic::init_cpu() noexcept {
 
     // Enable LAPIC via SVR (bit 8 = enable, vector 0xFF for spurious)
     write(lapic_reg::SVR, read(lapic_reg::SVR) | 0x1FF);
@@ -65,11 +70,13 @@ void lapic::send_ipi(uint8_t target_apic_id, uint32_t icr_low) noexcept {
         ;
 }
 
-void lapic::send_init(uint8_t target_apic_id) noexcept {
+bool lapic::send_init(uint8_t target_apic_id) noexcept {
     // INIT assert
     send_ipi(target_apic_id, ICR_INIT | ICR_LEVEL | ICR_ASSERT);
+    if (!pit::wait_10ms()) return false;
     // INIT deassert
     send_ipi(target_apic_id, ICR_INIT | ICR_LEVEL | ICR_DEASSERT);
+    return true;
 }
 
 void lapic::send_sipi(uint8_t target_apic_id, uint8_t vector) noexcept {
@@ -155,6 +162,14 @@ void apic_init(const acpi::madt_info& info) noexcept {
     if (info.io_apic_address) {
         ioapic::init(static_cast<uintptr_t>(info.io_apic_address));
         ioapic::apply_overrides(info, lapic::id());
+        // The local APIC timer replaces PIT IRQ0. Mask its actual GSI route
+        // (usually the MADT override to GSI 2) to avoid double-counting time.
+        uint8_t pit_gsi = 0;
+        for (uint32_t i = 0; i < info.override_count; ++i)
+            if (info.overrides[i].irq_source == 0)
+                pit_gsi = static_cast<uint8_t>(info.overrides[i].global_system_interrupt);
+        const auto reg = static_cast<uint8_t>(0x10 + pit_gsi * 2);
+        ioapic::write(reg, ioapic::read(reg) | LAPIC_TIMER_MASKED);
     }
 }
 

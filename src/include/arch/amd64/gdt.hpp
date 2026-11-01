@@ -18,6 +18,6 @@ struct gdt_pointer {
     uint64_t offset;
 } __attribute__((packed));
 
-void gdt_init() noexcept;
+void gdt_init(uint32_t cpu_id = 0) noexcept;
 
 } // namespace arch::amd64

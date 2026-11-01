@@ -184,6 +184,11 @@ struct EFI_BOOT_SERVICES {
     void* CreateEventEx;
 };
 
+struct EFI_CONFIGURATION_TABLE {
+    EFI_GUID VendorGuid;
+    void* VendorTable;
+};
+
 struct EFI_SYSTEM_TABLE {
     EFI_TABLE_HEADER Hdr;
     UINT16* FirmwareVendor;
@@ -197,7 +202,7 @@ struct EFI_SYSTEM_TABLE {
     void* RuntimeServices;
     EFI_BOOT_SERVICES* BootServices;
     UINTN NumberOfTableEntries;
-    void* ConfigurationTable;
+    EFI_CONFIGURATION_TABLE* ConfigurationTable;
 };
 
 // File protocols
@@ -278,8 +283,8 @@ struct EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE {
 struct EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
 typedef EFI_STATUS(EFIAPI* EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE)(EFI_GRAPHICS_OUTPUT_PROTOCOL* This,
-                                                                   UINT32 ModeNumber, UINTN* SizeOfInfo,
-                                                                   EFI_GRAPHICS_OUTPUT_MODE_INFORMATION** Info);
+                                                                    UINT32 ModeNumber, UINTN* SizeOfInfo,
+                                                                    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION** Info);
 typedef EFI_STATUS(EFIAPI* EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE)(EFI_GRAPHICS_OUTPUT_PROTOCOL* This,
                                                                   UINT32 ModeNumber);
 

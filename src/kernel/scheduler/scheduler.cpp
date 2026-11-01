@@ -44,6 +44,12 @@ static kernel::irq_spinlock g_sleep_queue_lock;
 extern "C" void switch_thread_context(uintptr_t* old_stack, uintptr_t new_stack) noexcept;
 extern "C" {
 void jump_to_user_space(void* entry, void* stack, void* arg);
+#if defined(__x86_64__)
+void amd64_thread_entry();
+void amd64_thread_exit() {
+    scheduler::exit(0);
+}
+#endif
 #if defined(__aarch64__)
 // Unmasks IRQs before calling the thread entry point held in x19.
 void aarch64_thread_entry();
@@ -105,6 +111,9 @@ static void destroy_thread(thread* t) noexcept {
         kernel::memory::vmm::discard_address_space(t->pml4_phys, t->mm ? &t->mm->vmas : nullptr);
 #ifdef RUCUX_VM_SELF_TEST
         if (probe) {
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+            kernel::memory::vmm::report_tlb_probe();
+#endif
             const uint32_t count = cpu::g_cpu_count.load(kernel::acquire);
             const uint64_t expected = count == 64 ? UINT64_MAX : (uint64_t{1} << count) - 1;
             kernel::print("shared mm: root teardown {} (CPU mask {})\n", seen == expected ? "PASS" : "FAIL", seen);
@@ -322,9 +331,9 @@ thread* scheduler::spawn(void (*entry)(), uint32_t tid) noexcept {
 #if defined(__x86_64__)
     uint64_t* stack = reinterpret_cast<uint64_t*>(t->stack_base + t->stack_size);
     *(--stack) = 0;
-    *(--stack) = reinterpret_cast<uint64_t>(entry);
+    *(--stack) = reinterpret_cast<uint64_t>(amd64_thread_entry);
     *(--stack) = 0;
-    *(--stack) = 0;
+    *(--stack) = reinterpret_cast<uint64_t>(entry); // RBX, restored before entry trampoline.
     *(--stack) = 0;
     *(--stack) = 0;
     *(--stack) = 0;

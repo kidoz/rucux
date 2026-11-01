@@ -7,6 +7,8 @@ namespace arch::amd64 {
 
 // Boot all Application Processors listed in the MADT.
 // Must be called after APIC init and with a valid PML4.
-void smp_boot_aps(const acpi::madt_info& info, uintptr_t pml4_phys) noexcept;
+bool smp_boot_aps(const acpi::madt_info& info, uintptr_t pml4_phys, uintptr_t reserved_page,
+                  uint32_t timer_count) noexcept;
+void smp_release_aps() noexcept;
 
 } // namespace arch::amd64

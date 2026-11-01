@@ -36,6 +36,7 @@ constexpr uint32_t ICR_DEASSERT = 0x00000000;
 class lapic {
 public:
     static void init(uintptr_t base_address) noexcept;
+    static void init_cpu() noexcept;
     static void send_eoi() noexcept;
     static uint32_t read(uint32_t reg) noexcept;
     static void write(uint32_t reg, uint32_t value) noexcept;
@@ -47,7 +48,7 @@ public:
 
     // Send IPI (Inter-Processor Interrupt)
     static void send_ipi(uint8_t target_apic_id, uint32_t icr_low) noexcept;
-    static void send_init(uint8_t target_apic_id) noexcept;
+    static bool send_init(uint8_t target_apic_id) noexcept;
     static void send_sipi(uint8_t target_apic_id, uint8_t vector) noexcept;
 
 private:

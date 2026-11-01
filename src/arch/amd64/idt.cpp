@@ -41,6 +41,8 @@ extern "C" void irq0_entry();
 extern "C" void irq0_handler() noexcept {
     do_eoi(0);
     kernel::cpu::this_cpu()->ticks++;
+    if (kernel::cpu::this_cpu()->cpu_id && kernel::cpu::this_cpu()->ticks == 1)
+        kernel::print("AP{}: timer IRQ verified\n", kernel::cpu::this_cpu()->cpu_id);
     if (kernel::cpu::this_cpu()->cpu_id == 0) {
         kernel::time_manager::tick();
         if (kernel::cpu::this_cpu()->ticks % 100 == 0) {
@@ -206,6 +208,7 @@ void idt_init() noexcept {
     set_descriptor(0, reinterpret_cast<void*>(isr_stub_0), 0x8E);
     set_descriptor(1, reinterpret_cast<void*>(isr_stub_1), 0x8E);
     set_descriptor(2, reinterpret_cast<void*>(isr_stub_2), 0x8E);
+    g_idt[2].ist = 1; // NMI must also survive the syscall entry/exit stack window.
     set_descriptor(3, reinterpret_cast<void*>(isr_stub_3), 0x8E);
     set_descriptor(4, reinterpret_cast<void*>(isr_stub_4), 0x8E);
     set_descriptor(5, reinterpret_cast<void*>(isr_stub_5), 0x8E);
@@ -236,7 +239,11 @@ void idt_init() noexcept {
     pic::unmask(1);
     pic::unmask(4);
 
-    asm volatile("lidt %0" : : "m"(g_idt_ptr));
+    idt_load();
+}
+
+void idt_load() noexcept {
+    asm volatile("lidt %0" : : "m"(g_idt_ptr) : "memory");
 }
 
 } // namespace arch::amd64

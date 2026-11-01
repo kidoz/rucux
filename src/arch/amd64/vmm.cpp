@@ -14,6 +14,91 @@ namespace kernel::memory {
 
 static uintptr_t* g_pml4;
 static tlb::mailbox shootdowns[tlb::CPU_LIMIT];
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+namespace {
+constexpr uintptr_t PROBE_ALIAS = USER_BEGIN + 0x30000000ULL;
+constexpr uint64_t FIRST = 0x1122334455667788ULL, SECOND = 0x8877665544332211ULL;
+atomic<unsigned> probe_phase{0};
+atomic<uint64_t> primed{0}, checked{0}, bad{0};
+uintptr_t workload_root = 0;
+uint64_t user_targets = 0, user_acknowledgements = 0; // user_mapping_lock protects these.
+bool irqs_masked() {
+    uintptr_t flags;
+    asm volatile("pushfq; pop %0" : "=r"(flags)::"memory");
+    return !(flags & (1U << 9));
+}
+bool await_mask(atomic<uint64_t>& mask, uint64_t expected) {
+    for (unsigned spin = 0; spin < 100000000; ++spin) {
+        if (mask.load(acquire) == expected) return true;
+        cpu_relax();
+    }
+    return false;
+}
+} // namespace
+void vmm::probe_tlb_on_ap(uint32_t id) noexcept {
+    if (probe_phase.load(acquire) != 1) return;
+    const auto bit = uint64_t{1} << id;
+    auto* alias = reinterpret_cast<volatile uint64_t*>(PROBE_ALIAS);
+    if (*alias != FIRST || !irqs_masked()) bad.fetch_or(bit, relaxed);
+    primed.fetch_or(bit, release);
+    // AP startup keeps ordinary IRQs masked for both accesses. Only the NMI
+    // consumer can flush the translation while the BSP waits for completion.
+    while (probe_phase.load(acquire) == 1)
+        cpu_relax();
+    if (*alias != SECOND || !irqs_masked()) bad.fetch_or(bit, relaxed);
+    checked.fetch_or(bit, release);
+    while (probe_phase.load(acquire) != 0)
+        cpu_relax();
+}
+bool vmm::verify_remote_tlb() noexcept {
+    const auto count = cpu::g_cpu_count.load(acquire);
+    if (count == 1) {
+        kernel::print("TLB: remote IRQ-masked replacement SKIP (one CPU)\n");
+        return true;
+    }
+    const uint64_t expected = (count == 64 ? UINT64_MAX : (uint64_t{1} << count) - 1) & ~uint64_t{1};
+    auto* first = static_cast<uint64_t*>(pmm::alloc_page());
+    auto* second = static_cast<uint64_t*>(pmm::alloc_page());
+    if (!first || !second) return false;
+    *first = FIRST;
+    *second = SECOND;
+    const auto flags = page_flags::PRESENT | page_flags::WRITABLE | page_flags::NO_EXECUTE;
+    vmm::map(PROBE_ALIAS, reinterpret_cast<uintptr_t>(first), flags);
+    probe_phase.store(1, release);
+    if (!await_mask(primed, expected)) return false; // Retain live aliases/frames on timeout.
+    vmm::map(PROBE_ALIAS, reinterpret_cast<uintptr_t>(second), flags);
+    *first = 0xDEADDEADDEADDEADULL; // Reuse is observable if any remote translation survived.
+    probe_phase.store(2, release);
+    if (!await_mask(checked, expected)) return false;
+    const bool ok = !bad.load(acquire);
+    if (!ok) {
+        kernel::print("TLB: remote IRQ-masked replacement FAIL (CPU mask {})\n", checked.load(acquire));
+        return false; // Preserve the failing mappings/frames and parked APs.
+    }
+    vmm::unmap(PROBE_ALIAS);
+    pmm::free_page(first);
+    pmm::free_page(second);
+    probe_phase.store(0, release);
+    kernel::print("TLB: remote IRQ-masked replacement {} (CPU mask {})\n", ok ? "PASS" : "FAIL", checked.load(acquire));
+    return ok;
+}
+void vmm::report_tlb_probe() noexcept {
+    uint64_t targets, acks;
+    {
+        irq_lock_guard guard(user_mapping_lock);
+        targets = user_targets;
+        acks = user_acknowledgements;
+    }
+    const auto count = cpu::g_cpu_count.load(acquire);
+    if (count == 1) {
+        kernel::print("TLB: userspace remote shootdown SKIP (one CPU)\n");
+        return;
+    }
+    const auto expected = count == 64 ? UINT64_MAX : (uint64_t{1} << count) - 1;
+    kernel::print("TLB: userspace remote shootdown {} (target mask {}, acknowledgements {})\n",
+                  targets == expected && acks >= count ? "PASS" : "FAIL", targets, acks);
+}
+#endif
 
 bool vmm::service_tlb_nmi() noexcept {
     return shootdowns[tlb::current_cpu()].service([](uintptr_t address) {
@@ -49,10 +134,23 @@ static void invalidate(uintptr_t address) noexcept {
         sequences[id] = shootdowns[id].post(address);
         arch::amd64::lapic::send_ipi(static_cast<uint8_t>(cpu::get_cpu(id)->apic_id), 4U << 8U);
     }
-    for (uint32_t id = 0; id < tlb::CPU_LIMIT; ++id)
-        if (targets & (uint64_t{1} << id))
-            while (!shootdowns[id].complete(sequences[id]))
-                cpu_relax();
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+    unsigned acknowledged = 0;
+#endif
+    for (uint32_t id = 0; id < tlb::CPU_LIMIT; ++id) {
+        if (!(targets & (uint64_t{1} << id))) continue;
+        while (!shootdowns[id].complete(sequences[id]))
+            cpu_relax();
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+        ++acknowledged;
+#endif
+    }
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+    if (workload_root && workload_root == vmm::get_active_page_table() && user_range(address, 1)) {
+        user_targets |= targets;
+        user_acknowledgements += acknowledged;
+    }
+#endif
     // No timeout may authorize frame reuse while a target remains unflushed.
 }
 
@@ -122,6 +220,11 @@ void vmm::discard_address_space(uintptr_t root, const vma_manager* areas) noexce
     if (!root) return;
     irq_lock_guard guard(user_mapping_lock);
     if (root == get_active_page_table() || tlb::active.mask(root)) return;
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+    // Stop attributing events before the root page can be recycled by another
+    // process. The archived counters describe this one smoke workload only.
+    if (root == workload_root) workload_root = 0;
+#endif
     auto* table = reinterpret_cast<uint64_t*>(root);
     for (size_t i = 1; i < 256; ++i) {
         if (table[i] & 1)
@@ -243,6 +346,9 @@ void vmm::switch_to(uintptr_t pml4_phys, address_space* mm) noexcept {
     const uint32_t id = tlb::current_cpu();
     tlb::active.enter(id, pml4_phys);
     if (mm) mm->cpus_seen |= uint64_t{1} << id;
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+    if (mm && mm->smp_probe) workload_root = pml4_phys;
+#endif
 }
 
 uintptr_t vmm::get_active_page_table() noexcept {

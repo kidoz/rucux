@@ -43,6 +43,11 @@ public:
 #ifdef RUCUX_TLB_SELF_TEST
     static bool verify_tlb_nmi() noexcept;
 #endif
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+    static bool verify_remote_tlb() noexcept;
+    static void probe_tlb_on_ap(uint32_t id) noexcept;
+    static void report_tlb_probe() noexcept;
+#endif
 #endif
     static uintptr_t get_active_page_table() noexcept;
     static uintptr_t get_phys(uintptr_t virt) noexcept;

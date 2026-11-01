@@ -9,7 +9,11 @@
 namespace {
 constexpr unsigned WORKERS = 4, ROUNDS = 16, WAVES = 4;
 constexpr size_t PAGE = 4096, STACK = 65536;
+#ifdef __x86_64__
+constexpr uintptr_t BASE = 0x8020000000ULL;
+#else
 constexpr uintptr_t BASE = 0x102000000ULL;
+#endif
 constexpr unsigned FLAGS = static_cast<unsigned>(MAP_PRIVATE) | static_cast<unsigned>(MAP_ANONYMOUS);
 constexpr unsigned FIXED_FLAGS = FLAGS | static_cast<unsigned>(MAP_FIXED);
 constexpr unsigned READ_WRITE = static_cast<unsigned>(PROT_READ) | static_cast<unsigned>(PROT_WRITE);

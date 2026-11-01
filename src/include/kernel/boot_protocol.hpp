@@ -2,7 +2,9 @@
 #pragma once
 #include <stdint.h>
 
-#define RUCUX_BOOT_MAGIC 0x1337B007
+#define RUCUX_BOOT_MAGIC_V1 0x1337B007
+// V2 appends the reserved SIPI page. Kernels must not read this tail from V1.
+#define RUCUX_BOOT_MAGIC 0x1337B008
 
 struct rucux_mmap_entry {
     uint64_t physical_start;
@@ -27,7 +29,8 @@ struct rucux_boot_info {
     uint8_t fb_bpp;
 
     // Additional Universal info
-    uint64_t acpi_rsdp;    // Physical address of ACPI RSDP (if available)
-    uint64_t smbios_table; // Physical address of SMBIOS table (if available)
-    uint64_t dtb_address;  // Physical address of Device Tree Blob (if available)
+    uint64_t acpi_rsdp;     // Physical address of ACPI RSDP (if available)
+    uint64_t smbios_table;  // Physical address of SMBIOS table (if available)
+    uint64_t dtb_address;   // Physical address of Device Tree Blob (if available)
+    uint64_t ap_trampoline; // amd64: firmware-reserved SIPI page, or zero (AP boot unavailable).
 };

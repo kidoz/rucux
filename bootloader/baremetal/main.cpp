@@ -155,6 +155,7 @@ void baremetal_main() {
         // Setup simple boot info
         auto* boot_info = reinterpret_cast<rucux_boot_info*>(0x11000000);
         boot_info->magic = RUCUX_BOOT_MAGIC;
+        boot_info->ap_trampoline = 0;
         boot_info->mmap_size = 0;
         boot_info->mmap = nullptr;
         boot_info->fb_address = 0;

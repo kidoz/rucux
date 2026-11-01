@@ -65,6 +65,18 @@ switch_context:
     ret
 
 .global syscall_entry
+// Fresh kernel threads inherit masked IRQs from schedule(). Enable them only
+// after ownership/root/FPU handoff has completed on the incoming stack.
+.global amd64_thread_entry
+amd64_thread_entry:
+    sti
+    sub $8, %rsp
+    call *%rbx
+    call amd64_thread_exit
+1:  cli
+    hlt
+    jmp 1b
+
 syscall_entry:
     swapgs
 

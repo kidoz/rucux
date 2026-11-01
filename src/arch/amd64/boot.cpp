@@ -28,6 +28,9 @@
 #include <kernel/net/socket.hpp>
 #include <kernel/pci.hpp>
 #include <kernel/scheduler/scheduler.hpp>
+#ifdef RUCUX_VM_SELF_TEST
+#include <kernel/scheduler/retirement_probe.hpp>
+#endif
 #include <kernel/vfs/ata.hpp>
 #include <kernel/vfs/fat32.hpp>
 #include <kernel/vfs/ramfs.hpp>
@@ -54,6 +57,13 @@ extern "C" {
 extern void jump_to_user_space(void* entry, void* stack, void* arg);
 
 void start_product() {
+#ifdef RUCUX_VM_SELF_TEST
+    if (!kernel::scheduler::verify_smp_retirement()) {
+        kernel::print("SMP retirement: FAIL\n");
+        for (;;)
+            asm volatile("cli; hlt");
+    }
+#endif
     kernel::boot::start_initial_processes();
     kernel::scheduler::scheduler::exit();
 }
@@ -62,6 +72,9 @@ extern "C" uint8_t kernel_end[];
 
 // The actual entry point called by our UEFI Bootloader
 extern "C" void kernel_main(rucux_boot_info* info) {
+    asm volatile("cli; cld" ::: "memory");
+    const bool boot_v2 = info->magic == RUCUX_BOOT_MAGIC;
+    const bool valid_boot = boot_v2 || info->magic == RUCUX_BOOT_MAGIC_V1;
     uint64_t cr4;
     asm volatile("mov %%cr4, %0" : "=r"(cr4));
     cr4 &= ~((1ULL << 20) | (1ULL << 21)); // Clear SMEP/SMAP
@@ -70,6 +83,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     arch::amd64::uart::init();
     arch::amd64::console::init_early();
     arch::amd64::gdt_init();
+    kernel::cpu::bsp_init();
     arch::amd64::idt_init();
     arch::amd64::pit::init(1000);
     arch::amd64::syscall_init();
@@ -78,7 +92,7 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     kernel::print("rucux (amd64) Initialized (UEFI)!\n");
     kernel::print("Magic: 0x{x}, Info: {}\n", info->magic, (void*)info);
 
-    if (info->magic == RUCUX_BOOT_MAGIC) {
+    if (valid_boot) {
         kernel::memory::pmm::memory_map_entry entries[64];
         size_t count = 0;
 
@@ -114,12 +128,14 @@ extern "C" void kernel_main(rucux_boot_info* info) {
                       (kernel::memory::pmm::get_total_pages() * 4096) / (1024 * 1024),
                       (kernel::memory::pmm::get_free_pages() * 4096) / (1024 * 1024));
     } else {
-        kernel::print("Warning: Invalid Boot magic!\n");
+        kernel::print("Unsupported boot protocol\n");
+        for (;;)
+            asm volatile("hlt");
     }
 
     kernel::memory::vmm::init();
 
-    if (info->magic == RUCUX_BOOT_MAGIC && info->fb_address != 0) {
+    if (valid_boot && info->fb_address != 0) {
         kernel::print("Framebuffer Found: addr=0x{}, {}x{}x{}\n", reinterpret_cast<void*>(info->fb_address),
                       info->fb_width, info->fb_height, info->fb_bpp);
         arch::amd64::framebuffer::init(info->fb_address, info->fb_width, info->fb_height, info->fb_pitch, info->fb_bpp);
@@ -127,7 +143,6 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     }
 
     kernel::memory::heap::init();
-    kernel::cpu::bsp_init();
     kernel::memory::slab_init();
     kernel::scheduler::scheduler::init();
     kernel::vfs::vfs_manager::init();
@@ -186,7 +201,11 @@ extern "C" void kernel_main(rucux_boot_info* info) {
 
             // Boot APs
             uintptr_t pml4 = kernel::memory::vmm::get_active_page_table();
-            arch::amd64::smp_boot_aps(madt, pml4);
+            if (!arch::amd64::smp_boot_aps(madt, pml4, boot_v2 ? info->ap_trampoline : 0, lapic_count)) {
+                kernel::print("SMP: AP startup FAIL\n");
+                for (;;)
+                    asm volatile("hlt");
+            }
         }
     } else {
         kernel::print("ACPI: No RSDP, using legacy PIC for devices\n");
@@ -210,6 +229,13 @@ extern "C" void kernel_main(rucux_boot_info* info) {
             asm volatile("hlt");
     }
     kernel::print("TLB: NMI self-check PASS (IRQs masked)\n");
+#endif
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+    if (!kernel::memory::vmm::verify_remote_tlb()) {
+        kernel::print("TLB: remote IRQ-masked replacement FAIL\n");
+        for (;;)
+            asm volatile("hlt");
+    }
 #endif
     kernel::pci::init();
 
@@ -238,6 +264,8 @@ extern "C" void kernel_main(rucux_boot_info* info) {
     // Publish the first runnable thread before timer IRQs can schedule away
     // from the boot stack. An empty queue would abandon boot for idle.
     kernel::scheduler::scheduler::spawn(start_product, 100);
+    kernel::print("rucux (amd64) boot complete, {} CPUs online\n", kernel::cpu::g_cpu_count.load(kernel::acquire));
+    arch::amd64::smp_release_aps();
 
     kernel::print("Transitioning to Multi-Process Scheduler...\n");
     asm volatile("sti");

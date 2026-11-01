@@ -176,7 +176,30 @@ extern "C" EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* 
     Status = gBS->LocateProtocol(&gopGuid, nullptr, (void**)&gop);
 
     rucux_boot_info* bootInfo = nullptr;
-    gBS->AllocatePool(EfiLoaderData, sizeof(rucux_boot_info), (void**)&bootInfo);
+    Status = gBS->AllocatePool(EfiLoaderData, sizeof(rucux_boot_info), (void**)&bootInfo);
+    if (EFI_ERROR(Status)) return Status;
+    for (UINTN i = 0; i < sizeof(*bootInfo); ++i)
+        reinterpret_cast<UINT8*>(bootInfo)[i] = 0;
+    // Copy firmware-owned ACPI discovery before ExitBootServices. Prefer 2.0.
+    const EFI_GUID acpi20 = {0x8868e871, 0xe4f1, 0x11d3, {0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}};
+    const EFI_GUID acpi10 = {0xeb9d2d30, 0x2d88, 0x11d3, {0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d}};
+    for (UINTN i = 0; i < gST->NumberOfTableEntries; ++i) {
+        const auto& entry = gST->ConfigurationTable[i];
+        bool modern = true, legacy = true;
+        for (UINTN n = 0; n < sizeof(EFI_GUID); ++n) {
+            const auto byte = reinterpret_cast<const UINT8*>(&entry.VendorGuid)[n];
+            modern = modern && byte == reinterpret_cast<const UINT8*>(&acpi20)[n];
+            legacy = legacy && byte == reinterpret_cast<const UINT8*>(&acpi10)[n];
+        }
+        if (modern || (legacy && !bootInfo->acpi_rsdp))
+            bootInfo->acpi_rsdp = reinterpret_cast<UINT64>(entry.VendorTable);
+    }
+#ifdef __x86_64__
+    // The kernel must never overwrite a guessed low-memory firmware page.
+    EFI_PHYSICAL_ADDRESS trampoline = 0x8000;
+    if (!EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &trampoline)))
+        bootInfo->ap_trampoline = trampoline;
+#endif
 
     if (!EFI_ERROR(Status) && gop) {
         // Select the best available graphics mode. Prefer an exact 1920x1080,

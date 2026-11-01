@@ -21,6 +21,7 @@ struct idt_pointer {
 
 void idt_register_nic_irq(uint8_t irq) noexcept;
 void idt_init() noexcept;
+void idt_load() noexcept;
 void idt_use_lapic_timer() noexcept;
 void idt_set_apic_mode(bool enabled) noexcept;
 

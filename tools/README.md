@@ -77,3 +77,17 @@ Check the helper's evidence policy with:
 ```sh
 python3 -m unittest discover -s tools -p test_retirement_smoke_unit.py
 ```
+
+## amd64 SMP memory gate
+
+```sh
+python3 tools/test_amd64_smp_smoke.py --attempts 20
+python3 -m unittest discover -s tools -p test_amd64_smp_smoke_unit.py
+```
+
+The gate checks a single-CPU boot and repeated four-CPU boots, including AP timer
+activity, IRQ-masked remote NMI replacement, userspace shared-mm stress and final
+root teardown. It rebuilds the matching loader and kernel and keeps unique,
+network-free evidence under `build/amd64-smp-evidence/`. See the
+[product contract](../products/smoke-smp-qemu-amd64/README.md) for required markers,
+boot protocol compatibility, failure captures and limits.

@@ -1,8 +1,14 @@
 userspace_enabled = true
 entry_point = 'kernel_main'
 kernel_linker_script = meson.current_source_dir() + '/linker.ld'
-if product_name == 'smoke-qemu-amd64' or product_name == 'smoke-storage-qemu-amd64'
+if product_name == 'smoke-qemu-amd64' or product_name == 'smoke-storage-qemu-amd64' or product_name == 'smoke-smp-qemu-amd64'
     kernel_args += ['-DRUCUX_TLB_SELF_TEST=1']
+endif
+if product_name == 'smoke-smp-qemu-amd64'
+    kernel_args += ['-DRUCUX_VM_SELF_TEST=1', '-DRUCUX_AMD64_SMP_SELF_TEST=1',
+                    '-DRUCUX_RETIREMENT_ROUNDS=48', '-DRUCUX_RETIREMENT_SEED=37']
+    kernel_common_sources += files('../../kernel/scheduler/retirement_probe.cpp',
+                                   '../../kernel/scheduler/retirement_diagnostics.cpp')
 endif
 
 kernel_args += [

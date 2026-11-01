@@ -14,7 +14,8 @@ struct tss_entry {
     uint16_t iopb_offset;
 } __attribute__((packed));
 
-void tss_init() noexcept;
+void tss_init(uint32_t cpu_id = 0) noexcept;
+tss_entry* get_tss(uint32_t cpu_id) noexcept;
 void tss_set_rsp0(uintptr_t rsp0) noexcept;
 
 } // namespace arch::amd64

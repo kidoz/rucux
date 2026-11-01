@@ -1,146 +1,97 @@
 // SPDX-License-Identifier: MIT
 #include <arch/amd64/apic.hpp>
+#include <arch/amd64/gdt.hpp>
+#include <arch/amd64/idt.hpp>
+#include <arch/amd64/pit.hpp>
 #include <arch/amd64/smp.hpp>
+#include <arch/amd64/syscall.hpp>
 #include <kernel/cpu/percpu.hpp>
+#include <kernel/memory/vmm.hpp>
 #include <kernel/print.hpp>
 #include <kernel/scheduler/scheduler.hpp>
-#include <kernel/sync/spinlock.hpp>
 #include <knew.hpp>
 #include <lib/string.hpp>
 
 namespace arch::amd64 {
-
-// Trampoline symbols (defined in smp_trampoline.S)
 extern "C" {
-extern uint8_t ap_trampoline_start[];
-extern uint8_t ap_trampoline_end[];
-extern uint32_t ap_pml4[];
-extern uint64_t ap_stack[];
-extern uint64_t ap_entry[];
+extern uint8_t ap_trampoline_start[], ap_trampoline_end[];
+extern uint32_t ap_pml4[], ap_cpu[];
+extern uint64_t ap_stack[], ap_entry[];
 }
-
-// Fixed physical address where we copy the trampoline (<1MB, page-aligned)
-static constexpr uintptr_t TRAMPOLINE_PHYS = 0x8000;
-
-// AP synchronization
-static kernel::atomic<uint32_t> g_ap_started{0};
-
-// C++ entry point for each AP — called from the trampoline
-extern "C" void ap_main() {
-    // Determine our APIC ID
-    uint8_t my_apic_id = lapic::id();
-
-    // Find our logical CPU ID (assigned in order from MADT)
-    uint32_t my_cpu_id = g_ap_started.fetch_add(1, kernel::relaxed) + 1;
-
-    // Initialize per-CPU data
-    kernel::cpu::ap_init(my_cpu_id, my_apic_id);
-
-    // Enable LAPIC on this AP
-    lapic::init(kernel::cpu::this_cpu()->self ? static_cast<uintptr_t>(0) // base already set by BSP copy
-                                              : 0);
-    // Re-init LAPIC with the same base as BSP
-    // (The LAPIC base address is the same for all CPUs — it's memory-mapped)
-    auto* pcpu = kernel::cpu::this_cpu();
-
-    kernel::print("AP{}: online (APIC ID {})\n", my_cpu_id, my_apic_id);
-
-    // Create idle thread for this AP
-    auto* idle = new kernel::scheduler::thread();
-    idle->tid = 0;
-    idle->stack_size = 4096;
-    idle->stack_base = reinterpret_cast<uintptr_t>(new uint8_t[idle->stack_size]);
-    idle->pml4_phys = 0;
-    idle->mm = nullptr;
-    idle->state.store(kernel::scheduler::thread_state::READY, kernel::release);
-    pcpu->idle_thread = idle;
-    pcpu->current_thread = nullptr;
-
-    // Enable interrupts and enter idle loop
-    // (In a full implementation, APs would enter the scheduler here)
-    asm volatile("sti");
-    while (true) {
-        asm volatile("hlt");
+namespace {
+constexpr uintptr_t TRAMPOLINE_PHYS = 0x8000;
+kernel::atomic<uint32_t> ready{0};
+kernel::atomic<bool> released{false};
+uint32_t timer_count;
+uintptr_t field(const void* symbol) {
+    return TRAMPOLINE_PHYS + reinterpret_cast<uintptr_t>(symbol) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
+}
+bool await(uint32_t count) {
+    for (unsigned interval = 0; interval < 50; ++interval) {
+        if (ready.load(kernel::acquire) == count) return true;
+        if (!pit::wait_10ms()) return false;
     }
+    return false;
 }
-
-// Offsets into the trampoline data section (must match smp_trampoline.S layout)
-// These are relative to ap_trampoline_start
-static uintptr_t trampoline_size() {
-    return reinterpret_cast<uintptr_t>(ap_trampoline_end) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
-}
-
-void smp_boot_aps(const acpi::madt_info& info, uintptr_t pml4_phys) noexcept {
-    if (info.cpu_count <= 1) {
-        kernel::print("SMP: Only 1 CPU found, skipping AP boot\n");
-        return;
+} // namespace
+extern "C" void ap_main(uint32_t id) {
+    gdt_init(id);
+    kernel::cpu::ap_init(id, lapic::id());
+    idt_load();
+    syscall_init();
+    lapic::init_cpu(); // Never overwrite the BSP's shared MMIO base.
+    kernel::memory::vmm::switch_to(kernel::memory::vmm::get_active_page_table());
+    kernel::scheduler::scheduler::init();
+    lapic::timer_init(0x20, timer_count, 0x03);
+    kernel::print("AP{}: ready (APIC ID {})\n", id, lapic::id());
+    ready.fetch_add(1, kernel::release); // IDT, IST, GS and NMI service are ready.
+    while (!released.load(kernel::acquire)) {
+#ifdef RUCUX_AMD64_SMP_SELF_TEST
+        kernel::memory::vmm::probe_tlb_on_ap(id);
+#endif
+        kernel::cpu_relax();
     }
+    kernel::scheduler::scheduler::schedule();
+    for (;;)
+        asm volatile("sti; hlt");
+}
 
-    // Copy trampoline to low memory
-    size_t tramp_size = trampoline_size();
-    lib::memcpy(reinterpret_cast<void*>(TRAMPOLINE_PHYS), ap_trampoline_start, tramp_size);
-
-    // Patch trampoline data fields.
-    // Compute offsets of data fields relative to trampoline start.
-
-    uintptr_t pml4_off = reinterpret_cast<uintptr_t>(ap_pml4) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
-    uintptr_t stack_off = reinterpret_cast<uintptr_t>(ap_stack) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
-    uintptr_t entry_off = reinterpret_cast<uintptr_t>(ap_entry) - reinterpret_cast<uintptr_t>(ap_trampoline_start);
-
-    // Write PML4 physical address for the AP to use
-    *reinterpret_cast<uint32_t*>(TRAMPOLINE_PHYS + pml4_off) = static_cast<uint32_t>(pml4_phys);
-    // Write AP kernel stack (allocated per-AP below)
-    // Write C++ entry point
-    *reinterpret_cast<uint64_t*>(TRAMPOLINE_PHYS + entry_off) = reinterpret_cast<uint64_t>(ap_main);
-
-    uint8_t bsp_apic_id = lapic::id();
-
-    kernel::print("SMP: Booting {} APs (BSP APIC ID={})\n", info.cpu_count - 1, bsp_apic_id);
-
-    for (uint32_t i = 0; i < info.cpu_count; ++i) {
-        if (!info.cpus[i].enabled) continue;
-        if (info.cpus[i].apic_id == bsp_apic_id) continue;
-
-        uint8_t target = info.cpus[i].apic_id;
-        uint32_t before = g_ap_started.load(kernel::relaxed);
-
-        // Allocate a kernel stack for this AP (8KB)
-        auto* ap_kstack = new uint8_t[8192];
-        *reinterpret_cast<uint64_t*>(TRAMPOLINE_PHYS + stack_off) = reinterpret_cast<uint64_t>(ap_kstack + 8192);
-
-        // Send INIT
-        lapic::send_init(target);
-
-        // Wait ~10ms (busy loop)
-        for (int j = 0; j < 1000000; j++)
-            kernel::cpu_relax();
-
-        // Send SIPI (vector = trampoline page number = 0x8000 / 4096 = 0x08)
-        lapic::send_sipi(target, TRAMPOLINE_PHYS / 4096);
-
-        // Wait for AP to start (~100ms timeout)
-        for (int j = 0; j < 10000000; j++) {
-            if (g_ap_started.load(kernel::relaxed) > before) break;
-            kernel::cpu_relax();
-        }
-
-        if (g_ap_started.load(kernel::relaxed) <= before) {
-            // Retry with second SIPI (per Intel spec)
-            lapic::send_sipi(target, TRAMPOLINE_PHYS / 4096);
-            for (int j = 0; j < 10000000; j++) {
-                if (g_ap_started.load(kernel::relaxed) > before) break;
-                kernel::cpu_relax();
-            }
-        }
-
-        if (g_ap_started.load(kernel::relaxed) > before) {
-            kernel::print("SMP: AP (APIC ID {}) started\n", target);
-        } else {
-            kernel::print("SMP: AP (APIC ID {}) failed to start!\n", target);
+bool smp_boot_aps(const acpi::madt_info& info, uintptr_t root, uintptr_t reserved_page, uint32_t count) noexcept {
+    timer_count = count;
+    kernel::cpu::get_cpu(0)->apic_id = lapic::id();
+    unsigned enabled = 0;
+    for (unsigned i = 0; i < info.cpu_count; ++i)
+        if (info.cpus[i].enabled && info.cpus[i].apic_id != lapic::id()) ++enabled;
+    if (!enabled) {
+        kernel::print("SMP: 0 secondary cores ready\n");
+        return true;
+    }
+    const auto size = static_cast<size_t>(ap_trampoline_end - ap_trampoline_start);
+    if (reserved_page != TRAMPOLINE_PHYS || size > 4096 || (root & 4095) || root > 0xFFFFF000ULL) return false;
+    lib::memcpy(reinterpret_cast<void*>(reserved_page), ap_trampoline_start, size);
+    *reinterpret_cast<uint32_t*>(field(ap_pml4)) = static_cast<uint32_t>(root);
+    *reinterpret_cast<uint64_t*>(field(ap_entry)) = reinterpret_cast<uintptr_t>(ap_main);
+    for (unsigned i = 0; i < info.cpu_count; ++i) {
+        if (!info.cpus[i].enabled || info.cpus[i].apic_id == lapic::id()) continue;
+        const uint32_t id = ready.load(kernel::acquire) + 1;
+        if (id >= kernel::cpu::MAX_CPUS) return false;
+        auto* stack = new uint8_t[32768]; // Boot stack remains owned for the CPU's lifetime.
+        if (!stack) return false;
+        *reinterpret_cast<uint64_t*>(field(ap_stack)) = reinterpret_cast<uintptr_t>(stack + 32768);
+        *reinterpret_cast<uint32_t*>(field(ap_cpu)) = id;
+        // Publish all launch fields before issuing the startup IPIs.
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        if (!lapic::send_init(info.cpus[i].apic_id)) return false;
+        lapic::send_sipi(info.cpus[i].apic_id, TRAMPOLINE_PHYS / 4096);
+        if (!await(id)) {
+            lapic::send_sipi(info.cpus[i].apic_id, TRAMPOLINE_PHYS / 4096);
+            if (!await(id)) return false; // Never reuse fields after a late/timed-out AP.
         }
     }
-
-    kernel::print("SMP: {} APs online\n", g_ap_started.load(kernel::relaxed));
+    kernel::print("SMP: {} secondary cores ready\n", ready.load(kernel::acquire));
+    return ready.load(kernel::acquire) == enabled;
 }
-
+void smp_release_aps() noexcept {
+    released.store(true, kernel::release);
+}
 } // namespace arch::amd64
