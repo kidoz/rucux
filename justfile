@@ -53,6 +53,10 @@ run-headless timeout="15" product="dev-qemu-amd64": (build product)
 test:
     make -C tests run
 
+# Run all three native SMP gates offline with retained per-architecture evidence
+test-smp attempts="5":
+    python3 tools/test_native_smp.py --attempts {{quote(attempts)}}
+
 # Install Python tool dependencies into .venv (from uv.lock)
 py-sync:
     uv --cache-dir build/python-tools/uv-cache sync --locked --all-groups

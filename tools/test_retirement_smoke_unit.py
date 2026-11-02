@@ -28,6 +28,12 @@ class RetirementEvidenceTest(unittest.TestCase):
             "shared mm: root teardown FAIL",
             "*** EL0 data abort",
             "PANIC",
+            "MMU: REPLACEMENT FAILED",
+            "ELF load failed",
+            "TRANSLATION MISMATCH",
+            "CONTEXT SWITCH FAILED",
+            "userspace: short write",
+            "open_stdio: /dev/tty not found",
         ):
             with self.subTest(failure=failure):
                 self.assertFalse(accepted(self.text + "\n" + failure, 37, 768, 0))
@@ -40,6 +46,19 @@ class RetirementEvidenceTest(unittest.TestCase):
         for status in (-11, 1, 124, None):
             with self.subTest(status=status):
                 self.assertFalse(accepted(self.text, 37, 768, status))
+
+    def test_single_cpu_compatibility_requires_its_own_evidence(self) -> None:
+        text = "\n".join(required_markers(37, 768, 1))
+        self.assertTrue(accepted(text, 37, 768, 0, 1))
+        for marker in required_markers(37, 768, 1):
+            with self.subTest(marker=marker):
+                self.assertFalse(accepted(text.replace(marker, ""), 37, 768, 0, 1))
+        self.assertFalse(accepted(text, 37, 768, 0, 4))
+        self.assertFalse(accepted(self.text, 37, 768, 0, 1))
+
+    def test_unsupported_cpu_counts_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            required_markers(37, 768, 2)
 
     def test_artifacts_cannot_escape_workspace_build_directory(self) -> None:
         with self.assertRaises(ValueError):

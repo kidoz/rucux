@@ -37,6 +37,43 @@ and the Ethernet test peer has typed interfaces.
 Tool caches are stored under `build/python-tools/`. CI runs the same checks
 exposed locally through `just`.
 
+## All-architecture native SMP gate
+
+```sh
+just test-smp          # One single-CPU and five four-CPU boots per architecture
+just test-smp 20       # Increase four-CPU repetitions
+python3 tools/test_native_smp.py --attempts 20 --aarch64-rounds 4096
+python3 -m unittest discover -s tools -p test_native_smp_unit.py
+```
+
+This command builds and runs the amd64, ARMv7 and AArch64 gates in that order.
+It requires the existing Python 3.14+, cross-build toolchains, Meson, Ninja, QEMU
+and amd64 image tools/UEFI firmware; it downloads and installs nothing. Override
+the Homebrew firmware defaults with `--uefi-code <path> --uefi-vars <path>`.
+All guests use `-nic none` and private stdin monitors without host sockets.
+
+Each invocation creates `build/native-smp-evidence/<UTC timestamp>/`, containing
+isolated `builds/<architecture>/` directories, an incremental `summary.json`,
+and `<architecture>/gate.log`, `command.json` and `campaigns/` artifacts. Existing
+standalone campaign directories are preserved. The summary records each gate's
+scope, exit status, validated boot count and evidence path. ARMv7 remains a
+kernel-only gate; amd64 and AArch64 also require their userspace probes.
+
+Success requires all three child processes to exit successfully and each fresh
+campaign to pass an independent audit of the Git revision, archived ELF/loader/
+raw-image hashes, boot count, CPU counts, offline QEMU commands and serial evidence.
+Fault markers or incomplete evidence override recorded success. A failed gate
+does not skip later architectures; the combined exit code is nonzero. Ctrl-C
+records interruption, leaves remaining gates unrun, and returns 130.
+
+`--timeout` bounds each guest (default 30 seconds); `--stage-timeout` bounds an
+entire architecture including its build (default 900 seconds). The runner cleans
+up its private process group, including QEMU descendants, after completion,
+failure, timeout or interruption. Seed 37 and 768 retirement rounds are the
+AArch64 defaults; `--aarch64-seed` and `--aarch64-rounds` select another workload.
+This verifies bounded QEMU scenarios, without establishing physical-board,
+arbitrary driver/service SMP, CPU-hotplug or performance behavior.
+
 ## AArch64 retirement campaigns
 
 Run a bounded four-CPU scheduler/IPC retirement campaign without host networking:
@@ -44,6 +81,12 @@ Run a bounded four-CPU scheduler/IPC retirement campaign without host networking
 ```sh
 python3 tools/test_retirement_smoke.py --seed 37 --rounds 4096 --attempts 20
 ```
+
+Add `--with-single-cpu` to run a compatibility boot before the four-CPU attempts.
+It requires the explicit retirement skip plus single-CPU boot, MMU, scheduler,
+userspace, root-teardown and syscall evidence. Four-CPU attempts additionally
+require every AP timer and the retirement identity/ownership checks. The combined
+native gate always enables this compatibility boot.
 
 The helper configures `build/retirement-investigation` for `smoke-qemu-aarch64`.
 Meson options `retirement_seed` and `retirement_rounds` default to 0 and 48;

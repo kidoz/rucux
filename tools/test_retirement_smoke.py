@@ -17,16 +17,38 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def required_markers(seed: int, rounds: int) -> tuple[str, ...]:
-    return (
+def required_markers(seed: int, rounds: int, cpus: int = 4) -> tuple[str, ...]:
+    if cpus not in (1, 4):
+        raise ValueError("only one/four-CPU gates are supported")
+    common = (
         f"retirement config: seed {seed} rounds {rounds} version 1",
-        "rucux (aarch64) boot complete, 4 CPUs online",
+        "rucux (aarch64) Initialized!",
+        "Running at EL1",
+        "Per-CPU: BSP (cpu_id=0) initialized, TPIDR_EL1 set",
+        "AArch64 VMM: MMU enabled",
+        "MMU: identity translation verified",
+        "MMU: replacement and permissions verified",
+        "Scheduler initialized",
+        "Scheduler: context switch round-trip verified",
+        f"rucux (aarch64) boot complete, {cpus} CPUs online",
+        "Scheduler: preemption reached a scheduled thread",
+        "userspace: entering EL0",
+        "userspace: hello from EL0",
+        "userspace: scheduling verified",
+        "shared mm: userspace map/protect/reuse/clone PASS",
+        f"shared mm: root teardown PASS (CPU mask {(1 << cpus) - 1})",
+        "syscall safety: PASS",
+    )
+    if cpus == 1:
+        return common + ("SMP retirement: SKIP (requires multiple CPUs)",)
+    return common + (
         "SMP retirement: thread identity verified",
         "SMP retirement: held outgoing stack and single wait status verified",
         f"SMP retirement: PASS (4 CPUs, mask 15, {rounds} IPC/exit/cancel/wait rounds)",
-        "shared mm: userspace map/protect/reuse/clone PASS",
-        "shared mm: root teardown PASS (CPU mask 15)",
-        "syscall safety: PASS",
+        "SMP: 3 of 3 secondary cores online",
+        "AP1: timer IRQ verified",
+        "AP2: timer IRQ verified",
+        "AP3: timer IRQ verified",
     )
 
 
@@ -43,13 +65,21 @@ def failure_marker(text: str) -> bool:
             "AArch64 synchronous fault",
             "AArch64 IRQ fault",
             "PANIC",
+            "MMU: REPLACEMENT FAILED",
+            "ELF load failed",
+            "TRANSLATION MISMATCH",
+            "CONTEXT SWITCH FAILED",
+            "userspace: short write",
+            "open_stdio: /dev/tty not found",
         )
     )
 
 
-def accepted(text: str, seed: int, rounds: int, exit_code: int | None) -> bool:
+def accepted(text: str, seed: int, rounds: int, exit_code: int | None, cpus: int = 4) -> bool:
     return (
-        exit_code == 0 and not failure_marker(text) and all(marker in text for marker in required_markers(seed, rounds))
+        exit_code == 0
+        and not failure_marker(text)
+        and all(marker in text for marker in required_markers(seed, rounds, cpus))
     )
 
 
@@ -61,7 +91,15 @@ def workspace_build(path: Path) -> Path:
 
 
 def run_attempt(
-    kernel: Path, work: Path, qemu: str, seed: int, rounds: int, threads: str, timeout: float, icount: int | None
+    kernel: Path,
+    work: Path,
+    qemu: str,
+    seed: int,
+    rounds: int,
+    threads: str,
+    timeout: float,
+    icount: int | None,
+    cpus: int = 4,
 ) -> dict[str, object]:
     serial = work / "serial.log"
     monitor = work / "monitor.log"
@@ -74,7 +112,7 @@ def run_attempt(
         "-cpu",
         "cortex-a53",
         "-smp",
-        "4",
+        str(cpus),
         "-m",
         "512M",
         "-kernel",
@@ -93,7 +131,7 @@ def run_attempt(
         command += ["-icount", f"shift={icount},align=off,sleep=off"]
     (work / "command.json").write_text(json.dumps(command, indent=2) + "\n")
     started = time.monotonic()
-    markers = required_markers(seed, rounds)
+    markers = required_markers(seed, rounds, cpus)
     text = ""
     passed = False
     with monitor.open("w") as output:
@@ -119,8 +157,7 @@ def run_attempt(
             if process.poll() is None and process.stdin is not None:
                 if not passed:
                     process.stdin.write(
-                        "stop\ninfo cpus\ncpu 0\ninfo registers\ncpu 1\ninfo registers\n"
-                        "cpu 2\ninfo registers\ncpu 3\ninfo registers\n"
+                        "stop\ninfo cpus\n" + "".join(f"cpu {id}\ninfo registers\n" for id in range(cpus))
                     )
                     process.stdin.flush()
                     time.sleep(0.15)
@@ -138,8 +175,8 @@ def run_attempt(
                             time.sleep(0.02)
                 process.stdin.write("quit\n")
                 process.stdin.flush()
-                process.wait(timeout=3)
-        except BrokenPipeError:
+                process.wait(timeout=10)
+        except BrokenPipeError, subprocess.TimeoutExpired:
             passed = False
         finally:
             if process.poll() is None:
@@ -150,8 +187,9 @@ def run_attempt(
                     process.kill()
                     process.wait()
     text = serial.read_text() if serial.exists() else ""
-    passed = passed and accepted(text, seed, rounds, process.returncode)
+    passed = passed and accepted(text, seed, rounds, process.returncode, cpus)
     return {
+        "cpus": cpus,
         "result": "PASS" if passed else "FAIL",
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "exit_code": process.returncode,
@@ -169,6 +207,9 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--rounds", type=int, default=768)
     parser.add_argument("--attempts", type=int, default=20)
+    parser.add_argument(
+        "--with-single-cpu", action="store_true", help="Run one compatibility boot before the SMP attempts"
+    )
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--tcg-threads", choices=("single", "multi"), default="multi")
     parser.add_argument("--icount", type=int, choices=range(0, 11))
@@ -218,6 +259,7 @@ def main() -> int:
         "schema": 1,
         "seed": args.seed,
         "rounds": args.rounds,
+        "single_cpu_compatibility": args.with_single_cpu,
         "tcg_threads": args.tcg_threads,
         "icount": args.icount,
         "timeout_seconds": args.timeout,
@@ -231,11 +273,11 @@ def main() -> int:
     }
     (work / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     results = []
-    for attempt in range(1, args.attempts + 1):
+    for attempt, cpus in enumerate(([1] if args.with_single_cpu else []) + [4] * args.attempts, 1):
         attempt_dir = work / f"attempt-{attempt:04d}"
         attempt_dir.mkdir()
         result = run_attempt(
-            archived, attempt_dir, qemu, args.seed, args.rounds, args.tcg_threads, args.timeout, args.icount
+            archived, attempt_dir, qemu, args.seed, args.rounds, args.tcg_threads, args.timeout, args.icount, cpus
         )
         results.append(result)
         (work / "results.json").write_text(json.dumps(results, indent=2) + "\n")
@@ -245,7 +287,7 @@ def main() -> int:
         )
         if result["result"] != "PASS":
             return 1
-    print(f"retirement: PASS ({args.attempts} boots, seed {args.seed}, {args.rounds} rounds); {work}")
+    print(f"retirement: PASS ({len(results)} boots, seed {args.seed}, {args.rounds} rounds); {work}")
     return 0
 
 
